@@ -98,78 +98,279 @@ Las rutas usan sustantivos en español y siguen convenciones REST.
 
 ### Usuarios
 
-- `GET /usuarios`
-- `GET /usuarios/:id`
-- `POST /usuarios`
-- `PATCH /usuarios/:id`
-- `DELETE /usuarios/:id`
+`GET /usuarios`
+
+No recibe body. Lista usuarios registrados sin exponer la contraseña.
+
+`GET /usuarios/:id`
+
+No recibe body. `id` debe ser un número positivo.
+
+`POST /usuarios`
+
+Body requerido:
+
+```json
+{
+  "username": "admin",
+  "password": "secret123",
+  "role": "ADMIN"
+}
+```
+
+Body con campo opcional:
+
+```json
+{
+  "username": "vendedor1",
+  "password": "secret123",
+  "role": "VENDEDOR",
+  "isActive": true
+}
+```
+
+Roles válidos: `ADMIN`, `VENDEDOR`, `BODEGA`, `CONTADOR`.
+
+`PATCH /usuarios/:id`
+
+Body parcial. Envía solo los campos a cambiar:
+
+```json
+{
+  "password": "nuevoSecret123",
+  "role": "CONTADOR",
+  "isActive": true
+}
+```
+
+`DELETE /usuarios/:id`
+
+No recibe body. Hace eliminación lógica con `isActive = false` y `deletedAt`.
 
 Notas:
 
-- `DELETE` hace eliminación lógica con `isActive = false` y `deletedAt`.
 - La contraseña se guarda hasheada.
 - Existe estructura base para permisos con `@Roles(...)`, `RolesGuard` y `Role`.
 
 ### Clientes
 
-- `GET /clientes`
-- `GET /clientes?estado=inactivos`
-- `GET /clientes?estado=todos`
-- `GET /clientes/:id`
-- `POST /clientes`
-- `PATCH /clientes/:id`
-- `DELETE /clientes/:id`
-- `PATCH /clientes/:id/reactivar`
+`GET /clientes`
+
+No recibe body. Por defecto retorna solo clientes activos.
+
+`GET /clientes?estado=inactivos`
+
+No recibe body. Retorna clientes inactivos.
+
+`GET /clientes?estado=todos`
+
+No recibe body. Retorna clientes activos e inactivos.
+
+`GET /clientes/:id`
+
+No recibe body. Puede consultar clientes activos o inactivos.
+
+`POST /clientes`
+
+Body requerido:
+
+```json
+{
+  "identification": "123456789",
+  "firstName": "Juan",
+  "lastName": "Pérez"
+}
+```
+
+Body con campos opcionales:
+
+```json
+{
+  "identification": "123456789",
+  "firstName": "Juan",
+  "lastName": "Pérez",
+  "phone": "3001234567",
+  "address": "Calle 123 #45-67"
+}
+```
+
+`PATCH /clientes/:id`
+
+Body parcial. Envía solo los campos a cambiar:
+
+```json
+{
+  "phone": "3112223344",
+  "address": "Carrera 10 #20-30"
+}
+```
+
+También permite cambiar identificación si no existe en otro cliente:
+
+```json
+{
+  "identification": "987654321"
+}
+```
+
+`DELETE /clientes/:id`
+
+No recibe body. Marca `isActive = false` y `deletedAt`.
+
+`PATCH /clientes/:id/reactivar`
+
+No recibe body. Marca `isActive = true` y `deletedAt = null`.
 
 Notas:
 
-- Por defecto `GET /clientes` retorna solo activos.
 - `identification` es único, incluso si el cliente está inactivo.
-- `DELETE` no elimina físicamente.
+- Si `identification` ya existe, responde `409 Conflict`.
 
 ### Productos
 
-- `GET /productos`
-- `GET /productos?estado=inactivos`
-- `GET /productos?estado=todos`
-- `GET /productos/:id`
-- `POST /productos`
-- `PATCH /productos/:id`
-- `DELETE /productos/:id`
-- `PATCH /productos/:id/reactivar`
+`GET /productos`
+
+No recibe body. Por defecto retorna solo productos activos.
+
+`GET /productos?estado=inactivos`
+
+No recibe body. Retorna productos inactivos.
+
+`GET /productos?estado=todos`
+
+No recibe body. Retorna productos activos e inactivos.
+
+`GET /productos/:id`
+
+No recibe body. `id` debe ser un número positivo.
+
+`POST /productos`
+
+Body requerido:
+
+```json
+{
+  "type": "alimento",
+  "name": "Café premium",
+  "price": 25000,
+  "taxRate": 19,
+  "quantity": 50,
+  "warehouseId": 1
+}
+```
+
+Body con descripción opcional:
+
+```json
+{
+  "type": "tecnología",
+  "name": "Mouse inalámbrico",
+  "description": "Mouse ergonómico de 2.4 GHz",
+  "price": 85000,
+  "taxRate": 19,
+  "quantity": 20,
+  "warehouseId": 1
+}
+```
+
+`PATCH /productos/:id`
+
+Body parcial. Envía solo los campos a cambiar:
+
+```json
+{
+  "price": 90000,
+  "quantity": 25
+}
+```
+
+Otro ejemplo:
+
+```json
+{
+  "name": "Mouse inalámbrico pro",
+  "description": "Versión actualizada",
+  "taxRate": 19
+}
+```
+
+`DELETE /productos/:id`
+
+No recibe body. Hace eliminación lógica para conservar historial de facturas.
+
+`PATCH /productos/:id/reactivar`
+
+No recibe body. Marca `isActive = true` y `deletedAt = null`.
 
 Notas:
 
-- Por defecto retorna productos activos.
-- `warehouseId` relaciona el producto con una bodega.
-- `quantity` representa inventario disponible.
+- `warehouseId` debe existir.
 - `price`, `taxRate` y `quantity` no aceptan valores negativos.
+- `quantity` representa inventario disponible.
 
 ### Bodegas
 
-- `GET /bodegas`
-- `GET /bodegas?estado=inactivos`
-- `GET /bodegas?estado=todos`
-- `GET /bodegas/:id`
-- `POST /bodegas`
-- `PATCH /bodegas/:id`
-- `DELETE /bodegas/:id`
-- `PATCH /bodegas/:id/reactivar`
+`GET /bodegas`
+
+No recibe body. Por defecto retorna solo bodegas activas.
+
+`GET /bodegas?estado=inactivos`
+
+No recibe body. Retorna bodegas inactivas.
+
+`GET /bodegas?estado=todos`
+
+No recibe body. Retorna bodegas activas e inactivas.
+
+`GET /bodegas/:id`
+
+No recibe body. Incluye sus productos relacionados.
+
+`POST /bodegas`
+
+Body requerido:
+
+```json
+{
+  "location": "Bodega principal Bogotá"
+}
+```
+
+`PATCH /bodegas/:id`
+
+Body parcial:
+
+```json
+{
+  "location": "Bodega norte Medellín"
+}
+```
+
+`DELETE /bodegas/:id`
+
+No recibe body. Hace eliminación lógica.
+
+`PATCH /bodegas/:id/reactivar`
+
+No recibe body. Marca `isActive = true` y `deletedAt = null`.
 
 Notas:
 
-- `DELETE` hace eliminación lógica.
 - No se borran bodegas físicamente para conservar relaciones históricas con productos.
 
 ### Facturas
 
-- `GET /facturas`
-- `GET /facturas/:id`
-- `POST /facturas`
-- `PATCH /facturas/:id`
-- `DELETE /facturas/:id`
+`GET /facturas`
 
-Ejemplo para crear factura:
+No recibe body. Lista facturas con cliente e items.
+
+`GET /facturas/:id`
+
+No recibe body. Consulta una factura con cliente, items y productos.
+
+`POST /facturas`
+
+Body requerido:
 
 ```json
 {
@@ -187,16 +388,36 @@ Ejemplo para crear factura:
 }
 ```
 
+Reglas del body:
+
+- `clientId` debe existir y estar activo.
+- `items` debe tener al menos un producto.
+- `productId` debe existir y estar activo.
+- `quantity` debe ser un número entero positivo.
+- Debe existir stock suficiente para cada producto.
+
+`PATCH /facturas/:id`
+
+Body parcial. Por ahora solo permite actualizar campos no contables básicos:
+
+```json
+{
+  "consecutive": "FAC-2026-0001"
+}
+```
+
+`DELETE /facturas/:id`
+
+No recibe body. Marca la factura como `ANULADA` y devuelve el stock de sus items.
+
 Notas:
 
-- La factura pertenece a un cliente.
 - Los productos se guardan mediante `InvoiceItem`, no como arreglo simple.
 - El backend consulta precio e impuesto actual del producto.
 - El backend calcula subtotal, impuestos y total por item y por factura.
 - La creación descuenta inventario en transacción.
 - Si no hay stock suficiente, lanza error y no crea la factura.
-- `DELETE /facturas/:id` anula la factura y devuelve stock en transacción.
-- `PATCH /facturas/:id` solo actualiza campos no contables básicos; no recalcula items ni totales.
+- `PATCH /facturas/:id` no recalcula items ni totales para evitar inconsistencias contables.
 
 ## Reglas de negocio importantes
 
