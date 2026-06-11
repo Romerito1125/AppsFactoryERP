@@ -1,0 +1,31 @@
+import { useState } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+import { ThemeProvider } from '@/components/theme/theme-provider'
+import { Toaster } from '@/components/ui/sonner'
+import { TooltipProvider } from '@/components/ui/tooltip'
+
+export function AppProviders({ children }) {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            refetchOnWindowFocus: false,
+            staleTime: 15_000,
+          },
+        },
+      }),
+  )
+
+  return (
+    <ThemeProvider>
+      <TooltipProvider delayDuration={120}>
+        <QueryClientProvider client={queryClient}>
+          {children}
+          <Toaster richColors position="top-right" closeButton />
+        </QueryClientProvider>
+      </TooltipProvider>
+    </ThemeProvider>
+  )
+}
