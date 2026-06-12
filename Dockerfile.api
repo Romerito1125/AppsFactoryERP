@@ -1,0 +1,31 @@
+FROM oven/bun:1.3.2 AS builder
+WORKDIR /app
+
+COPY package.json bun.lock turbo.json ./
+COPY app/api/package.json app/api/
+COPY app/web/package.json app/web/
+
+RUN bun install --frozen-lockfile
+
+COPY . .
+
+RUN bun run db:generate && bun run build --filter=api
+
+FROM oven/bun:1.3.2 AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/bun.lock ./bun.lock
+COPY --from=builder /app/app/api/package.json ./app/api/package.json
+COPY --from=builder /app/app/api/dist ./app/api/dist
+COPY --from=builder /app/app/api/prisma ./app/api/prisma
+COPY --from=builder /app/app/api/prisma.config.ts ./app/api/prisma.config.ts
+COPY --from=builder /app/node_modules ./node_modules
+
+WORKDIR /app/app/api
+
+EXPOSE 7502
+
+CMD ["bun", "run", "start:prod"]
