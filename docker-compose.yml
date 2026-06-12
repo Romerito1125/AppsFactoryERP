@@ -9,7 +9,6 @@ services:
       NODE_ENV: production
       PORT: 7502
       DATABASE_URL: ${DATABASE_URL}
-    command: sh -c "bun run db:deploy && bun run start:prod"
 
   web:
     build:
