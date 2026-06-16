@@ -1,5 +1,7 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayUnique,
+  IsArray,
   IsInt,
   IsNumber,
   IsOptional,
@@ -11,9 +13,10 @@ import {
 
 export class UpdateProductDto {
   @IsOptional()
-  @IsString()
-  @MinLength(2)
-  type?: string;
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  productTypeId?: number;
 
   @IsOptional()
   @IsString()
@@ -47,4 +50,12 @@ export class UpdateProductDto {
   @IsInt()
   @IsPositive()
   warehouseId?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @IsPositive({ each: true })
+  tagIds?: number[];
 }

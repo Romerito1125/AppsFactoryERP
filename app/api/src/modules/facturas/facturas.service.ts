@@ -15,7 +15,7 @@ export class FacturasService {
 
   findAll() {
     return this.prisma.invoice.findMany({
-      include: { client: true, items: { include: { product: true } } },
+      include: this.invoiceInclude,
       orderBy: { id: 'desc' },
     });
   }
@@ -25,7 +25,7 @@ export class FacturasService {
 
     const invoice = await this.prisma.invoice.findUnique({
       where: { id },
-      include: { client: true, items: { include: { product: true } } },
+      include: this.invoiceInclude,
     });
 
     if (!invoice) {
@@ -131,7 +131,7 @@ export class FacturasService {
           total,
           items: { create: invoiceItems },
         },
-        include: { client: true, items: { include: { product: true } } },
+        include: this.invoiceInclude,
       });
     });
   }
@@ -154,7 +154,7 @@ export class FacturasService {
     return this.prisma.invoice.update({
       where: { id },
       data: updateInvoiceDto,
-      include: { client: true, items: { include: { product: true } } },
+      include: this.invoiceInclude,
     });
   }
 
@@ -186,10 +186,15 @@ export class FacturasService {
       return tx.invoice.update({
         where: { id },
         data: { status: InvoiceStatus.ANULADA },
-        include: { client: true, items: { include: { product: true } } },
+        include: this.invoiceInclude,
       });
     });
   }
+
+  private readonly invoiceInclude = {
+    client: true,
+    items: { include: { product: { include: { productType: true } } } },
+  } as const;
 
   private groupItems(items: CreateInvoiceDto['items']) {
     const groupedItems = new Map<number, number>();

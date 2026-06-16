@@ -14,11 +14,15 @@ export class ProductosService {
   constructor(private readonly prisma: PrismaService) {}
 
   findAll(filter: FilterProductsDto) {
-    return this.prisma.product.findMany({
-      where: this.getStatusWhere(filter.estado),
-      include: { warehouse: true },
-      orderBy: { id: 'asc' },
-    });
+    return this.prisma.product
+      .findMany({
+        where: this.getStatusWhere(filter.estado),
+        include: this.productInclude,
+        orderBy: { id: 'asc' },
+      })
+      .then((products) =>
+        products.map((product) => this.formatProduct(product)),
+      );
   }
 
   async findOne(id: number) {
@@ -26,54 +30,131 @@ export class ProductosService {
 
     const product = await this.prisma.product.findUnique({
       where: { id },
-      include: { warehouse: true },
+      include: this.productInclude,
     });
 
     if (!product) {
       throw new NotFoundException('Producto no encontrado');
     }
 
-    return product;
+    return this.formatProduct(product);
   }
 
   async create(createProductDto: CreateProductDto) {
-    await this.ensureWarehouseExists(createProductDto.warehouseId);
+    const { tagIds, ...productData } = createProductDto;
 
-    return this.prisma.product.create({ data: createProductDto });
+    // El producto depende de catálogos activos; no se crean relaciones inválidas.
+    await this.ensureProductTypeExists(productData.productTypeId);
+    await this.ensureWarehouseExists(productData.warehouseId);
+    await this.ensureTagsExist(tagIds);
+
+    // Product y ProductTag deben persistirse juntos para evitar productos a medio relacionar.
+    const product = await this.prisma.$transaction((tx) =>
+      tx.product.create({
+        data: {
+          ...productData,
+          tags: tagIds?.length
+            ? { create: tagIds.map((tagId) => ({ tagId })) }
+            : undefined,
+        },
+        include: this.productInclude,
+      }),
+    );
+
+    return this.formatProduct(product);
   }
 
   async update(id: number, updateProductDto: UpdateProductDto) {
     this.ensurePositiveId(id);
     await this.findOne(id);
 
-    if (updateProductDto.warehouseId) {
-      await this.ensureWarehouseExists(updateProductDto.warehouseId);
+    const { tagIds, ...productData } = updateProductDto;
+
+    if (productData.productTypeId) {
+      await this.ensureProductTypeExists(productData.productTypeId);
     }
 
-    return this.prisma.product.update({
-      where: { id },
-      data: updateProductDto,
+    if (productData.warehouseId) {
+      await this.ensureWarehouseExists(productData.warehouseId);
+    }
+
+    await this.ensureTagsExist(tagIds);
+
+    const product = await this.prisma.$transaction(async (tx) => {
+      // Si el frontend envía tagIds, se interpreta como reemplazo completo de etiquetas.
+      if (tagIds) {
+        await tx.productTag.deleteMany({ where: { productId: id } });
+      }
+
+      return tx.product.update({
+        where: { id },
+        data: {
+          ...productData,
+          tags: tagIds
+            ? { create: tagIds.map((tagId) => ({ tagId })) }
+            : undefined,
+        },
+        include: this.productInclude,
+      });
     });
+
+    return this.formatProduct(product);
   }
 
   async remove(id: number) {
     this.ensurePositiveId(id);
     await this.findOne(id);
 
-    return this.prisma.product.update({
+    const product = await this.prisma.product.update({
       where: { id },
       data: { isActive: false, deletedAt: new Date() },
+      include: this.productInclude,
     });
+
+    return this.formatProduct(product);
   }
 
   async reactivate(id: number) {
     this.ensurePositiveId(id);
     await this.findOne(id);
 
-    return this.prisma.product.update({
+    const product = await this.prisma.product.update({
       where: { id },
       data: { isActive: true, deletedAt: null },
+      include: this.productInclude,
     });
+
+    return this.formatProduct(product);
+  }
+
+  private readonly productInclude = {
+    productType: true,
+    warehouse: true,
+    tags: { include: { tag: true } },
+  } as const;
+
+  // La tabla pivote ProductTag es un detalle interno; la API responde tags planos.
+  private formatProduct(product) {
+    return {
+      ...product,
+      tags: product.tags.map((productTag) => productTag.tag),
+    };
+  }
+
+  private async ensureProductTypeExists(id: number) {
+    this.ensurePositiveId(id);
+
+    const productType = await this.prisma.productType.findUnique({
+      where: { id },
+    });
+
+    if (!productType) {
+      throw new NotFoundException('Tipo de producto no encontrado');
+    }
+
+    if (!productType.isActive) {
+      throw new BadRequestException('El tipo de producto está inactivo');
+    }
   }
 
   private async ensureWarehouseExists(id: number) {
@@ -83,6 +164,24 @@ export class ProductosService {
 
     if (!warehouse) {
       throw new NotFoundException('Bodega no encontrada');
+    }
+
+    if (!warehouse.isActive) {
+      throw new BadRequestException('La bodega está inactiva');
+    }
+  }
+
+  private async ensureTagsExist(tagIds?: number[]) {
+    if (!tagIds) return;
+
+    const tags = await this.prisma.tag.findMany({
+      where: { id: { in: tagIds }, isActive: true },
+    });
+
+    if (tags.length !== tagIds.length) {
+      throw new BadRequestException(
+        'Una o más etiquetas no existen o están inactivas',
+      );
     }
   }
 

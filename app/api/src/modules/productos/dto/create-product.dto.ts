@@ -1,5 +1,7 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayUnique,
+  IsArray,
   IsInt,
   IsNumber,
   IsOptional,
@@ -10,9 +12,10 @@ import {
 } from 'class-validator';
 
 export class CreateProductDto {
-  @IsString()
-  @MinLength(2)
-  type: string;
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  productTypeId: number;
 
   @IsString()
   @MinLength(2)
@@ -41,4 +44,12 @@ export class CreateProductDto {
   @IsInt()
   @IsPositive()
   warehouseId: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @IsPositive({ each: true })
+  tagIds?: number[];
 }

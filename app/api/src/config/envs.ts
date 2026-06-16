@@ -8,6 +8,7 @@ interface EnvVars {
 
 const envSchema = Joi.object<EnvVars>({
   PORT: Joi.number().default(3000),
+
   DATABASE_URL: Joi.string().required(),
 })
   .unknown(true)
@@ -16,7 +17,6 @@ const envSchema = Joi.object<EnvVars>({
 const { error, value } = envSchema.validate(process.env);
 
 if (error) {
-  // Falla temprano si la app no tiene la configuración mínima para arrancar.
   throw new Error(`Config validation error: ${error.message}`);
 }
 

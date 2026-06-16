@@ -1,0 +1,92 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
+import { PrismaService } from '../../shared/prisma/prisma.service';
+import { CreateTagDto } from './dto/create-tag.dto';
+import { FilterTagsDto } from './dto/filter-tags.dto';
+import { UpdateTagDto } from './dto/update-tag.dto';
+
+@Injectable()
+export class TagsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  findAll(filter: FilterTagsDto) {
+    return this.prisma.tag.findMany({
+      where: this.getStatusWhere(filter.estado),
+      orderBy: { id: 'asc' },
+    });
+  }
+
+  async findOne(id: number) {
+    this.ensurePositiveId(id);
+
+    const tag = await this.prisma.tag.findUnique({ where: { id } });
+
+    if (!tag) {
+      throw new NotFoundException('Etiqueta no encontrada');
+    }
+
+    return tag;
+  }
+
+  async create(createTagDto: CreateTagDto) {
+    await this.ensureUniqueName(createTagDto.name);
+
+    return this.prisma.tag.create({ data: createTagDto });
+  }
+
+  async update(id: number, updateTagDto: UpdateTagDto) {
+    this.ensurePositiveId(id);
+    await this.findOne(id);
+
+    if (updateTagDto.name) {
+      await this.ensureUniqueName(updateTagDto.name, id);
+    }
+
+    return this.prisma.tag.update({ where: { id }, data: updateTagDto });
+  }
+
+  async remove(id: number) {
+    this.ensurePositiveId(id);
+    await this.findOne(id);
+
+    return this.prisma.tag.update({
+      where: { id },
+      data: { isActive: false, deletedAt: new Date() },
+    });
+  }
+
+  async reactivate(id: number) {
+    this.ensurePositiveId(id);
+    await this.findOne(id);
+
+    return this.prisma.tag.update({
+      where: { id },
+      data: { isActive: true, deletedAt: null },
+    });
+  }
+
+  private async ensureUniqueName(name: string, currentId?: number) {
+    const existingTag = await this.prisma.tag.findUnique({ where: { name } });
+
+    if (existingTag && existingTag.id !== currentId) {
+      throw new ConflictException('El nombre de la etiqueta ya existe');
+    }
+  }
+
+  private getStatusWhere(status?: RecordStatusQuery) {
+    if (status === RecordStatusQuery.TODOS) return undefined;
+    if (status === RecordStatusQuery.INACTIVOS) return { isActive: false };
+    return { isActive: true };
+  }
+
+  private ensurePositiveId(id: number) {
+    if (id <= 0) {
+      throw new BadRequestException('El id debe ser un número positivo');
+    }
+  }
+}
