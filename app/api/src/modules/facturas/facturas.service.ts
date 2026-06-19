@@ -53,9 +53,12 @@ export class FacturasService {
       }
 
       const groupedItems = this.groupItems(createInvoiceDto.items);
-      const productIds = groupedItems.map((item) => item.productId);
+      const productIds = [
+        ...new Set(groupedItems.map((item) => item.productId)),
+      ];
       const products = await tx.product.findMany({
         where: { id: { in: productIds } },
+        include: { prices: { where: { isActive: true } } },
       });
 
       if (products.length !== productIds.length) {
@@ -83,7 +86,19 @@ export class FacturasService {
           );
         }
 
-        const unitPrice = Number(product.price);
+        const productPrice = item.productPriceId
+          ? product.prices.find((price) => price.id === item.productPriceId)
+          : product.prices.find((price) => price.isDefault);
+
+        if (!productPrice) {
+          throw new BadRequestException(
+            item.productPriceId
+              ? `El precio ${item.productPriceId} no existe, está inactivo o no pertenece al producto ${product.id}`
+              : `El producto ${product.id} no tiene precio default activo`,
+          );
+        }
+
+        const unitPrice = Number(productPrice.price);
         const taxRate = Number(product.taxRate);
         // El precio e impuesto se congelan en el detalle para conservar histórico.
         const subtotal = unitPrice * item.quantity;
@@ -92,6 +107,7 @@ export class FacturasService {
 
         return {
           productId: product.id,
+          productPriceId: productPrice.id,
           quantity: item.quantity,
           unitPrice,
           taxRate,
@@ -172,7 +188,7 @@ export class FacturasService {
         throw new NotFoundException('Factura no encontrada');
       }
 
-      if (invoice.status === InvoiceStatus.ANULADA) {
+      if (invoice.status === 'ANULADA') {
         throw new BadRequestException('La factura ya está anulada');
       }
 
@@ -193,24 +209,33 @@ export class FacturasService {
 
   private readonly invoiceInclude = {
     client: true,
-    items: { include: { product: { include: { productType: true } } } },
+    items: {
+      include: {
+        product: { include: { productType: true } },
+        productPrice: true,
+      },
+    },
   } as const;
 
   private groupItems(items: CreateInvoiceDto['items']) {
-    const groupedItems = new Map<number, number>();
+    const groupedItems = new Map<
+      string,
+      { productId: number; productPriceId?: number; quantity: number }
+    >();
 
-    // Agrupa productos repetidos para validar stock contra la cantidad total.
+    // Agrupa líneas repetidas solo cuando usan el mismo producto y precio.
     for (const item of items) {
-      groupedItems.set(
-        item.productId,
-        (groupedItems.get(item.productId) ?? 0) + item.quantity,
-      );
+      const key = `${item.productId}:${item.productPriceId ?? 'default'}`;
+      const current = groupedItems.get(key);
+
+      groupedItems.set(key, {
+        productId: item.productId,
+        productPriceId: item.productPriceId,
+        quantity: (current?.quantity ?? 0) + item.quantity,
+      });
     }
 
-    return Array.from(groupedItems.entries()).map(([productId, quantity]) => ({
-      productId,
-      quantity,
-    }));
+    return Array.from(groupedItems.values());
   }
 
   private generateConsecutive() {

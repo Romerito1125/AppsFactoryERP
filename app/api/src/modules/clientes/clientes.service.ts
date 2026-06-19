@@ -82,6 +82,62 @@ export class ClientesService {
     });
   }
 
+  async findReferrals(id: number) {
+    this.ensurePositiveId(id);
+    await this.findOne(id);
+
+    return this.prisma.referral.findMany({
+      where: { referrerClientId: id },
+      include: {
+        referredClient: {
+          select: {
+            id: true,
+            identification: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+      orderBy: { id: 'desc' },
+    });
+  }
+
+  async generateReferralCode(id: number) {
+    this.ensurePositiveId(id);
+
+    const client = await this.prisma.client.findUnique({ where: { id } });
+
+    if (!client) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    if (!client.isActive) {
+      throw new BadRequestException(
+        'No se puede generar código para un cliente inactivo',
+      );
+    }
+
+    if (client.referralCode) {
+      return client;
+    }
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const referralCode = this.buildReferralCode(client.firstName, client.id);
+      const existingClient = await this.prisma.client.findUnique({
+        where: { referralCode },
+      });
+
+      if (!existingClient) {
+        return this.prisma.client.update({
+          where: { id },
+          data: { referralCode },
+        });
+      }
+    }
+
+    throw new ConflictException('No fue posible generar un código único');
+  }
+
   private getStatusWhere(status?: RecordStatusQuery) {
     if (status === RecordStatusQuery.TODOS) {
       return undefined;
@@ -98,5 +154,18 @@ export class ClientesService {
     if (id <= 0) {
       throw new BadRequestException('El id debe ser un número positivo');
     }
+  }
+
+  private buildReferralCode(firstName: string, id: number) {
+    const prefix = firstName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .toUpperCase()
+      .slice(0, 4)
+      .padEnd(4, 'X');
+    const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+
+    return `${prefix}${id}${suffix}`;
   }
 }

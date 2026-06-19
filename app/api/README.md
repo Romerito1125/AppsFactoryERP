@@ -24,10 +24,13 @@ src/
     usuarios/
     clientes/
     productos/
+    product-prices/
     product-types/
     tags/
     bodegas/
     facturas/
+    deliveries/
+    referrals/
     ofertas/
 ```
 
@@ -65,6 +68,20 @@ bun run format
 bun run test
 ```
 
+Pruebas HTTP de contratos contra un backend corriendo:
+
+```bash
+bun scripts/test-api-contracts.ts
+```
+
+Por defecto usa `http://localhost:3000`. Para otro host:
+
+```bash
+API_URL="http://localhost:3001" bun scripts/test-api-contracts.ts
+```
+
+El script crea datos de prueba únicos y valida los endpoints nuevos/ajustados con 5 verificaciones por endpoint: productos con precios, precios de producto, facturas con `productPriceId`, domicilios y referidos.
+
 ## Prisma
 
 El schema está en `prisma/schema.prisma` y define:
@@ -74,10 +91,13 @@ El schema está en `prisma/schema.prisma` y define:
 - `Warehouse`
 - `ProductType`
 - `Product`
+- `ProductPrice`
 - `Tag`
 - `ProductTag`
 - `Invoice`
+- `Delivery`
 - `InvoiceItem`
+- `Referral`
 - `Offer`
 - `OfferClient`
 - `OfferProduct`
@@ -85,6 +105,7 @@ El schema está en `prisma/schema.prisma` y define:
 - `OfferTag`
 - `Role`
 - `InvoiceStatus`
+- `DeliveryStatus`
 - `DiscountType`
 
 Este proyecto usa Prisma 7. Por eso la URL de conexión no vive dentro de `schema.prisma`; se configura en `prisma.config.ts` usando `DATABASE_URL`.
@@ -124,6 +145,7 @@ Body requerido:
 
 ```json
 {
+  "clientId": 1,
   "username": "admin",
   "password": "secret123",
   "role": "ADMIN"
@@ -134,6 +156,7 @@ Body con campo opcional:
 
 ```json
 {
+  "clientId": 2,
   "username": "vendedor1",
   "password": "secret123",
   "role": "VENDEDOR",
@@ -149,6 +172,7 @@ Body parcial. Envía solo los campos a cambiar:
 
 ```json
 {
+  "clientId": 3,
   "password": "nuevoSecret123",
   "role": "CONTADOR",
   "isActive": true
@@ -233,10 +257,31 @@ No recibe body. Marca `isActive = false` y `deletedAt`.
 
 No recibe body. Marca `isActive = true` y `deletedAt = null`.
 
+`GET /clientes/:id/referidos`
+
+No recibe body. Retorna los clientes referidos por el cliente `:id`.
+
+`POST /clientes/:id/codigo-referido`
+
+No recibe body. Si el cliente no tiene código de referido, lo genera; si ya tiene uno, retorna el existente.
+
+Respuesta esperada:
+
+```json
+{
+  "id": 1,
+  "identification": "123456789",
+  "firstName": "Juan",
+  "lastName": "Pérez",
+  "referralCode": "JUAN1A9X2"
+}
+```
+
 Notas:
 
 - `identification` es único, incluso si el cliente está inactivo.
 - Si `identification` ya existe, responde `409 Conflict`.
+- `referralCode` es único y se guarda en el cliente.
 
 ### Productos
 
@@ -258,31 +303,47 @@ No recibe body. `id` debe ser un número positivo.
 
 `POST /productos`
 
-Body requerido:
+Body requerido. `prices` es opcional; si se envía un solo precio sin `isDefault`, queda como default automáticamente. Si se envían varios precios sin default, el primero queda como default. Si se envían varios con `isDefault = true`, responde `400`.
 
 ```json
 {
   "productTypeId": 1,
   "name": "Café premium",
-  "price": 25000,
   "taxRate": 19,
   "quantity": 50,
-  "warehouseId": 1
+  "warehouseId": 1,
+  "prices": [
+    {
+      "name": "Precio normal",
+      "price": 25000,
+      "isDefault": true
+    }
+  ]
 }
 ```
 
-Body con descripción y etiquetas opcionales:
+Body con descripción, etiquetas y varios precios:
 
 ```json
 {
   "productTypeId": 2,
   "name": "Mouse inalámbrico",
   "description": "Mouse ergonómico de 2.4 GHz",
-  "price": 85000,
   "taxRate": 19,
   "quantity": 20,
   "warehouseId": 1,
-  "tagIds": [1, 2, 3]
+  "tagIds": [1, 2, 3],
+  "prices": [
+    {
+      "name": "Precio normal",
+      "price": 85000,
+      "isDefault": true
+    },
+    {
+      "name": "Precio mayorista",
+      "price": 78000
+    }
+  ]
 }
 ```
 
@@ -292,7 +353,6 @@ Body parcial. Envía solo los campos a cambiar:
 
 ```json
 {
-  "price": 90000,
   "quantity": 25,
   "tagIds": [1, 3]
 }
@@ -321,9 +381,74 @@ Notas:
 - `productTypeId` debe existir y estar activo.
 - `warehouseId` debe existir y estar activo.
 - `tagIds` es opcional; si se envía en actualización, reemplaza todas las etiquetas anteriores.
-- `price`, `taxRate` y `quantity` no aceptan valores negativos.
+- `taxRate` y `quantity` no aceptan valores negativos.
 - `quantity` representa inventario disponible.
-- Las respuestas incluyen `productType`, `warehouse` y `tags` como arrays/objetos listos para mostrar en frontend.
+- Las respuestas incluyen `productType`, `warehouse`, `tags` y `prices` como arrays/objetos listos para mostrar en frontend.
+
+### Precios de producto
+
+`GET /precios-producto`
+
+No recibe body. Lista todos los precios con su producto relacionado.
+
+`GET /precios-producto/:id`
+
+No recibe body. Consulta un precio por id.
+
+`GET /productos/:id/precios`
+
+No recibe body. Lista los precios del producto `:id`.
+
+`POST /productos/:id/precios`
+
+Body requerido:
+
+```json
+{
+  "name": "Precio normal",
+  "price": 85000,
+  "isDefault": true,
+  "startsAt": "2026-06-01T00:00:00.000Z",
+  "endsAt": "2026-12-31T23:59:59.000Z"
+}
+```
+
+Body mínimo:
+
+```json
+{
+  "name": "Precio mayorista",
+  "price": 78000
+}
+```
+
+`PATCH /precios-producto/:id`
+
+Body parcial:
+
+```json
+{
+  "name": "Precio mayorista actualizado",
+  "price": 76000,
+  "isActive": true
+}
+```
+
+`DELETE /precios-producto/:id`
+
+No recibe body. No borra físicamente; marca `isActive = false` y `isDefault = false`.
+
+`PATCH /precios-producto/:id/default`
+
+No recibe body. Marca ese precio activo como default y desmarca los demás precios del mismo producto dentro de una transacción.
+
+Notas:
+
+- `price` debe ser mayor que 0.
+- `endsAt` debe ser mayor que `startsAt` si ambas fechas existen.
+- Un precio inactivo no puede ser default.
+- Debe existir máximo un precio default activo por producto.
+- Los precios no se eliminan físicamente porque las facturas históricas pueden referenciarlos.
 
 ### Tipos de producto
 
@@ -616,6 +741,7 @@ Body requerido:
   "items": [
     {
       "productId": 1,
+      "productPriceId": 2,
       "quantity": 2
     },
     {
@@ -631,6 +757,8 @@ Reglas del body:
 - `clientId` debe existir y estar activo.
 - `items` debe tener al menos un producto.
 - `productId` debe existir y estar activo.
+- `productPriceId` es opcional. Si se envía, debe existir, estar activo y pertenecer al `productId`.
+- Si no se envía `productPriceId`, el backend usa el precio default activo del producto.
 - `quantity` debe ser un número entero positivo.
 - Debe existir stock suficiente para cada producto.
 
@@ -651,11 +779,111 @@ No recibe body. Marca la factura como `ANULADA` y devuelve el stock de sus items
 Notas:
 
 - Los productos se guardan mediante `InvoiceItem`, no como arreglo simple.
-- El backend consulta precio e impuesto actual del producto.
+- El backend consulta el precio activo indicado por `productPriceId` o el precio default activo del producto.
 - El backend calcula subtotal, impuestos y total por item y por factura.
+- `unitPrice` guarda una copia histórica del precio usado; si luego cambia `ProductPrice.price`, la factura no cambia.
+- Las respuestas de factura incluyen `productPrice` cuando el item lo tiene asociado.
 - La creación descuenta inventario en transacción.
 - Si no hay stock suficiente, lanza error y no crea la factura.
 - `PATCH /facturas/:id` no recalcula items ni totales para evitar inconsistencias contables.
+
+### Domicilios
+
+`GET /domicilios`
+
+No recibe body. Lista domicilios con la factura relacionada y su `consecutive`.
+
+`GET /domicilios/:id`
+
+No recibe body. Consulta un domicilio por id.
+
+`POST /domicilios`
+
+Body requerido:
+
+```json
+{
+  "invoiceId": 1,
+  "address": "Calle 123 #45-67",
+  "recipientName": "Juan Pérez",
+  "recipientPhone": "3001234567",
+  "notes": "Entregar en portería"
+}
+```
+
+`PATCH /domicilios/:id`
+
+Body parcial:
+
+```json
+{
+  "address": "Carrera 10 #20-30",
+  "recipientPhone": "3112223344",
+  "notes": "Llamar antes de llegar"
+}
+```
+
+`PATCH /domicilios/:id/estado`
+
+Body requerido:
+
+```json
+{
+  "status": "EN_CAMINO"
+}
+```
+
+Estados válidos: `PENDIENTE`, `EN_PREPARACION`, `EN_CAMINO`, `ENTREGADO`, `CANCELADO`.
+
+`DELETE /domicilios/:id`
+
+No recibe body. No borra físicamente porque `Delivery` no tiene `isActive`; marca `status = CANCELADO` y limpia `deliveredAt`.
+
+Notas:
+
+- `invoiceId` debe existir.
+- Una factura anulada no puede recibir domicilio.
+- `invoiceId` es único: una factura solo puede tener un domicilio.
+- Si el estado cambia a `ENTREGADO`, el backend llena `deliveredAt` con la fecha actual.
+- Si el estado cambia de `ENTREGADO` a otro estado, el backend limpia `deliveredAt` para reflejar que ya no está entregado.
+
+### Referidos
+
+`GET /referidos`
+
+No recibe body. Lista referidos con datos básicos de quien refiere y del referido.
+
+`GET /referidos/:id`
+
+No recibe body. Consulta un referido por id.
+
+`GET /clientes/:id/referidos`
+
+No recibe body. Lista los referidos generados por el cliente `:id`.
+
+`POST /clientes/:id/codigo-referido`
+
+No recibe body. Genera o retorna el código existente del cliente.
+
+`POST /referidos`
+
+Body requerido:
+
+```json
+{
+  "referredClientId": 10,
+  "codeUsed": "JUAN123"
+}
+```
+
+Notas:
+
+- `codeUsed` debe existir en `Client.referralCode`.
+- El dueño del código debe estar activo.
+- `referredClientId` debe existir y estar activo.
+- Un cliente no puede referirse a sí mismo.
+- Un cliente referido solo puede tener un registro en `Referral`.
+- Las respuestas incluyen datos básicos de `referrerClient` y `referredClient`.
 
 ## Peticiones desde frontend
 
@@ -720,12 +948,35 @@ await apiRequest('/productos', {
     productTypeId: 1,
     name: 'Mouse Logitech',
     description: 'Mouse inalámbrico',
-    price: 85000,
     taxRate: 19,
     quantity: 10,
     warehouseId: 1,
     tagIds: [1, 2, 3],
+    prices: [
+      { name: 'Precio normal', price: 85000, isDefault: true },
+      { name: 'Precio mayorista', price: 78000 },
+    ],
   }),
+});
+```
+
+Crear un precio para un producto existente:
+
+```ts
+await apiRequest('/productos/5/precios', {
+  method: 'POST',
+  body: JSON.stringify({
+    name: 'Precio temporada',
+    price: 82000,
+  }),
+});
+```
+
+Marcar un precio como default:
+
+```ts
+await apiRequest('/precios-producto/8/default', {
+  method: 'PATCH',
 });
 ```
 
@@ -798,9 +1049,53 @@ await apiRequest('/facturas', {
   body: JSON.stringify({
     clientId: 1,
     items: [
-      { productId: 5, quantity: 2 },
+      { productId: 5, productPriceId: 8, quantity: 2 },
       { productId: 9, quantity: 1 },
     ],
+  }),
+});
+```
+
+Crear un domicilio para una factura:
+
+```ts
+await apiRequest('/domicilios', {
+  method: 'POST',
+  body: JSON.stringify({
+    invoiceId: 1,
+    address: 'Calle 123 #45-67',
+    recipientName: 'Juan Pérez',
+    recipientPhone: '3001234567',
+    notes: 'Entregar en portería',
+  }),
+});
+```
+
+Actualizar estado de domicilio:
+
+```ts
+await apiRequest('/domicilios/1/estado', {
+  method: 'PATCH',
+  body: JSON.stringify({ status: 'ENTREGADO' }),
+});
+```
+
+Generar código de referido:
+
+```ts
+const client = await apiRequest('/clientes/1/codigo-referido', {
+  method: 'POST',
+});
+```
+
+Registrar referido:
+
+```ts
+await apiRequest('/referidos', {
+  method: 'POST',
+  body: JSON.stringify({
+    referredClientId: 10,
+    codeUsed: client.referralCode,
   }),
 });
 ```
@@ -810,6 +1105,7 @@ Notas para frontend:
 - Los IDs deben enviarse como números, no strings.
 - Las fechas se envían en ISO 8601, por ejemplo `2026-06-01T00:00:00.000Z`.
 - Los listados aceptan `?estado=inactivos` y `?estado=todos`; sin query retornan activos.
+- Para facturar, envía `productPriceId` cuando el usuario seleccione un precio específico; si no, el backend usa el precio default activo.
 - Las ofertas aplicables son solo consulta; la factura todavía no descuenta ofertas automáticamente.
 - Si el backend responde `400`, revisa validaciones de DTO: IDs positivos, arrays únicos, fechas y descuentos.
 
@@ -817,10 +1113,12 @@ Notas para frontend:
 
 - No se eliminan físicamente usuarios, clientes, productos, bodegas, tipos de producto, etiquetas ni ofertas.
 - Las facturas anuladas mantienen sus `InvoiceItem`.
+- Los domicilios cancelados mantienen el registro con `status = CANCELADO`.
+- Los precios de producto desactivados mantienen el registro con `isActive = false`.
 - Los endpoints están en español; modelos y campos internos están en inglés.
 - Las operaciones sensibles de facturación usan transacciones Prisma.
 - Las escrituras de productos con etiquetas y ofertas con targets usan transacciones Prisma.
-- `username`, `identification`, `consecutive`, `ProductType.name` y `Tag.name` son únicos.
+- `username`, `identification`, `consecutive`, `ProductType.name`, `Tag.name`, `Client.referralCode`, `User.clientId`, `Delivery.invoiceId` y `Referral.referredClientId` son únicos.
 
 ## Siguientes pasos sugeridos
 

@@ -28,9 +28,19 @@ export class ClientesController {
     return this.clientesService.findOne(id);
   }
 
+  @Get(':id/referidos')
+  findReferrals(@Param('id', ParseIntPipe) id: number) {
+    return this.clientesService.findReferrals(id);
+  }
+
   @Post()
   create(@Body() createClientDto: CreateClientDto) {
     return this.clientesService.create(createClientDto);
+  }
+
+  @Post(':id/codigo-referido')
+  generateReferralCode(@Param('id', ParseIntPipe) id: number) {
+    return this.clientesService.generateReferralCode(id);
   }
 
   @Patch(':id')

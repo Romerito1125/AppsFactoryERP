@@ -1,0 +1,187 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../../shared/prisma/prisma.service';
+import { CreateProductPriceDto } from './dto/create-product-price.dto';
+import { UpdateProductPriceDto } from './dto/update-product-price.dto';
+
+@Injectable()
+export class ProductPricesService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  findAll() {
+    return this.prisma.productPrice.findMany({
+      include: { product: true },
+      orderBy: { id: 'asc' },
+    });
+  }
+
+  async findOne(id: number) {
+    this.ensurePositiveId(id);
+
+    const productPrice = await this.prisma.productPrice.findUnique({
+      where: { id },
+      include: { product: true },
+    });
+
+    if (!productPrice) {
+      throw new NotFoundException('Precio de producto no encontrado');
+    }
+
+    return productPrice;
+  }
+
+  async findByProduct(productId: number) {
+    this.ensurePositiveId(productId);
+    await this.ensureProductExists(productId);
+
+    return this.prisma.productPrice.findMany({
+      where: { productId },
+      include: { product: true },
+      orderBy: { id: 'asc' },
+    });
+  }
+
+  async create(
+    productId: number,
+    createProductPriceDto: CreateProductPriceDto,
+  ) {
+    this.ensurePositiveId(productId);
+    await this.ensureProductExists(productId);
+
+    const data = this.normalizeDates(createProductPriceDto);
+
+    if (data.isDefault && data.isActive === false) {
+      throw new BadRequestException(
+        'Un precio inactivo no puede ser marcado como default',
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (data.isDefault) {
+        await tx.productPrice.updateMany({
+          where: { productId },
+          data: { isDefault: false },
+        });
+      }
+
+      return tx.productPrice.create({
+        data: {
+          name: createProductPriceDto.name,
+          price: createProductPriceDto.price,
+          productId,
+          isActive: data.isActive ?? true,
+          isDefault: data.isDefault ?? false,
+          startsAt: data.startsAt,
+          endsAt: data.endsAt,
+        },
+        include: { product: true },
+      });
+    });
+  }
+
+  async update(id: number, updateProductPriceDto: UpdateProductPriceDto) {
+    const current = await this.findOne(id);
+    const data = this.normalizeDates(updateProductPriceDto, current);
+
+    if (data.isDefault && data.isActive === false) {
+      throw new BadRequestException(
+        'Un precio inactivo no puede ser marcado como default',
+      );
+    }
+
+    if (data.isActive === false) {
+      data.isDefault = false;
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (data.isDefault) {
+        await tx.productPrice.updateMany({
+          where: { productId: current.productId, id: { not: id } },
+          data: { isDefault: false },
+        });
+      }
+
+      return tx.productPrice.update({
+        where: { id },
+        data,
+        include: { product: true },
+      });
+    });
+  }
+
+  async remove(id: number) {
+    await this.findOne(id);
+
+    return this.prisma.productPrice.update({
+      where: { id },
+      data: { isActive: false, isDefault: false },
+      include: { product: true },
+    });
+  }
+
+  async markDefault(id: number) {
+    const productPrice = await this.findOne(id);
+
+    if (!productPrice.isActive) {
+      throw new BadRequestException(
+        'No se puede marcar como default un precio inactivo',
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.productPrice.updateMany({
+        where: { productId: productPrice.productId, id: { not: id } },
+        data: { isDefault: false },
+      });
+
+      return tx.productPrice.update({
+        where: { id },
+        data: { isDefault: true },
+        include: { product: true },
+      });
+    });
+  }
+
+  private async ensureProductExists(id: number) {
+    const product = await this.prisma.product.findUnique({ where: { id } });
+
+    if (!product) {
+      throw new NotFoundException('Producto no encontrado');
+    }
+
+    if (!product.isActive) {
+      throw new BadRequestException('El producto está inactivo');
+    }
+  }
+
+  private normalizeDates(
+    dto: CreateProductPriceDto | UpdateProductPriceDto,
+    current?: { startsAt: Date | null; endsAt: Date | null },
+  ) {
+    const startsAt = dto.startsAt ? new Date(dto.startsAt) : undefined;
+    const endsAt = dto.endsAt ? new Date(dto.endsAt) : undefined;
+    const finalStartsAt = startsAt ?? current?.startsAt ?? undefined;
+    const finalEndsAt = endsAt ?? current?.endsAt ?? undefined;
+
+    if (finalStartsAt && finalEndsAt && finalEndsAt <= finalStartsAt) {
+      throw new BadRequestException(
+        'La fecha final del precio debe ser mayor que la inicial',
+      );
+    }
+
+    return {
+      ...dto,
+      startsAt,
+      endsAt,
+    };
+  }
+
+  private ensurePositiveId(id: number) {
+    if (id <= 0) {
+      throw new BadRequestException('El id debe ser un número positivo');
+    }
+  }
+}

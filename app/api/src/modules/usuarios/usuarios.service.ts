@@ -36,6 +36,8 @@ export class UsuariosService {
   }
 
   async create(createUserDto: CreateUserDto) {
+    await this.ensureClientExists(createUserDto.clientId);
+
     const existingUser = await this.prisma.user.findUnique({
       where: { username: createUserDto.username },
     });
@@ -58,6 +60,10 @@ export class UsuariosService {
   async update(id: number, updateUserDto: UpdateUserDto) {
     this.ensurePositiveId(id);
     await this.findOne(id);
+
+    if (updateUserDto.clientId) {
+      await this.ensureClientExists(updateUserDto.clientId, id);
+    }
 
     if (updateUserDto.username) {
       const existingUser = await this.prisma.user.findUnique({
@@ -107,9 +113,31 @@ export class UsuariosService {
     }
   }
 
+  private async ensureClientExists(clientId: number, currentUserId?: number) {
+    this.ensurePositiveId(clientId);
+
+    const client = await this.prisma.client.findUnique({
+      where: { id: clientId },
+      include: { user: true },
+    });
+
+    if (!client) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+
+    if (!client.isActive) {
+      throw new BadRequestException('El cliente está inactivo');
+    }
+
+    if (client.user && client.user.id !== currentUserId) {
+      throw new ConflictException('El cliente ya tiene usuario');
+    }
+  }
+
   private userSelect() {
     return {
       id: true,
+      clientId: true,
       username: true,
       role: true,
       isActive: true,

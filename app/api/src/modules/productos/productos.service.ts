@@ -41,12 +41,13 @@ export class ProductosService {
   }
 
   async create(createProductDto: CreateProductDto) {
-    const { tagIds, ...productData } = createProductDto;
+    const { tagIds, prices, ...productData } = createProductDto;
 
     // El producto depende de catálogos activos; no se crean relaciones inválidas.
     await this.ensureProductTypeExists(productData.productTypeId);
     await this.ensureWarehouseExists(productData.warehouseId);
     await this.ensureTagsExist(tagIds);
+    const normalizedPrices = this.normalizeInitialPrices(prices);
 
     // Product y ProductTag deben persistirse juntos para evitar productos a medio relacionar.
     const product = await this.prisma.$transaction((tx) =>
@@ -55,6 +56,9 @@ export class ProductosService {
           ...productData,
           tags: tagIds?.length
             ? { create: tagIds.map((tagId) => ({ tagId })) }
+            : undefined,
+          prices: normalizedPrices.length
+            ? { create: normalizedPrices }
             : undefined,
         },
         include: this.productInclude,
@@ -131,6 +135,7 @@ export class ProductosService {
     productType: true,
     warehouse: true,
     tags: { include: { tag: true } },
+    prices: { orderBy: { id: 'asc' } },
   } as const;
 
   // La tabla pivote ProductTag es un detalle interno; la API responde tags planos.
@@ -139,6 +144,39 @@ export class ProductosService {
       ...product,
       tags: product.tags.map((productTag) => productTag.tag),
     };
+  }
+
+  private normalizeInitialPrices(prices?: CreateProductDto['prices']) {
+    if (!prices?.length) return [];
+
+    const defaultCount = prices.filter((price) => price.isDefault).length;
+
+    if (defaultCount > 1) {
+      throw new BadRequestException(
+        'Solo puede existir un precio default por producto',
+      );
+    }
+
+    return prices.map((price, index) => {
+      const startsAt = price.startsAt ? new Date(price.startsAt) : undefined;
+      const endsAt = price.endsAt ? new Date(price.endsAt) : undefined;
+
+      if (startsAt && endsAt && endsAt <= startsAt) {
+        throw new BadRequestException(
+          'La fecha final del precio debe ser mayor que la inicial',
+        );
+      }
+
+      return {
+        name: price.name,
+        price: price.price,
+        isActive: price.isActive ?? true,
+        // Si no se envía default, se toma el primer precio para dejar uno activo por defecto.
+        isDefault: price.isDefault ?? (defaultCount === 0 && index === 0),
+        startsAt,
+        endsAt,
+      };
+    });
   }
 
   private async ensureProductTypeExists(id: number) {

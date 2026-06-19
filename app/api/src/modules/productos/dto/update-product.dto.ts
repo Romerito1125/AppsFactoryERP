@@ -31,12 +31,6 @@ export class UpdateProductDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0)
-  price?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0)
   taxRate?: number;
 
   @IsOptional()
