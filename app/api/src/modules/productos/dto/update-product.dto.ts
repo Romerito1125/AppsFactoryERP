@@ -19,6 +19,12 @@ export class UpdateProductDto {
   productTypeId?: number;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  providerId?: number;
+
+  @IsOptional()
   @IsString()
   @MinLength(2)
   name?: string;
@@ -34,16 +40,22 @@ export class UpdateProductDto {
   taxRate?: number;
 
   @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  quantity?: number;
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  brand?: string;
 
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @IsPositive()
-  warehouseId?: number;
+  @Min(0)
+  minimumStock?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  maximumStock?: number;
 
   @IsOptional()
   @IsArray()

@@ -56,4 +56,9 @@ export class ProductPricesController {
   markDefault(@Param('id', ParseIntPipe) id: number) {
     return this.productPricesService.markDefault(id);
   }
+
+  @Get('precios-producto/:id/historial')
+  history(@Param('id', ParseIntPipe) id: number) {
+    return this.productPricesService.history(id);
+  }
 }

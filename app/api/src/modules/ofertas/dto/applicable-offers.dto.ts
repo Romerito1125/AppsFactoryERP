@@ -4,6 +4,7 @@ import {
   IsArray,
   IsInt,
   IsPositive,
+  IsOptional,
   ValidateNested,
 } from 'class-validator';
 
@@ -12,6 +13,12 @@ export class ApplicableOfferItemDto {
   @IsInt()
   @IsPositive()
   productId: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  productPriceId?: number;
 
   @Type(() => Number)
   @IsInt()

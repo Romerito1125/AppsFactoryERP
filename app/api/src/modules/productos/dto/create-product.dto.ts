@@ -47,6 +47,11 @@ export class CreateProductDto {
   @IsPositive()
   productTypeId: number;
 
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  providerId: number;
+
   @IsString()
   @MinLength(2)
   name: string;
@@ -60,15 +65,20 @@ export class CreateProductDto {
   @Min(0)
   taxRate: number;
 
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  quantity: number;
+  @IsString()
+  @MinLength(1)
+  brand: string;
 
   @Type(() => Number)
   @IsInt()
-  @IsPositive()
-  warehouseId: number;
+  @Min(0)
+  minimumStock: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  maximumStock?: number;
 
   @IsOptional()
   @IsArray()
@@ -83,4 +93,22 @@ export class CreateProductDto {
   @ValidateNested({ each: true })
   @Type(() => CreateInitialProductPriceDto)
   prices?: CreateInitialProductPriceDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateInitialProductWarehouseDto)
+  warehouses?: CreateInitialProductWarehouseDto[];
+}
+
+export class CreateInitialProductWarehouseDto {
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  warehouseId: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  quantity: number;
 }

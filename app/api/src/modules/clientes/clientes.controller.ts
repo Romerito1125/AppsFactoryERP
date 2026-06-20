@@ -13,6 +13,7 @@ import { ClientesService } from './clientes.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { FilterClientsDto } from './dto/filter-clients.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
+import { UpdateReferralLevelDto } from './dto/update-referral-level.dto';
 
 @Controller('clientes')
 export class ClientesController {
@@ -59,5 +60,13 @@ export class ClientesController {
   @Patch(':id/reactivar')
   reactivate(@Param('id', ParseIntPipe) id: number) {
     return this.clientesService.reactivate(id);
+  }
+
+  @Patch(':id/nivel-referido')
+  updateReferralLevel(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateReferralLevelDto,
+  ) {
+    return this.clientesService.updateReferralLevel(id, dto.referralLevel);
   }
 }

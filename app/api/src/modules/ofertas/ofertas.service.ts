@@ -217,18 +217,43 @@ export class OfertasService {
             product.id,
             product.productTypeId,
             productTagIds,
+            item.quantity,
           ),
+        );
+        const evaluatedOffers = applicableOffers.map((offer) => ({
+          id: offer.id,
+          name: offer.name,
+          discountType: offer.discountType,
+          discountValue: String(offer.discountValue),
+          isStackable: offer.isStackable,
+          estimatedDiscount: this.calculateDiscount(offer, item.quantity),
+        }));
+        const stackableOffers = evaluatedOffers.filter(
+          (offer) => offer.isStackable,
+        );
+        const bestSingleOffer = evaluatedOffers.reduce<any>(
+          (best, offer) =>
+            !best || offer.estimatedDiscount > best.estimatedDiscount
+              ? offer
+              : best,
+          undefined,
         );
 
         return {
           productId: item.productId,
+          productPriceId: item.productPriceId,
           quantity: item.quantity,
-          applicableOffers: applicableOffers.map((offer) => ({
-            id: offer.id,
-            name: offer.name,
-            discountType: offer.discountType,
-            discountValue: String(offer.discountValue),
-          })),
+          applicableOffers: evaluatedOffers,
+          selectedOffers:
+            stackableOffers.length &&
+            stackableOffers.reduce(
+              (sum, offer) => sum + offer.estimatedDiscount,
+              0,
+            ) > (bestSingleOffer?.estimatedDiscount ?? 0)
+              ? stackableOffers
+              : bestSingleOffer
+                ? [bestSingleOffer]
+                : [],
         };
       }),
     };
@@ -260,7 +285,12 @@ export class OfertasService {
     productId: number,
     productTypeId: number,
     tagIds: number[],
+    quantity: number,
   ) {
+    if (offer.minimumProductQuantity && quantity < offer.minimumProductQuantity)
+      return false;
+    if (offer.maximumProductQuantity && quantity > offer.maximumProductQuantity)
+      return false;
     // Sin targets significa oferta general; con targets basta coincidir con uno.
     const hasTargets =
       offer.clients.length > 0 ||
@@ -280,6 +310,13 @@ export class OfertasService {
       ) ||
       offer.tags.some((offerTag) => tagIds.includes(offerTag.tagId))
     );
+  }
+
+  private calculateDiscount(offer, quantity: number) {
+    const value = Number(offer.discountValue);
+    return offer.discountType === DiscountType.PORCENTAJE
+      ? value
+      : value * quantity;
   }
 
   private buildOfferClients(ids?: number[]) {

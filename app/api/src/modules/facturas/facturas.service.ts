@@ -36,7 +36,7 @@ export class FacturasService {
   }
 
   async create(createInvoiceDto: CreateInvoiceDto) {
-    // Factura, detalles y descuento de stock deben confirmarse o fallar juntos.
+    // La venta no descuenta stock por bodega; el inventario se maneja en /inventario.
     return this.prisma.$transaction(async (tx) => {
       const client = await tx.client.findUnique({
         where: { id: createInvoiceDto.clientId },
@@ -80,12 +80,6 @@ export class FacturasService {
           );
         }
 
-        if (product.quantity < item.quantity) {
-          throw new BadRequestException(
-            `Stock insuficiente para el producto ${product.id}`,
-          );
-        }
-
         const productPrice = item.productPriceId
           ? product.prices.find((price) => price.id === item.productPriceId)
           : product.prices.find((price) => price.isDefault);
@@ -116,20 +110,6 @@ export class FacturasService {
           total,
         };
       });
-
-      for (const item of invoiceItems) {
-        // updateMany evita vender si otro proceso consumió el stock antes.
-        const updated = await tx.product.updateMany({
-          where: { id: item.productId, quantity: { gte: item.quantity } },
-          data: { quantity: { decrement: item.quantity } },
-        });
-
-        if (updated.count !== 1) {
-          throw new BadRequestException(
-            `Stock insuficiente para el producto ${item.productId}`,
-          );
-        }
-      }
 
       const subtotal = invoiceItems.reduce(
         (sum, item) => sum + item.subtotal,
@@ -177,11 +157,10 @@ export class FacturasService {
   async remove(id: number) {
     this.ensurePositiveId(id);
 
-    // Anular devuelve stock y conserva la factura para trazabilidad.
+    // Anular conserva la factura para trazabilidad; no ajusta inventario por bodega.
     return this.prisma.$transaction(async (tx) => {
       const invoice = await tx.invoice.findUnique({
         where: { id },
-        include: { items: true },
       });
 
       if (!invoice) {
@@ -190,13 +169,6 @@ export class FacturasService {
 
       if (invoice.status === 'ANULADA') {
         throw new BadRequestException('La factura ya está anulada');
-      }
-
-      for (const item of invoice.items) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { quantity: { increment: item.quantity } },
-        });
       }
 
       return tx.invoice.update({

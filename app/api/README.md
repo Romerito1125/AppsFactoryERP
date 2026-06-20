@@ -1,147 +1,114 @@
-# API REST Modular con NestJS, Bun y Prisma
+# API REST Modular ERP
 
-Base de monolito modular para una API REST construida con NestJS + TypeScript, Bun como gestor de paquetes y Prisma como ORM.
+API NestJS + TypeScript ejecutada con Bun, Prisma y PostgreSQL/Supabase. Es un monolito modular: no usa microservicios, NATS, RabbitMQ ni mensajería.
 
-La aplicación corre como un solo proceso NestJS. No usa microservicios, NATS, RabbitMQ ni comunicación entre servicios.
-
-## Arquitectura
-
-La estructura separa configuración, código común, Prisma compartido y módulos de negocio:
+Base local por defecto:
 
 ```txt
-src/
-  config/
-    envs.ts
-  shared/
-    prisma/
-      prisma.module.ts
-      prisma.service.ts
-  common/
-    decorators/
-    enums/
-    guards/
-  modules/
-    usuarios/
-    clientes/
-    productos/
-    product-prices/
-    product-types/
-    tags/
-    bodegas/
-    facturas/
-    deliveries/
-    referrals/
-    ofertas/
+http://localhost:3000
 ```
 
-Cada dominio tiene su propio módulo, controlador, servicio y DTOs.
+Para enviar bodies usa siempre:
 
-## Requisitos
-
-- Bun
-- PostgreSQL
-- Variables de entorno configuradas en `.env`
-
-Ejemplo:
-
-```env
-PORT=3000
-DATABASE_URL="postgresql://user:password@localhost:5432/app"
+```http
+Content-Type: application/json
 ```
 
-También puedes tomar `.env.example` como base.
-
-## Instalación y ejecución
+## Comandos
 
 ```bash
 bun install
+bunx prisma format
 bunx prisma generate
-bunx prisma migrate dev
 bun run start:dev
 ```
 
-Comandos útiles:
+Si necesitas migrar:
+
+```bash
+bunx prisma migrate dev --name update_erp_features
+```
+
+Build y formato:
 
 ```bash
 bun run build
 bun run format
-bun run test
 ```
 
-Pruebas HTTP de contratos contra un backend corriendo:
+Pruebas HTTP contra el servidor corriendo en el puerto 3000:
 
 ```bash
-bun scripts/test-api-contracts.ts
+bun run test:erp-endpoints
 ```
 
-Por defecto usa `http://localhost:3000`. Para otro host:
+Con otra URL:
 
 ```bash
-API_URL="http://localhost:3001" bun scripts/test-api-contracts.ts
+API_URL="http://localhost:3001" bun run test:erp-endpoints
 ```
 
-El script crea datos de prueba únicos y valida los endpoints nuevos/ajustados con 5 verificaciones por endpoint: productos con precios, precios de producto, facturas con `productPriceId`, domicilios y referidos.
+El script `scripts/test-erp-endpoints.ts` crea datos únicos, ejecuta casos válidos con 10 registros de prueba por dominio principal y también valida escenarios que deben fallar.
 
-## Prisma
+## Queries Comunes
 
-El schema está en `prisma/schema.prisma` y define:
+Los módulos con soft delete listan activos por defecto y aceptan:
 
-- `User`
-- `Client`
-- `Warehouse`
-- `ProductType`
-- `Product`
-- `ProductPrice`
-- `Tag`
-- `ProductTag`
-- `Invoice`
-- `Delivery`
-- `InvoiceItem`
-- `Referral`
-- `Offer`
-- `OfferClient`
-- `OfferProduct`
-- `OfferProductType`
-- `OfferTag`
-- `Role`
-- `InvoiceStatus`
-- `DeliveryStatus`
-- `DiscountType`
-
-Este proyecto usa Prisma 7. Por eso la URL de conexión no vive dentro de `schema.prisma`; se configura en `prisma.config.ts` usando `DATABASE_URL`.
-
-## Validación
-
-La validación global está configurada en `src/main.ts`:
-
-```ts
-app.useGlobalPipes(
-  new ValidationPipe({
-    whitelist: true,
-    transform: true,
-  }),
-);
+```http
+GET /recurso?estado=inactivos
+GET /recurso?estado=todos
 ```
 
-Los DTOs usan `class-validator` y `class-transformer` para validar cuerpos, queries e IDs numéricos positivos cuando aplica.
+Aplica a clientes, productos, tipos de producto, etiquetas, bodegas, proveedores y ofertas.
 
-## Endpoints
+## Clientes
 
-Las rutas usan sustantivos en español y siguen convenciones REST.
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/clientes` | Lista clientes activos | No |
+| GET | `/clientes/:id` | Consulta un cliente | No |
+| POST | `/clientes` | Crea cliente | Sí |
+| PATCH | `/clientes/:id` | Actualiza campos parciales | Sí |
+| DELETE | `/clientes/:id` | Soft delete | No |
+| PATCH | `/clientes/:id/reactivar` | Reactiva cliente | No |
+| GET | `/clientes/:id/referidos` | Lista referidos hechos por el cliente | No |
+| POST | `/clientes/:id/codigo-referido` | Genera o retorna código de referido | No |
+| PATCH | `/clientes/:id/nivel-referido` | Actualiza manualmente el nivel de referido | Sí |
 
-### Usuarios
+Crear cliente:
 
-`GET /usuarios`
+```json
+{
+  "identification": "123456789",
+  "firstName": "Juan",
+  "lastName": "Perez",
+  "phone": "3001234567",
+  "address": "Calle 123",
+  "clientType": "MINORISTA"
+}
+```
 
-No recibe body. Lista usuarios registrados sin exponer la contraseña.
+`clientType`: `MINORISTA` o `MAYORISTA`.
 
-`GET /usuarios/:id`
+Actualizar nivel de referido:
 
-No recibe body. `id` debe ser un número positivo.
+```json
+{
+  "referralLevel": 3
+}
+```
 
-`POST /usuarios`
+## Usuarios
 
-Body requerido:
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/usuarios` | Lista usuarios sin contraseña | No |
+| GET | `/usuarios/:id` | Consulta usuario | No |
+| POST | `/usuarios` | Crea usuario | Sí |
+| PATCH | `/usuarios/:id` | Actualiza usuario | Sí |
+| DELETE | `/usuarios/:id` | Soft delete | No |
+
+Crear usuario:
 
 ```json
 {
@@ -152,588 +119,282 @@ Body requerido:
 }
 ```
 
-Body con campo opcional:
+`role`: `ADMIN`, `VENDEDOR`, `BODEGA`, `CONTADOR`.
+
+## Tipos De Producto
+
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/tipos-producto` | Lista tipos activos | No |
+| GET | `/tipos-producto/:id` | Consulta tipo | No |
+| POST | `/tipos-producto` | Crea tipo | Sí |
+| PATCH | `/tipos-producto/:id` | Actualiza tipo | Sí |
+| DELETE | `/tipos-producto/:id` | Soft delete | No |
+| PATCH | `/tipos-producto/:id/reactivar` | Reactiva tipo | No |
+
+Crear tipo:
 
 ```json
 {
-  "clientId": 2,
-  "username": "vendedor1",
-  "password": "secret123",
-  "role": "VENDEDOR",
-  "isActive": true
+  "name": "Bebidas",
+  "description": "Bebidas y gaseosas"
 }
 ```
 
-Roles válidos: `ADMIN`, `VENDEDOR`, `BODEGA`, `CONTADOR`.
+`name` es único. No se puede desactivar si tiene productos activos asociados.
 
-`PATCH /usuarios/:id`
+## Etiquetas
 
-Body parcial. Envía solo los campos a cambiar:
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/etiquetas` | Lista etiquetas activas | No |
+| GET | `/etiquetas/:id` | Consulta etiqueta | No |
+| POST | `/etiquetas` | Crea etiqueta | Sí |
+| PATCH | `/etiquetas/:id` | Actualiza etiqueta | Sí |
+| DELETE | `/etiquetas/:id` | Soft delete | No |
+| PATCH | `/etiquetas/:id/reactivar` | Reactiva etiqueta | No |
+
+Crear etiqueta:
 
 ```json
 {
-  "clientId": 3,
-  "password": "nuevoSecret123",
-  "role": "CONTADOR",
-  "isActive": true
+  "name": "Promocion",
+  "description": "Productos promocionales"
 }
 ```
 
-`DELETE /usuarios/:id`
+## Proveedores
 
-No recibe body. Hace eliminación lógica con `isActive = false` y `deletedAt`.
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/proveedores` | Lista proveedores activos | No |
+| GET | `/proveedores/:id` | Consulta proveedor | No |
+| POST | `/proveedores` | Crea proveedor | Sí |
+| PATCH | `/proveedores/:id` | Actualiza proveedor | Sí |
+| DELETE | `/proveedores/:id` | Soft delete | No |
+| PATCH | `/proveedores/:id/reactivar` | Reactiva proveedor | No |
 
-Notas:
-
-- La contraseña se guarda hasheada.
-- Existe estructura base para permisos con `@Roles(...)`, `RolesGuard` y `Role`.
-
-### Clientes
-
-`GET /clientes`
-
-No recibe body. Por defecto retorna solo clientes activos.
-
-`GET /clientes?estado=inactivos`
-
-No recibe body. Retorna clientes inactivos.
-
-`GET /clientes?estado=todos`
-
-No recibe body. Retorna clientes activos e inactivos.
-
-`GET /clientes/:id`
-
-No recibe body. Puede consultar clientes activos o inactivos.
-
-`POST /clientes`
-
-Body requerido:
+Crear proveedor:
 
 ```json
 {
-  "identification": "123456789",
-  "firstName": "Juan",
-  "lastName": "Pérez"
+  "name": "Distribuidora Central",
+  "description": "Proveedor principal"
 }
 ```
 
-Body con campos opcionales:
+`name` es único. No se puede desactivar si tiene productos activos asociados.
+
+## Bodegas
+
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/bodegas` | Lista bodegas activas | No |
+| GET | `/bodegas/:id` | Consulta bodega con productos | No |
+| POST | `/bodegas` | Crea bodega | Sí |
+| PATCH | `/bodegas/:id` | Actualiza bodega | Sí |
+| DELETE | `/bodegas/:id` | Soft delete | No |
+| PATCH | `/bodegas/:id/reactivar` | Reactiva bodega | No |
+
+Crear bodega:
 
 ```json
 {
-  "identification": "123456789",
-  "firstName": "Juan",
-  "lastName": "Pérez",
-  "phone": "3001234567",
-  "address": "Calle 123 #45-67"
+  "location": "Bodega principal Bogota"
 }
 ```
 
-`PATCH /clientes/:id`
+## Productos
 
-Body parcial. Envía solo los campos a cambiar:
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/productos` | Lista productos activos con tipo, proveedor, tags, precios y bodegas | No |
+| GET | `/productos/:id` | Consulta producto | No |
+| POST | `/productos` | Crea producto con precios, tags y stock inicial opcional | Sí |
+| PATCH | `/productos/:id` | Actualiza datos del producto y reemplaza tags si envías `tagIds` | Sí |
+| DELETE | `/productos/:id` | Soft delete | No |
+| PATCH | `/productos/:id/reactivar` | Reactiva producto | No |
 
-```json
-{
-  "phone": "3112223344",
-  "address": "Carrera 10 #20-30"
-}
-```
-
-También permite cambiar identificación si no existe en otro cliente:
-
-```json
-{
-  "identification": "987654321"
-}
-```
-
-`DELETE /clientes/:id`
-
-No recibe body. Marca `isActive = false` y `deletedAt`.
-
-`PATCH /clientes/:id/reactivar`
-
-No recibe body. Marca `isActive = true` y `deletedAt = null`.
-
-`GET /clientes/:id/referidos`
-
-No recibe body. Retorna los clientes referidos por el cliente `:id`.
-
-`POST /clientes/:id/codigo-referido`
-
-No recibe body. Si el cliente no tiene código de referido, lo genera; si ya tiene uno, retorna el existente.
-
-Respuesta esperada:
-
-```json
-{
-  "id": 1,
-  "identification": "123456789",
-  "firstName": "Juan",
-  "lastName": "Pérez",
-  "referralCode": "JUAN1A9X2"
-}
-```
-
-Notas:
-
-- `identification` es único, incluso si el cliente está inactivo.
-- Si `identification` ya existe, responde `409 Conflict`.
-- `referralCode` es único y se guarda en el cliente.
-
-### Productos
-
-`GET /productos`
-
-No recibe body. Por defecto retorna solo productos activos.
-
-`GET /productos?estado=inactivos`
-
-No recibe body. Retorna productos inactivos.
-
-`GET /productos?estado=todos`
-
-No recibe body. Retorna productos activos e inactivos.
-
-`GET /productos/:id`
-
-No recibe body. `id` debe ser un número positivo.
-
-`POST /productos`
-
-Body requerido. `prices` es opcional; si se envía un solo precio sin `isDefault`, queda como default automáticamente. Si se envían varios precios sin default, el primero queda como default. Si se envían varios con `isDefault = true`, responde `400`.
+Crear producto:
 
 ```json
 {
   "productTypeId": 1,
-  "name": "Café premium",
+  "providerId": 1,
+  "name": "Coca-Cola 1.5L",
+  "description": "Gaseosa 1.5 litros",
   "taxRate": 19,
-  "quantity": 50,
-  "warehouseId": 1,
+  "brand": "Coca-Cola",
+  "minimumStock": 10,
+  "maximumStock": 100,
+  "tagIds": [1, 2],
   "prices": [
     {
       "name": "Precio normal",
-      "price": 25000,
+      "price": 5000,
       "isDefault": true
     }
-  ]
-}
-```
-
-Body con descripción, etiquetas y varios precios:
-
-```json
-{
-  "productTypeId": 2,
-  "name": "Mouse inalámbrico",
-  "description": "Mouse ergonómico de 2.4 GHz",
-  "taxRate": 19,
-  "quantity": 20,
-  "warehouseId": 1,
-  "tagIds": [1, 2, 3],
-  "prices": [
+  ],
+  "warehouses": [
     {
-      "name": "Precio normal",
-      "price": 85000,
-      "isDefault": true
+      "warehouseId": 1,
+      "quantity": 20
     },
     {
-      "name": "Precio mayorista",
-      "price": 78000
+      "warehouseId": 2,
+      "quantity": 15
     }
   ]
 }
 ```
 
-`PATCH /productos/:id`
+Reglas:
 
-Body parcial. Envía solo los campos a cambiar:
+- `productTypeId`, `providerId`, tags y bodegas deben existir y estar activos.
+- `warehouses` crea `ProductWarehouse` y movimientos `ENTRADA` como stock inicial.
+- El stock después de creado se mueve por `/inventario`, no por `PATCH /productos/:id`.
+- Solo puede haber un precio default activo por producto.
+
+## Inventario
+
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/inventario` | Lista inventario con producto, tipo, proveedor y bodegas | No |
+| GET | `/inventario/productos/:productId` | Stock de un producto por bodega | No |
+| GET | `/inventario/bodegas/:warehouseId` | Stock de una bodega | No |
+| POST | `/inventario/entrada` | Aumenta stock en bodega destino | Sí |
+| POST | `/inventario/salida` | Descuenta stock de bodega origen | Sí |
+| POST | `/inventario/traslado` | Mueve stock entre bodegas | Sí |
+| POST | `/inventario/ajuste` | Ajusta stock exacto de un producto en una bodega | Sí |
+| GET | `/inventario/movimientos` | Lista historial de movimientos | No |
+| GET | `/inventario/movimientos/:id` | Consulta movimiento | No |
+
+Entrada:
 
 ```json
 {
+  "productId": 1,
+  "toWarehouseId": 1,
+  "quantity": 10,
+  "reason": "Compra inicial"
+}
+```
+
+Salida:
+
+```json
+{
+  "productId": 1,
+  "fromWarehouseId": 1,
+  "quantity": 3,
+  "reason": "Salida manual"
+}
+```
+
+Traslado:
+
+```json
+{
+  "productId": 1,
+  "fromWarehouseId": 1,
+  "toWarehouseId": 2,
+  "quantity": 5,
+  "reason": "Reposicion"
+}
+```
+
+Ajuste:
+
+```json
+{
+  "productId": 1,
+  "warehouseId": 1,
   "quantity": 25,
-  "tagIds": [1, 3]
+  "reason": "Conteo fisico"
 }
 ```
 
-Otro ejemplo:
+Todas las escrituras usan transacción. No se permiten cantidades menores o iguales a cero. Salida y traslado validan stock suficiente.
+
+## Precios De Producto
+
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/precios-producto` | Lista precios | No |
+| GET | `/precios-producto/:id` | Consulta precio | No |
+| GET | `/productos/:id/precios` | Lista precios de un producto | No |
+| POST | `/productos/:id/precios` | Crea precio para producto | Sí |
+| PATCH | `/precios-producto/:id` | Actualiza precio | Sí |
+| DELETE | `/precios-producto/:id` | Desactiva precio | No |
+| PATCH | `/precios-producto/:id/default` | Marca precio como default y desmarca otros | No |
+| GET | `/precios-producto/:id/historial` | Lista historial de cambios de precio | No |
+
+Crear precio:
 
 ```json
 {
-  "name": "Mouse inalámbrico pro",
-  "description": "Versión actualizada",
-  "taxRate": 19
-}
-```
-
-`DELETE /productos/:id`
-
-No recibe body. Hace eliminación lógica para conservar historial de facturas.
-
-`PATCH /productos/:id/reactivar`
-
-No recibe body. Marca `isActive = true` y `deletedAt = null`.
-
-Notas:
-
-- `productTypeId` debe existir y estar activo.
-- `warehouseId` debe existir y estar activo.
-- `tagIds` es opcional; si se envía en actualización, reemplaza todas las etiquetas anteriores.
-- `taxRate` y `quantity` no aceptan valores negativos.
-- `quantity` representa inventario disponible.
-- Las respuestas incluyen `productType`, `warehouse`, `tags` y `prices` como arrays/objetos listos para mostrar en frontend.
-
-### Precios de producto
-
-`GET /precios-producto`
-
-No recibe body. Lista todos los precios con su producto relacionado.
-
-`GET /precios-producto/:id`
-
-No recibe body. Consulta un precio por id.
-
-`GET /productos/:id/precios`
-
-No recibe body. Lista los precios del producto `:id`.
-
-`POST /productos/:id/precios`
-
-Body requerido:
-
-```json
-{
-  "name": "Precio normal",
-  "price": 85000,
-  "isDefault": true,
+  "name": "Precio mayorista",
+  "price": 4500,
+  "isDefault": false,
   "startsAt": "2026-06-01T00:00:00.000Z",
   "endsAt": "2026-12-31T23:59:59.000Z"
 }
 ```
 
-Body mínimo:
+Cambiar valor y registrar historial:
 
 ```json
 {
-  "name": "Precio mayorista",
-  "price": 78000
+  "price": 4300,
+  "reason": "Ajuste por proveedor"
 }
 ```
 
-`PATCH /precios-producto/:id`
+`price` debe ser mayor que 0. `endsAt` debe ser mayor que `startsAt`.
 
-Body parcial:
+## Ofertas
 
-```json
-{
-  "name": "Precio mayorista actualizado",
-  "price": 76000,
-  "isActive": true
-}
-```
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/ofertas` | Lista ofertas activas | No |
+| GET | `/ofertas/:id` | Consulta oferta con targets | No |
+| POST | `/ofertas` | Crea oferta | Sí |
+| PATCH | `/ofertas/:id` | Actualiza oferta y reemplaza arrays enviados | Sí |
+| DELETE | `/ofertas/:id` | Soft delete | No |
+| PATCH | `/ofertas/:id/reactivar` | Reactiva oferta | No |
+| POST | `/ofertas/aplicables` | Evalúa ofertas por línea de producto | Sí |
 
-`DELETE /precios-producto/:id`
-
-No recibe body. No borra físicamente; marca `isActive = false` y `isDefault = false`.
-
-`PATCH /precios-producto/:id/default`
-
-No recibe body. Marca ese precio activo como default y desmarca los demás precios del mismo producto dentro de una transacción.
-
-Notas:
-
-- `price` debe ser mayor que 0.
-- `endsAt` debe ser mayor que `startsAt` si ambas fechas existen.
-- Un precio inactivo no puede ser default.
-- Debe existir máximo un precio default activo por producto.
-- Los precios no se eliminan físicamente porque las facturas históricas pueden referenciarlos.
-
-### Tipos de producto
-
-`GET /tipos-producto`
-
-No recibe body. Por defecto retorna solo tipos activos.
-
-`GET /tipos-producto?estado=inactivos`
-
-No recibe body. Retorna tipos inactivos.
-
-`GET /tipos-producto?estado=todos`
-
-No recibe body. Retorna tipos activos e inactivos.
-
-`GET /tipos-producto/:id`
-
-No recibe body. `id` debe ser un número positivo.
-
-`POST /tipos-producto`
-
-Body requerido:
+Crear oferta:
 
 ```json
 {
-  "name": "Tecnología",
-  "description": "Productos tecnológicos y accesorios"
-}
-```
-
-`PATCH /tipos-producto/:id`
-
-Body parcial:
-
-```json
-{
-  "description": "Periféricos, accesorios y dispositivos"
-}
-```
-
-`DELETE /tipos-producto/:id`
-
-No recibe body. Hace soft delete. No permite desactivar si tiene productos activos asociados.
-
-`PATCH /tipos-producto/:id/reactivar`
-
-No recibe body. Marca `isActive = true` y `deletedAt = null`.
-
-Notas:
-
-- `name` es único.
-- No se elimina físicamente para conservar relaciones con productos y ofertas.
-
-### Etiquetas
-
-`GET /etiquetas`
-
-No recibe body. Por defecto retorna solo etiquetas activas.
-
-`GET /etiquetas?estado=inactivos`
-
-No recibe body. Retorna etiquetas inactivas.
-
-`GET /etiquetas?estado=todos`
-
-No recibe body. Retorna etiquetas activas e inactivas.
-
-`GET /etiquetas/:id`
-
-No recibe body. `id` debe ser un número positivo.
-
-`POST /etiquetas`
-
-Body requerido:
-
-```json
-{
-  "name": "Destacado",
-  "description": "Productos destacados para promociones"
-}
-```
-
-`PATCH /etiquetas/:id`
-
-Body parcial:
-
-```json
-{
-  "name": "Promoción"
-}
-```
-
-`DELETE /etiquetas/:id`
-
-No recibe body. Hace soft delete.
-
-`PATCH /etiquetas/:id/reactivar`
-
-No recibe body. Marca `isActive = true` y `deletedAt = null`.
-
-Notas:
-
-- `name` es único.
-- Una etiqueta puede relacionarse con productos y ofertas.
-
-### Bodegas
-
-`GET /bodegas`
-
-No recibe body. Por defecto retorna solo bodegas activas.
-
-`GET /bodegas?estado=inactivos`
-
-No recibe body. Retorna bodegas inactivas.
-
-`GET /bodegas?estado=todos`
-
-No recibe body. Retorna bodegas activas e inactivas.
-
-`GET /bodegas/:id`
-
-No recibe body. Incluye sus productos relacionados.
-
-`POST /bodegas`
-
-Body requerido:
-
-```json
-{
-  "location": "Bodega principal Bogotá"
-}
-```
-
-`PATCH /bodegas/:id`
-
-Body parcial:
-
-```json
-{
-  "location": "Bodega norte Medellín"
-}
-```
-
-`DELETE /bodegas/:id`
-
-No recibe body. Hace eliminación lógica.
-
-`PATCH /bodegas/:id/reactivar`
-
-No recibe body. Marca `isActive = true` y `deletedAt = null`.
-
-Notas:
-
-- No se borran bodegas físicamente para conservar relaciones históricas con productos.
-
-### Ofertas
-
-`GET /ofertas`
-
-No recibe body. Por defecto retorna solo ofertas activas.
-
-`GET /ofertas?estado=inactivos`
-
-No recibe body. Retorna ofertas inactivas.
-
-`GET /ofertas?estado=todos`
-
-No recibe body. Retorna ofertas activas e inactivas.
-
-`GET /ofertas/:id`
-
-No recibe body. Retorna la oferta con `clients`, `products`, `productTypes` y `tags`.
-
-`POST /ofertas`
-
-Body para una oferta con targets:
-
-```json
-{
-  "name": "Descuento productos del mes",
-  "description": "Oferta especial para productos destacados",
+  "name": "Descuento bebidas",
+  "description": "Oferta de temporada",
   "discountType": "PORCENTAJE",
-  "discountValue": 15,
+  "discountValue": 10,
   "startsAt": "2026-06-01T00:00:00.000Z",
   "endsAt": "2026-06-30T23:59:59.000Z",
-  "clientIds": [1, 2],
-  "productIds": [5, 6],
-  "productTypeIds": [3],
+  "minimumProductQuantity": 1,
+  "maximumProductQuantity": 20,
+  "isStackable": false,
+  "clientIds": [1],
+  "productIds": [1],
+  "productTypeIds": [1],
   "tagIds": [1]
 }
 ```
 
-Body para una oferta general:
+Oferta general sin targets:
 
 ```json
 {
   "name": "Descuento general",
   "discountType": "MONTO_FIJO",
-  "discountValue": 10000
+  "discountValue": 1000
 }
 ```
 
-`PATCH /ofertas/:id`
-
-Body parcial. Si se envía un array de IDs, reemplaza por completo esa relación:
-
-```json
-{
-  "discountValue": 20,
-  "productTypeIds": [1, 4],
-  "tagIds": [2]
-}
-```
-
-`DELETE /ofertas/:id`
-
-No recibe body. Hace soft delete con `isActive = false` y `deletedAt`.
-
-`PATCH /ofertas/:id/reactivar`
-
-No recibe body. Marca `isActive = true` y `deletedAt = null`.
-
-`POST /ofertas/aplicables`
-
-Consulta ofertas aplicables para un cliente y productos. No modifica facturas ni totales.
-
-```json
-{
-  "clientId": 1,
-  "items": [
-    {
-      "productId": 5,
-      "quantity": 2
-    },
-    {
-      "productId": 9,
-      "quantity": 1
-    }
-  ]
-}
-```
-
-Respuesta esperada:
-
-```json
-{
-  "clientId": 1,
-  "items": [
-    {
-      "productId": 5,
-      "quantity": 2,
-      "applicableOffers": [
-        {
-          "id": 1,
-          "name": "Descuento productos del mes",
-          "discountType": "PORCENTAJE",
-          "discountValue": "15"
-        }
-      ]
-    }
-  ]
-}
-```
-
-Notas:
-
-- `discountType` acepta `PORCENTAJE` o `MONTO_FIJO`.
-- `PORCENTAJE` exige `discountValue > 0` y `<= 100`.
-- `MONTO_FIJO` exige `discountValue > 0`.
-- Si existen `startsAt` y `endsAt`, `endsAt` debe ser mayor que `startsAt`.
-- Una oferta aplica si es general o coincide con cliente, producto, tipo de producto o alguna etiqueta del producto.
-
-### Facturas
-
-`GET /facturas`
-
-No recibe body. Lista facturas con cliente e items.
-
-`GET /facturas/:id`
-
-No recibe body. Consulta una factura con cliente, items y productos.
-
-`POST /facturas`
-
-Body requerido:
+Consultar aplicables:
 
 ```json
 {
@@ -741,91 +402,76 @@ Body requerido:
   "items": [
     {
       "productId": 1,
-      "productPriceId": 2,
+      "productPriceId": 1,
       "quantity": 2
-    },
-    {
-      "productId": 3,
-      "quantity": 1
     }
   ]
 }
 ```
 
-Reglas del body:
+Reglas:
 
-- `clientId` debe existir y estar activo.
-- `items` debe tener al menos un producto.
-- `productId` debe existir y estar activo.
-- `productPriceId` es opcional. Si se envía, debe existir, estar activo y pertenecer al `productId`.
-- Si no se envía `productPriceId`, el backend usa el precio default activo del producto.
-- `quantity` debe ser un número entero positivo.
-- Debe existir stock suficiente para cada producto.
+- `discountType`: `PORCENTAJE` o `MONTO_FIJO`.
+- Porcentaje debe ser `> 0` y `<= 100`.
+- Monto fijo debe ser `> 0`.
+- Si no hay targets, la oferta es general.
+- Si se envían arrays en `PATCH`, reemplazan relaciones anteriores.
 
-`PATCH /facturas/:id`
+## Facturas
 
-Body parcial. Por ahora solo permite actualizar campos no contables básicos:
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/facturas` | Lista facturas con cliente e items | No |
+| GET | `/facturas/:id` | Consulta factura | No |
+| POST | `/facturas` | Crea factura y congela precios/impuestos en items | Sí |
+| PATCH | `/facturas/:id` | Actualiza campos básicos no contables | Sí |
+| DELETE | `/facturas/:id` | Anula factura | No |
+
+Crear factura:
 
 ```json
 {
-  "consecutive": "FAC-2026-0001"
+  "clientId": 1,
+  "items": [
+    {
+      "productId": 1,
+      "productPriceId": 1,
+      "quantity": 2
+    }
+  ]
 }
 ```
 
-`DELETE /facturas/:id`
-
-No recibe body. Marca la factura como `ANULADA` y devuelve el stock de sus items.
-
 Notas:
 
-- Los productos se guardan mediante `InvoiceItem`, no como arreglo simple.
-- El backend consulta el precio activo indicado por `productPriceId` o el precio default activo del producto.
-- El backend calcula subtotal, impuestos y total por item y por factura.
-- `unitPrice` guarda una copia histórica del precio usado; si luego cambia `ProductPrice.price`, la factura no cambia.
-- Las respuestas de factura incluyen `productPrice` cuando el item lo tiene asociado.
-- La creación descuenta inventario en transacción.
-- Si no hay stock suficiente, lanza error y no crea la factura.
-- `PATCH /facturas/:id` no recalcula items ni totales para evitar inconsistencias contables.
+- Si no envías `productPriceId`, usa el precio default activo.
+- Las facturas no descuentan stock por bodega; el stock se maneja en `/inventario`.
+- `DELETE` cambia `status` a `ANULADA`.
 
-### Domicilios
+## Domicilios
 
-`GET /domicilios`
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/domicilios` | Lista domicilios | No |
+| GET | `/domicilios/:id` | Consulta domicilio | No |
+| POST | `/domicilios` | Crea domicilio para factura | Sí |
+| PATCH | `/domicilios/:id` | Actualiza domicilio | Sí |
+| PATCH | `/domicilios/:id/estado` | Cambia estado | Sí |
+| DELETE | `/domicilios/:id` | Cancela domicilio | No |
 
-No recibe body. Lista domicilios con la factura relacionada y su `consecutive`.
-
-`GET /domicilios/:id`
-
-No recibe body. Consulta un domicilio por id.
-
-`POST /domicilios`
-
-Body requerido:
+Crear domicilio:
 
 ```json
 {
   "invoiceId": 1,
-  "address": "Calle 123 #45-67",
-  "recipientName": "Juan Pérez",
+  "address": "Calle 123",
+  "recipientName": "Juan Perez",
   "recipientPhone": "3001234567",
-  "notes": "Entregar en portería"
+  "notes": "Entregar en porteria"
 }
 ```
 
-`PATCH /domicilios/:id`
-
-Body parcial:
-
-```json
-{
-  "address": "Carrera 10 #20-30",
-  "recipientPhone": "3112223344",
-  "notes": "Llamar antes de llegar"
-}
-```
-
-`PATCH /domicilios/:id/estado`
-
-Body requerido:
+Cambiar estado:
 
 ```json
 {
@@ -833,295 +479,192 @@ Body requerido:
 }
 ```
 
-Estados válidos: `PENDIENTE`, `EN_PREPARACION`, `EN_CAMINO`, `ENTREGADO`, `CANCELADO`.
+Estados: `PENDIENTE`, `EN_PREPARACION`, `EN_CAMINO`, `ENTREGADO`, `CANCELADO`.
 
-`DELETE /domicilios/:id`
+## Referidos
 
-No recibe body. No borra físicamente porque `Delivery` no tiene `isActive`; marca `status = CANCELADO` y limpia `deliveredAt`.
-
-Notas:
-
-- `invoiceId` debe existir.
-- Una factura anulada no puede recibir domicilio.
-- `invoiceId` es único: una factura solo puede tener un domicilio.
-- Si el estado cambia a `ENTREGADO`, el backend llena `deliveredAt` con la fecha actual.
-- Si el estado cambia de `ENTREGADO` a otro estado, el backend limpia `deliveredAt` para reflejar que ya no está entregado.
-
-### Referidos
-
-`GET /referidos`
-
-No recibe body. Lista referidos con datos básicos de quien refiere y del referido.
-
-`GET /referidos/:id`
-
-No recibe body. Consulta un referido por id.
-
-`GET /clientes/:id/referidos`
-
-No recibe body. Lista los referidos generados por el cliente `:id`.
-
-`POST /clientes/:id/codigo-referido`
-
-No recibe body. Genera o retorna el código existente del cliente.
-
-`POST /referidos`
-
-Body requerido:
-
-```json
-{
-  "referredClientId": 10,
-  "codeUsed": "JUAN123"
-}
-```
-
-Notas:
-
-- `codeUsed` debe existir en `Client.referralCode`.
-- El dueño del código debe estar activo.
-- `referredClientId` debe existir y estar activo.
-- Un cliente no puede referirse a sí mismo.
-- Un cliente referido solo puede tener un registro en `Referral`.
-- Las respuestas incluyen datos básicos de `referrerClient` y `referredClient`.
-
-## Peticiones desde frontend
-
-El backend recibe y responde JSON. Desde el frontend usa siempre `Content-Type: application/json` cuando envíes body.
-
-Ejemplo de cliente HTTP simple:
-
-```ts
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000';
-
-async function apiRequest<T>(
-  path: string,
-  options: RequestInit = {},
-): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers ?? {}),
-    },
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => null);
-    throw new Error(error?.message ?? 'Error inesperado del backend');
-  }
-
-  return response.json();
-}
-```
-
-Crear un tipo de producto:
-
-```ts
-await apiRequest('/tipos-producto', {
-  method: 'POST',
-  body: JSON.stringify({
-    name: 'Tecnología',
-    description: 'Productos tecnológicos y accesorios',
-  }),
-});
-```
-
-Crear etiquetas:
-
-```ts
-await apiRequest('/etiquetas', {
-  method: 'POST',
-  body: JSON.stringify({
-    name: 'Destacado',
-    description: 'Productos visibles en promociones',
-  }),
-});
-```
-
-Crear un producto con tipo y etiquetas:
-
-```ts
-await apiRequest('/productos', {
-  method: 'POST',
-  body: JSON.stringify({
-    productTypeId: 1,
-    name: 'Mouse Logitech',
-    description: 'Mouse inalámbrico',
-    taxRate: 19,
-    quantity: 10,
-    warehouseId: 1,
-    tagIds: [1, 2, 3],
-    prices: [
-      { name: 'Precio normal', price: 85000, isDefault: true },
-      { name: 'Precio mayorista', price: 78000 },
-    ],
-  }),
-});
-```
-
-Crear un precio para un producto existente:
-
-```ts
-await apiRequest('/productos/5/precios', {
-  method: 'POST',
-  body: JSON.stringify({
-    name: 'Precio temporada',
-    price: 82000,
-  }),
-});
-```
-
-Marcar un precio como default:
-
-```ts
-await apiRequest('/precios-producto/8/default', {
-  method: 'PATCH',
-});
-```
-
-Actualizar etiquetas de un producto:
-
-```ts
-await apiRequest('/productos/5', {
-  method: 'PATCH',
-  body: JSON.stringify({
-    tagIds: [2, 4],
-  }),
-});
-```
-
-Importante: enviar `tagIds` en `PATCH /productos/:id` reemplaza todas las etiquetas del producto. Si no quieres modificar etiquetas, no envíes `tagIds`.
-
-Crear una oferta por cliente, producto, tipo de producto o etiqueta:
-
-```ts
-await apiRequest('/ofertas', {
-  method: 'POST',
-  body: JSON.stringify({
-    name: 'Descuento productos del mes',
-    description: 'Oferta especial para productos destacados',
-    discountType: 'PORCENTAJE',
-    discountValue: 15,
-    startsAt: '2026-06-01T00:00:00.000Z',
-    endsAt: '2026-06-30T23:59:59.000Z',
-    clientIds: [1, 2],
-    productIds: [5, 6],
-    productTypeIds: [3],
-    tagIds: [1],
-  }),
-});
-```
-
-Crear una oferta general:
-
-```ts
-await apiRequest('/ofertas', {
-  method: 'POST',
-  body: JSON.stringify({
-    name: 'Descuento general',
-    discountType: 'MONTO_FIJO',
-    discountValue: 10000,
-  }),
-});
-```
-
-Consultar ofertas aplicables antes de facturar:
-
-```ts
-const result = await apiRequest('/ofertas/aplicables', {
-  method: 'POST',
-  body: JSON.stringify({
-    clientId: 1,
-    items: [
-      { productId: 5, quantity: 2 },
-      { productId: 9, quantity: 1 },
-    ],
-  }),
-});
-```
-
-Crear una factura:
-
-```ts
-await apiRequest('/facturas', {
-  method: 'POST',
-  body: JSON.stringify({
-    clientId: 1,
-    items: [
-      { productId: 5, productPriceId: 8, quantity: 2 },
-      { productId: 9, quantity: 1 },
-    ],
-  }),
-});
-```
-
-Crear un domicilio para una factura:
-
-```ts
-await apiRequest('/domicilios', {
-  method: 'POST',
-  body: JSON.stringify({
-    invoiceId: 1,
-    address: 'Calle 123 #45-67',
-    recipientName: 'Juan Pérez',
-    recipientPhone: '3001234567',
-    notes: 'Entregar en portería',
-  }),
-});
-```
-
-Actualizar estado de domicilio:
-
-```ts
-await apiRequest('/domicilios/1/estado', {
-  method: 'PATCH',
-  body: JSON.stringify({ status: 'ENTREGADO' }),
-});
-```
-
-Generar código de referido:
-
-```ts
-const client = await apiRequest('/clientes/1/codigo-referido', {
-  method: 'POST',
-});
-```
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/referidos` | Lista referidos con referente y referido | No |
+| GET | `/referidos/:id` | Consulta referido | No |
+| POST | `/referidos` | Registra referido usando código | Sí |
 
 Registrar referido:
 
-```ts
-await apiRequest('/referidos', {
-  method: 'POST',
-  body: JSON.stringify({
-    referredClientId: 10,
-    codeUsed: client.referralCode,
-  }),
-});
+```json
+{
+  "referredClientId": 2,
+  "codeUsed": "JUAN1ABCD"
+}
 ```
 
-Notas para frontend:
+Reglas:
 
-- Los IDs deben enviarse como números, no strings.
-- Las fechas se envían en ISO 8601, por ejemplo `2026-06-01T00:00:00.000Z`.
-- Los listados aceptan `?estado=inactivos` y `?estado=todos`; sin query retornan activos.
-- Para facturar, envía `productPriceId` cuando el usuario seleccione un precio específico; si no, el backend usa el precio default activo.
-- Las ofertas aplicables son solo consulta; la factura todavía no descuenta ofertas automáticamente.
-- Si el backend responde `400`, revisa validaciones de DTO: IDs positivos, arrays únicos, fechas y descuentos.
+- El código debe existir y pertenecer a un cliente activo.
+- Un cliente no puede referirse a sí mismo.
+- Un cliente solo puede ser referido una vez.
 
-## Reglas de negocio importantes
+## Cuentas Bancarias
 
-- No se eliminan físicamente usuarios, clientes, productos, bodegas, tipos de producto, etiquetas ni ofertas.
-- Las facturas anuladas mantienen sus `InvoiceItem`.
-- Los domicilios cancelados mantienen el registro con `status = CANCELADO`.
-- Los precios de producto desactivados mantienen el registro con `isActive = false`.
-- Los endpoints están en español; modelos y campos internos están en inglés.
-- Las operaciones sensibles de facturación usan transacciones Prisma.
-- Las escrituras de productos con etiquetas y ofertas con targets usan transacciones Prisma.
-- `username`, `identification`, `consecutive`, `ProductType.name`, `Tag.name`, `Client.referralCode`, `User.clientId`, `Delivery.invoiceId` y `Referral.referredClientId` son únicos.
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/cuentas-bancarias` | Lista cuentas activas | No |
+| GET | `/cuentas-bancarias/:id` | Consulta cuenta con movimientos | No |
+| POST | `/cuentas-bancarias` | Crea cuenta | Sí |
+| PATCH | `/cuentas-bancarias/:id` | Actualiza cuenta | Sí |
+| DELETE | `/cuentas-bancarias/:id` | Soft delete | No |
+| PATCH | `/cuentas-bancarias/:id/reactivar` | Reactiva cuenta | No |
 
-## Siguientes pasos sugeridos
+Crear cuenta:
 
-1. Crear `.env` con una `DATABASE_URL` real.
-2. Ejecutar `bunx prisma migrate dev`.
-3. Agregar autenticación JWT y poblar `request.user` para que `RolesGuard` valide usuarios reales.
+```json
+{
+  "name": "Cuenta principal",
+  "bankName": "Bancolombia",
+  "accountNumber": "123456789",
+  "accountType": "AHORROS",
+  "currentBalance": 100000
+}
+```
+
+## Movimientos Bancarios
+
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/movimientos-bancarios` | Lista movimientos | No |
+| GET | `/movimientos-bancarios/:id` | Consulta movimiento | No |
+| POST | `/movimientos-bancarios/ingreso` | Suma saldo | Sí |
+| POST | `/movimientos-bancarios/egreso` | Resta saldo | Sí |
+| POST | `/movimientos-bancarios/transferencia` | Crea salida y entrada entre cuentas | Sí |
+| POST | `/movimientos-bancarios/ajuste` | Ajusta saldo exacto | Sí |
+
+Ingreso o egreso:
+
+```json
+{
+  "bankAccountId": 1,
+  "amount": 50000,
+  "description": "Pago recibido",
+  "invoiceId": 1
+}
+```
+
+Transferencia:
+
+```json
+{
+  "fromBankAccountId": 1,
+  "toBankAccountId": 2,
+  "amount": 10000,
+  "description": "Traslado entre cuentas"
+}
+```
+
+Ajuste:
+
+```json
+{
+  "bankAccountId": 1,
+  "balance": 120000,
+  "description": "Conciliacion bancaria"
+}
+```
+
+No se permiten montos menores o iguales a cero. `EGRESO` y transferencia validan saldo suficiente.
+
+## Créditos
+
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| POST | `/facturas/:id/credito` | Crea crédito para factura | Sí |
+| GET | `/creditos` | Lista créditos | No |
+| GET | `/creditos/:id` | Consulta crédito | No |
+| GET | `/clientes/:id/creditos` | Lista créditos de cliente | No |
+| POST | `/creditos/:id/pagos` | Registra pago | Sí |
+| PATCH | `/creditos/:id/estado` | Cambia estado manualmente | Sí |
+
+Crear crédito:
+
+```json
+{
+  "dueDate": "2030-01-01T00:00:00.000Z"
+}
+```
+
+Registrar pago:
+
+```json
+{
+  "amount": 10000,
+  "bankAccountId": 1,
+  "notes": "Abono parcial"
+}
+```
+
+Cambiar estado:
+
+```json
+{
+  "status": "PARCIAL"
+}
+```
+
+Estados: `PENDIENTE`, `PARCIAL`, `PAGADA`, `VENCIDA`, `CANCELADA`.
+
+## Cotizaciones
+
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/cotizaciones` | Lista cotizaciones | No |
+| GET | `/cotizaciones/:id` | Consulta cotización | No |
+| POST | `/cotizaciones` | Crea cotización con items y totales históricos | Sí |
+| PATCH | `/cotizaciones/:id` | Actualiza vencimiento | Sí |
+| DELETE | `/cotizaciones/:id` | Marca como rechazada | No |
+| PATCH | `/cotizaciones/:id/estado` | Cambia estado | Sí |
+| POST | `/cotizaciones/:id/convertir-factura` | Convierte a factura y marca como convertida | No |
+
+Crear cotización:
+
+```json
+{
+  "clientId": 1,
+  "expiresAt": "2030-01-01T00:00:00.000Z",
+  "items": [
+    {
+      "productId": 1,
+      "productPriceId": 1,
+      "quantity": 2
+    }
+  ]
+}
+```
+
+Cambiar estado:
+
+```json
+{
+  "status": "APROBADA"
+}
+```
+
+Estados: `PENDIENTE`, `APROBADA`, `RECHAZADA`, `CONVERTIDA`, `EXPIRADA`.
+
+## Casos Que Deben Fallar
+
+La API valida y debe responder error para casos como:
+
+- Crear proveedor con `name` duplicado.
+- Crear producto con `providerId` inexistente o inactivo.
+- Enviar cantidades negativas o cero en inventario.
+- Hacer salida/traslado sin stock suficiente.
+- Crear oferta `PORCENTAJE` con valor mayor a 100.
+- Crear crédito duplicado para la misma factura.
+- Registrar pago de crédito mayor al saldo.
+- Transferir entre la misma cuenta bancaria.
+- Referir un cliente a sí mismo.
+- Convertir una cotización vencida.
+
+## Advertencias Del Schema
+
+- `BankAccountMovement.invoiceId` está marcado como `@unique` en `schema.prisma`. Eso permite un solo movimiento bancario por factura. Si se necesitan pagos parciales o varios movimientos por factura, conviene quitar ese `@unique` y ajustar la relación.
+- Los endpoints de factura no descuentan inventario por bodega; el inventario se controla con `/inventario`.

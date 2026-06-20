@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { InventoryMovementType } from '@prisma/client';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -41,17 +42,19 @@ export class ProductosService {
   }
 
   async create(createProductDto: CreateProductDto) {
-    const { tagIds, prices, ...productData } = createProductDto;
+    const { tagIds, prices, warehouses, ...productData } = createProductDto;
 
     // El producto depende de catálogos activos; no se crean relaciones inválidas.
     await this.ensureProductTypeExists(productData.productTypeId);
-    await this.ensureWarehouseExists(productData.warehouseId);
+    await this.ensureProviderExists(productData.providerId);
     await this.ensureTagsExist(tagIds);
+    await this.ensureWarehousesExist(
+      warehouses?.map((item) => item.warehouseId),
+    );
     const normalizedPrices = this.normalizeInitialPrices(prices);
 
-    // Product y ProductTag deben persistirse juntos para evitar productos a medio relacionar.
-    const product = await this.prisma.$transaction((tx) =>
-      tx.product.create({
+    const product = await this.prisma.$transaction(async (tx) => {
+      const createdProduct = await tx.product.create({
         data: {
           ...productData,
           tags: tagIds?.length
@@ -62,8 +65,32 @@ export class ProductosService {
             : undefined,
         },
         include: this.productInclude,
-      }),
-    );
+      });
+
+      for (const warehouse of warehouses ?? []) {
+        await tx.productWarehouse.create({
+          data: {
+            productId: createdProduct.id,
+            warehouseId: warehouse.warehouseId,
+            quantity: warehouse.quantity,
+          },
+        });
+        await tx.inventoryMovement.create({
+          data: {
+            productId: createdProduct.id,
+            toWarehouseId: warehouse.warehouseId,
+            quantity: warehouse.quantity,
+            movementType: InventoryMovementType.ENTRADA,
+            reason: 'Stock inicial de producto',
+          },
+        });
+      }
+
+      return tx.product.findUniqueOrThrow({
+        where: { id: createdProduct.id },
+        include: this.productInclude,
+      });
+    });
 
     return this.formatProduct(product);
   }
@@ -78,8 +105,8 @@ export class ProductosService {
       await this.ensureProductTypeExists(productData.productTypeId);
     }
 
-    if (productData.warehouseId) {
-      await this.ensureWarehouseExists(productData.warehouseId);
+    if (productData.providerId) {
+      await this.ensureProviderExists(productData.providerId);
     }
 
     await this.ensureTagsExist(tagIds);
@@ -133,9 +160,13 @@ export class ProductosService {
 
   private readonly productInclude = {
     productType: true,
-    warehouse: true,
+    provider: true,
     tags: { include: { tag: true } },
     prices: { orderBy: { id: 'asc' } },
+    warehouses: {
+      include: { warehouse: true },
+      orderBy: { warehouseId: 'asc' },
+    },
   } as const;
 
   // La tabla pivote ProductTag es un detalle interno; la API responde tags planos.
@@ -143,6 +174,11 @@ export class ProductosService {
     return {
       ...product,
       tags: product.tags.map((productTag) => productTag.tag),
+      warehouses: product.warehouses.map((item) => ({
+        warehouseId: item.warehouseId,
+        quantity: item.quantity,
+        warehouse: item.warehouse,
+      })),
     };
   }
 
@@ -195,17 +231,30 @@ export class ProductosService {
     }
   }
 
-  private async ensureWarehouseExists(id: number) {
+  private async ensureProviderExists(id: number) {
     this.ensurePositiveId(id);
 
-    const warehouse = await this.prisma.warehouse.findUnique({ where: { id } });
+    const provider = await this.prisma.provider.findUnique({ where: { id } });
 
-    if (!warehouse) {
-      throw new NotFoundException('Bodega no encontrada');
+    if (!provider) {
+      throw new NotFoundException('Proveedor no encontrado');
     }
 
-    if (!warehouse.isActive) {
-      throw new BadRequestException('La bodega está inactiva');
+    if (!provider.isActive) {
+      throw new BadRequestException('El proveedor está inactivo');
+    }
+  }
+
+  private async ensureWarehousesExist(ids?: number[]) {
+    if (!ids?.length) return;
+    const uniqueIds = [...new Set(ids)];
+    const count = await this.prisma.warehouse.count({
+      where: { id: { in: uniqueIds }, isActive: true },
+    });
+    if (count !== uniqueIds.length) {
+      throw new BadRequestException(
+        'Una o más bodegas no existen o están inactivas',
+      );
     }
   }
 

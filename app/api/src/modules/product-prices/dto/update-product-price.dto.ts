@@ -36,4 +36,8 @@ export class UpdateProductPriceDto {
   @IsOptional()
   @IsDateString()
   endsAt?: string;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }

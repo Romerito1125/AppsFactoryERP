@@ -138,6 +138,16 @@ export class ClientesService {
     throw new ConflictException('No fue posible generar un código único');
   }
 
+  async updateReferralLevel(id: number, referralLevel: number) {
+    this.ensurePositiveId(id);
+    await this.findOne(id);
+
+    return this.prisma.client.update({
+      where: { id },
+      data: { referralLevel },
+    });
+  }
+
   private getStatusWhere(status?: RecordStatusQuery) {
     if (status === RecordStatusQuery.TODOS) {
       return undefined;

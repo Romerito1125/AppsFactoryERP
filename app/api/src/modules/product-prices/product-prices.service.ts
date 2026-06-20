@@ -84,7 +84,8 @@ export class ProductPricesService {
 
   async update(id: number, updateProductPriceDto: UpdateProductPriceDto) {
     const current = await this.findOne(id);
-    const data = this.normalizeDates(updateProductPriceDto, current);
+    const { reason, ...updateData } = updateProductPriceDto;
+    const data = this.normalizeDates(updateData, current);
 
     if (data.isDefault && data.isActive === false) {
       throw new BadRequestException(
@@ -101,6 +102,20 @@ export class ProductPricesService {
         await tx.productPrice.updateMany({
           where: { productId: current.productId, id: { not: id } },
           data: { isDefault: false },
+        });
+      }
+
+      if (
+        data.price !== undefined &&
+        Number(data.price) !== Number(current.price)
+      ) {
+        await tx.productPriceHistory.create({
+          data: {
+            productPriceId: id,
+            oldPrice: current.price,
+            newPrice: data.price,
+            reason,
+          },
         });
       }
 
@@ -142,6 +157,15 @@ export class ProductPricesService {
         data: { isDefault: true },
         include: { product: true },
       });
+    });
+  }
+
+  async history(id: number) {
+    this.ensurePositiveId(id);
+    await this.findOne(id);
+    return this.prisma.productPriceHistory.findMany({
+      where: { productPriceId: id },
+      orderBy: { id: 'desc' },
     });
   }
 
