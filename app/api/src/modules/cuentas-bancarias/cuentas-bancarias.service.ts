@@ -3,18 +3,20 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import {
   CreateBankAccountDto,
   UpdateBankAccountDto,
 } from './dto/bank-account.dto';
+import { FilterBankAccountsDto } from './dto/filter-bank-accounts.dto';
 
 @Injectable()
 export class CuentasBancariasService {
   constructor(private readonly prisma: PrismaService) {}
-  findAll() {
+  findAll(filter: FilterBankAccountsDto) {
     return this.prisma.bankAccount.findMany({
-      where: { isActive: true },
+      where: this.getStatusWhere(filter.estado),
       orderBy: { id: 'asc' },
     });
   }
@@ -51,5 +53,17 @@ export class CuentasBancariasService {
   private ensurePositiveId(id: number) {
     if (id <= 0)
       throw new BadRequestException('El id debe ser un número positivo');
+  }
+
+  private getStatusWhere(status?: RecordStatusQuery) {
+    if (status === RecordStatusQuery.TODOS) {
+      return undefined;
+    }
+
+    if (status === RecordStatusQuery.INACTIVOS) {
+      return { isActive: false };
+    }
+
+    return { isActive: true };
   }
 }

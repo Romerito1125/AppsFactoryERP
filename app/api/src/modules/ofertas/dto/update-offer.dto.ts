@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsDate,
   IsEnum,
   IsInt,
@@ -33,6 +34,22 @@ export class UpdateOfferDto {
   @IsNumber()
   @Min(0)
   discountValue?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  minimumProductQuantity?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  maximumProductQuantity?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isStackable?: boolean;
 
   @IsOptional()
   @Type(() => Date)

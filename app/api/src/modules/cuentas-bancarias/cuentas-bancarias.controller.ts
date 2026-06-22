@@ -7,18 +7,20 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CuentasBancariasService } from './cuentas-bancarias.service';
 import {
   CreateBankAccountDto,
   UpdateBankAccountDto,
 } from './dto/bank-account.dto';
+import { FilterBankAccountsDto } from './dto/filter-bank-accounts.dto';
 
 @Controller('cuentas-bancarias')
 export class CuentasBancariasController {
   constructor(private readonly service: CuentasBancariasService) {}
-  @Get() findAll() {
-    return this.service.findAll();
+  @Get() findAll(@Query() filter: FilterBankAccountsDto) {
+    return this.service.findAll(filter);
   }
   @Get(':id') findOne(@Param('id', ParseIntPipe) id: number) {
     return this.service.findOne(id);

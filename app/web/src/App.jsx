@@ -16,6 +16,42 @@ const ClientsPage = lazy(() =>
 const ProductsPage = lazy(() =>
   import('@/modules/products/page').then((module) => ({ default: module.ProductsPage })),
 )
+const InventoryPage = lazy(() =>
+  import('@/modules/inventory/page').then((module) => ({ default: module.InventoryPage })),
+)
+const ProductPricesPage = lazy(() =>
+  import('@/modules/product-prices/page').then((module) => ({ default: module.ProductPricesPage })),
+)
+const QuotesPage = lazy(() =>
+  import('@/modules/quotes/page').then((module) => ({ default: module.QuotesPage })),
+)
+const OffersPage = lazy(() =>
+  import('@/modules/offers/page').then((module) => ({ default: module.OffersPage })),
+)
+const CreditsPage = lazy(() =>
+  import('@/modules/credits/page').then((module) => ({ default: module.CreditsPage })),
+)
+const BankAccountsPage = lazy(() =>
+  import('@/modules/bank-accounts/page').then((module) => ({ default: module.BankAccountsPage })),
+)
+const BankMovementsPage = lazy(() =>
+  import('@/modules/bank-movements/page').then((module) => ({ default: module.BankMovementsPage })),
+)
+const DeliveriesPage = lazy(() =>
+  import('@/modules/deliveries/page').then((module) => ({ default: module.DeliveriesPage })),
+)
+const ReferralsPage = lazy(() =>
+  import('@/modules/referrals/page').then((module) => ({ default: module.ReferralsPage })),
+)
+const ProductTypesPage = lazy(() =>
+  import('@/modules/product-types/page').then((module) => ({ default: module.ProductTypesPage })),
+)
+const ProvidersPage = lazy(() =>
+  import('@/modules/providers/page').then((module) => ({ default: module.ProvidersPage })),
+)
+const TagsPage = lazy(() =>
+  import('@/modules/tags/page').then((module) => ({ default: module.TagsPage })),
+)
 const WarehousesPage = lazy(() =>
   import('@/modules/warehouses/page').then((module) => ({ default: module.WarehousesPage })),
 )
@@ -48,6 +84,18 @@ function App() {
               <Route path="/usuarios" element={<UsersPage />} />
               <Route path="/clientes" element={<ClientsPage />} />
               <Route path="/productos" element={<ProductsPage />} />
+              <Route path="/inventario" element={<InventoryPage />} />
+              <Route path="/precios-producto" element={<ProductPricesPage />} />
+              <Route path="/cotizaciones" element={<QuotesPage />} />
+              <Route path="/ofertas" element={<OffersPage />} />
+              <Route path="/creditos" element={<CreditsPage />} />
+              <Route path="/cuentas-bancarias" element={<BankAccountsPage />} />
+              <Route path="/movimientos-bancarios" element={<BankMovementsPage />} />
+              <Route path="/domicilios" element={<DeliveriesPage />} />
+              <Route path="/referidos" element={<ReferralsPage />} />
+              <Route path="/tipos-producto" element={<ProductTypesPage />} />
+              <Route path="/proveedores" element={<ProvidersPage />} />
+              <Route path="/etiquetas" element={<TagsPage />} />
               <Route path="/bodegas" element={<WarehousesPage />} />
               <Route path="/facturas" element={<InvoicesPage />} />
             </Route>

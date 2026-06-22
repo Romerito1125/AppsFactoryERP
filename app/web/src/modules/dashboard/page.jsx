@@ -13,8 +13,6 @@ import {
 } from '@/components/ui/card'
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
 } from '@/components/ui/chart'
@@ -89,7 +87,15 @@ export function DashboardPage() {
   const { users, clients, products, warehouses, invoices } = dashboardQuery.data
   const activeInvoices = invoices.filter((invoice) => invoice.status === 'ACTIVA')
   const totalRevenue = activeInvoices.reduce((sum, invoice) => sum + Number(invoice.total ?? 0), 0)
-  const stockUnits = products.reduce((sum, product) => sum + Number(product.quantity ?? 0), 0)
+  const stockUnits = products.reduce(
+    (sum, product) =>
+      sum +
+      (product.warehouses ?? []).reduce(
+        (warehouseSum, item) => warehouseSum + Number(item.quantity ?? 0),
+        0,
+      ),
+    0,
+  )
 
   const monthlyRevenue = Array.from({ length: 12 }).map((_, index) => {
     const month = index
@@ -105,12 +111,14 @@ export function DashboardPage() {
   })
 
   const stockByWarehouse = warehouses.map((warehouse) => {
-    const warehouseProducts = products.filter((product) => product.warehouseId === warehouse.id)
-
     return {
       name: warehouse.location,
-      stock: warehouseProducts.reduce(
-        (sum, product) => sum + Number(product.quantity ?? 0),
+      stock: products.reduce(
+        (sum, product) =>
+          sum +
+          (product.warehouses ?? [])
+            .filter((item) => item.warehouseId === warehouse.id)
+            .reduce((warehouseSum, item) => warehouseSum + Number(item.quantity ?? 0), 0),
         0,
       ),
       users: users.filter((user) => user.role === 'BODEGA' && user.isActive).length,
@@ -224,13 +232,28 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent>
             <ChartContainer config={chartConfig} className="h-[320px] w-full">
-              <BarChart data={stockByWarehouse} layout="vertical" margin={{ left: 24 }}>
-                <CartesianGrid horizontal={false} />
-                <XAxis type="number" hide />
-                <YAxis type="category" dataKey="name" width={110} tickLine={false} axisLine={false} />
+              <BarChart data={stockByWarehouse} margin={{ top: 12, right: 10, left: -10, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="stockGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="var(--color-stock)" stopOpacity={0.9} />
+                    <stop offset="95%" stopColor="var(--color-stock)" stopOpacity={0.25} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid vertical={false} />
+                <XAxis 
+                  dataKey="name" 
+                  tickLine={false} 
+                  axisLine={false}
+                  tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
+                />
+                <YAxis 
+                  tickLine={false} 
+                  axisLine={false}
+                  tick={{ fill: 'var(--muted-foreground)', fontSize: 11 }}
+                  tickFormatter={formatNumber}
+                />
                 <ChartTooltip content={<ChartTooltipContent />} />
-                <ChartLegend content={<ChartLegendContent />} />
-                <Bar dataKey="stock" fill="var(--color-stock)" radius={10} />
+                <Bar dataKey="stock" fill="url(#stockGradient)" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ChartContainer>
           </CardContent>
