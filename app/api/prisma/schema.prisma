@@ -103,6 +103,7 @@ model Product {
   brand         String
   minimumStock  Int       @default(0)
   maximumStock  Int?
+  imageUrl      String?
 
   prices             ProductPrice[]
   invoiceItems       InvoiceItem[]

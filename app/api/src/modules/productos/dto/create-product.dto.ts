@@ -83,7 +83,6 @@ export class CreateProductDto {
   @IsOptional()
   @IsArray()
   @ArrayUnique()
-  @Type(() => Number)
   @IsInt({ each: true })
   @IsPositive({ each: true })
   tagIds?: number[];

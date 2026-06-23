@@ -8,11 +8,13 @@ Base local por defecto:
 http://localhost:3000
 ```
 
-Para enviar bodies usa siempre:
+Para enviar bodies JSON usa:
 
 ```http
 Content-Type: application/json
 ```
+
+Excepción: los endpoints de productos que reciben imagen usan `multipart/form-data`. En ese caso no fijes manualmente el header `Content-Type`; deja que el navegador, `fetch`, `axios` o Postman agreguen el `boundary` automáticamente.
 
 ## Comandos
 
@@ -210,8 +212,10 @@ Crear bodega:
 | --- | --- | --- | --- |
 | GET | `/productos` | Lista productos activos con tipo, proveedor, tags, precios y bodegas | No |
 | GET | `/productos/:id` | Consulta producto | No |
-| POST | `/productos` | Crea producto con precios, tags y stock inicial opcional | Sí |
-| PATCH | `/productos/:id` | Actualiza datos del producto y reemplaza tags si envías `tagIds` | Sí |
+| POST | `/productos` | Crea producto con precios, tags, stock inicial e imagen opcional | Sí, JSON o multipart |
+| PATCH | `/productos/:id` | Actualiza datos, reemplaza tags si envías `tagIds` e imagen opcional | Sí, JSON o multipart |
+| PATCH | `/productos/:id/imagen` | Reemplaza la imagen del producto | Sí, multipart |
+| DELETE | `/productos/:id/imagen` | Elimina la imagen del producto | No |
 | DELETE | `/productos/:id` | Soft delete | No |
 | PATCH | `/productos/:id/reactivar` | Reactiva producto | No |
 
@@ -247,6 +251,123 @@ Crear producto:
   ]
 }
 ```
+
+Crear producto con imagen desde frontend:
+
+```ts
+const formData = new FormData();
+
+formData.append('productTypeId', String(1));
+formData.append('providerId', String(1));
+formData.append('name', 'Coca-Cola 1.5L');
+formData.append('description', 'Gaseosa 1.5 litros');
+formData.append('taxRate', String(19));
+formData.append('brand', 'Coca-Cola');
+formData.append('minimumStock', String(10));
+formData.append('maximumStock', String(100));
+formData.append('tagIds', JSON.stringify([1, 2]));
+formData.append(
+  'prices',
+  JSON.stringify([
+    {
+      name: 'Precio normal',
+      price: 5000,
+      isDefault: true,
+    },
+  ]),
+);
+formData.append(
+  'warehouses',
+  JSON.stringify([
+    {
+      warehouseId: 1,
+      quantity: 20,
+    },
+  ]),
+);
+
+if (imageFile) {
+  formData.append('image', imageFile);
+}
+
+await fetch('http://localhost:3000/productos', {
+  method: 'POST',
+  body: formData,
+});
+```
+
+No agregues manualmente este header cuando envías `FormData`:
+
+```ts
+headers: { 'Content-Type': 'multipart/form-data' }
+```
+
+El navegador debe generarlo con `boundary`. Si lo fijas manualmente, el backend puede recibir el body vacío o mal parseado.
+
+Formato esperado en `multipart/form-data`:
+
+| Campo | Tipo form-data | Valor |
+| --- | --- | --- |
+| `productTypeId` | Text | `1` |
+| `providerId` | Text | `1` |
+| `name` | Text | `Coca-Cola 1.5L` |
+| `description` | Text | `Gaseosa 1.5 litros` |
+| `taxRate` | Text | `19` |
+| `brand` | Text | `Coca-Cola` |
+| `minimumStock` | Text | `10` |
+| `maximumStock` | Text | `100` |
+| `tagIds` | Text | `[1,2]` |
+| `prices` | Text | `[{"name":"Precio normal","price":5000,"isDefault":true}]` |
+| `warehouses` | Text | `[{"warehouseId":1,"quantity":20}]` |
+| `image` | File | Archivo JPG, PNG o WEBP |
+
+Los campos `tagIds`, `prices` y `warehouses` deben enviarse como JSON string en una sola key cada uno. No los envíes como `warehouses[0][warehouseId]`, `warehouseId` separado o varias filas con la misma key.
+
+Actualizar producto con imagen opcional:
+
+```ts
+const formData = new FormData();
+
+formData.append('name', 'Coca-Cola 1.5L retornable');
+formData.append('tagIds', JSON.stringify([1, 3]));
+
+if (imageFile) {
+  formData.append('image', imageFile);
+}
+
+await fetch('http://localhost:3000/productos/1', {
+  method: 'PATCH',
+  body: formData,
+});
+```
+
+Actualizar solo la imagen:
+
+```ts
+const formData = new FormData();
+formData.append('image', imageFile);
+
+await fetch('http://localhost:3000/productos/1/imagen', {
+  method: 'PATCH',
+  body: formData,
+});
+```
+
+Eliminar imagen:
+
+```ts
+await fetch('http://localhost:3000/productos/1/imagen', {
+  method: 'DELETE',
+});
+```
+
+Validaciones de imagen:
+
+- El campo del archivo debe llamarse `image`.
+- Formatos permitidos: JPG, PNG y WEBP.
+- Tamaño máximo: 5 MB.
+- No se aceptan SVG ni base64.
+- La respuesta del producto incluye `imageUrl`.
 
 Reglas:
 

@@ -6,13 +6,17 @@ import {
 import { InventoryMovementType } from '@prisma/client';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { R2StorageService } from '../../shared/storage/r2-storage.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { FilterProductsDto } from './dto/filter-products.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 
 @Injectable()
 export class ProductosService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: R2StorageService,
+  ) {}
 
   findAll(filter: FilterProductsDto) {
     return this.prisma.product
@@ -41,92 +45,165 @@ export class ProductosService {
     return this.formatProduct(product);
   }
 
-  async create(createProductDto: CreateProductDto) {
+  async create(
+    createProductDto: CreateProductDto,
+    image?: Express.Multer.File,
+  ) {
     const { tagIds, prices, warehouses, ...productData } = createProductDto;
+    const uploadedImage = image
+      ? await this.storage.uploadProductImage(image)
+      : undefined;
 
-    // El producto depende de catálogos activos; no se crean relaciones inválidas.
-    await this.ensureProductTypeExists(productData.productTypeId);
-    await this.ensureProviderExists(productData.providerId);
-    await this.ensureTagsExist(tagIds);
-    await this.ensureWarehousesExist(
-      warehouses?.map((item) => item.warehouseId),
-    );
-    const normalizedPrices = this.normalizeInitialPrices(prices);
+    try {
+      // El producto depende de catálogos activos; no se crean relaciones inválidas.
+      await this.ensureProductTypeExists(productData.productTypeId);
+      await this.ensureProviderExists(productData.providerId);
+      await this.ensureTagsExist(tagIds);
+      await this.ensureWarehousesExist(
+        warehouses?.map((item) => item.warehouseId),
+      );
+      const normalizedPrices = this.normalizeInitialPrices(prices);
 
-    const product = await this.prisma.$transaction(async (tx) => {
-      const createdProduct = await tx.product.create({
-        data: {
-          ...productData,
-          tags: tagIds?.length
-            ? { create: tagIds.map((tagId) => ({ tagId })) }
-            : undefined,
-          prices: normalizedPrices.length
-            ? { create: normalizedPrices }
-            : undefined,
-        },
-        include: this.productInclude,
+      const product = await this.prisma.$transaction(async (tx) => {
+        const createdProduct = await tx.product.create({
+          data: {
+            ...productData,
+            imageUrl: uploadedImage?.url,
+            tags: tagIds?.length
+              ? { create: tagIds.map((tagId) => ({ tagId })) }
+              : undefined,
+            prices: normalizedPrices.length
+              ? { create: normalizedPrices }
+              : undefined,
+          },
+          include: this.productInclude,
+        });
+
+        for (const warehouse of warehouses ?? []) {
+          await tx.productWarehouse.create({
+            data: {
+              productId: createdProduct.id,
+              warehouseId: warehouse.warehouseId,
+              quantity: warehouse.quantity,
+            },
+          });
+          await tx.inventoryMovement.create({
+            data: {
+              productId: createdProduct.id,
+              toWarehouseId: warehouse.warehouseId,
+              quantity: warehouse.quantity,
+              movementType: InventoryMovementType.ENTRADA,
+              reason: 'Stock inicial de producto',
+            },
+          });
+        }
+
+        return tx.product.findUniqueOrThrow({
+          where: { id: createdProduct.id },
+          include: this.productInclude,
+        });
       });
 
-      for (const warehouse of warehouses ?? []) {
-        await tx.productWarehouse.create({
-          data: {
-            productId: createdProduct.id,
-            warehouseId: warehouse.warehouseId,
-            quantity: warehouse.quantity,
-          },
-        });
-        await tx.inventoryMovement.create({
-          data: {
-            productId: createdProduct.id,
-            toWarehouseId: warehouse.warehouseId,
-            quantity: warehouse.quantity,
-            movementType: InventoryMovementType.ENTRADA,
-            reason: 'Stock inicial de producto',
-          },
-        });
-      }
-
-      return tx.product.findUniqueOrThrow({
-        where: { id: createdProduct.id },
-        include: this.productInclude,
-      });
-    });
-
-    return this.formatProduct(product);
+      return this.formatProduct(product);
+    } catch (error) {
+      await this.safeDeleteImage(uploadedImage?.url);
+      throw error;
+    }
   }
 
-  async update(id: number, updateProductDto: UpdateProductDto) {
+  async update(
+    id: number,
+    updateProductDto: UpdateProductDto,
+    image?: Express.Multer.File,
+  ) {
     this.ensurePositiveId(id);
-    await this.findOne(id);
+    const currentProduct = await this.getExistingProduct(id);
 
     const { tagIds, ...productData } = updateProductDto;
+    const uploadedImage = image
+      ? await this.storage.uploadProductImage(image, id)
+      : undefined;
 
-    if (productData.productTypeId) {
-      await this.ensureProductTypeExists(productData.productTypeId);
-    }
-
-    if (productData.providerId) {
-      await this.ensureProviderExists(productData.providerId);
-    }
-
-    await this.ensureTagsExist(tagIds);
-
-    const product = await this.prisma.$transaction(async (tx) => {
-      // Si el frontend envía tagIds, se interpreta como reemplazo completo de etiquetas.
-      if (tagIds) {
-        await tx.productTag.deleteMany({ where: { productId: id } });
+    try {
+      if (productData.productTypeId) {
+        await this.ensureProductTypeExists(productData.productTypeId);
       }
 
-      return tx.product.update({
+      if (productData.providerId) {
+        await this.ensureProviderExists(productData.providerId);
+      }
+
+      await this.ensureTagsExist(tagIds);
+
+      const product = await this.prisma.$transaction(async (tx) => {
+        // Si el frontend envía tagIds, se interpreta como reemplazo completo de etiquetas.
+        if (tagIds) {
+          await tx.productTag.deleteMany({ where: { productId: id } });
+        }
+
+        return tx.product.update({
+          where: { id },
+          data: {
+            ...productData,
+            imageUrl: uploadedImage?.url,
+            tags: tagIds
+              ? { create: tagIds.map((tagId) => ({ tagId })) }
+              : undefined,
+          },
+          include: this.productInclude,
+        });
+      });
+
+      if (uploadedImage?.url && currentProduct.imageUrl) {
+        await this.safeDeleteImage(currentProduct.imageUrl);
+      }
+
+      return this.formatProduct(product);
+    } catch (error) {
+      await this.safeDeleteImage(uploadedImage?.url);
+      throw error;
+    }
+  }
+
+  async updateImage(id: number, image?: Express.Multer.File) {
+    this.ensurePositiveId(id);
+    if (!image) {
+      throw new BadRequestException('Debe enviar una imagen');
+    }
+
+    const currentProduct = await this.getExistingProduct(id);
+    const uploadedImage = await this.storage.uploadProductImage(image, id);
+
+    try {
+      const product = await this.prisma.product.update({
         where: { id },
-        data: {
-          ...productData,
-          tags: tagIds
-            ? { create: tagIds.map((tagId) => ({ tagId })) }
-            : undefined,
-        },
+        data: { imageUrl: uploadedImage.url },
         include: this.productInclude,
       });
+
+      if (currentProduct.imageUrl) {
+        await this.safeDeleteImage(currentProduct.imageUrl);
+      }
+
+      return this.formatProduct(product);
+    } catch (error) {
+      await this.safeDeleteImage(uploadedImage.url);
+      throw error;
+    }
+  }
+
+  async removeImage(id: number) {
+    this.ensurePositiveId(id);
+    const currentProduct = await this.getExistingProduct(id);
+
+    if (currentProduct.imageUrl) {
+      await this.storage.deleteFile(currentProduct.imageUrl);
+    }
+
+    const product = await this.prisma.product.update({
+      where: { id },
+      data: { imageUrl: null },
+      include: this.productInclude,
     });
 
     return this.formatProduct(product);
@@ -168,6 +245,27 @@ export class ProductosService {
       orderBy: { warehouseId: 'asc' },
     },
   } as const;
+
+  private async getExistingProduct(id: number) {
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: this.productInclude,
+    });
+
+    if (!product) {
+      throw new NotFoundException('Producto no encontrado');
+    }
+
+    return product;
+  }
+
+  private async safeDeleteImage(imageUrl?: string | null) {
+    try {
+      await this.storage.deleteFile(imageUrl);
+    } catch {
+      return;
+    }
+  }
 
   // La tabla pivote ProductTag es un detalle interno; la API responde tags planos.
   private formatProduct(product) {
@@ -247,6 +345,12 @@ export class ProductosService {
 
   private async ensureWarehousesExist(ids?: number[]) {
     if (!ids?.length) return;
+    if (ids.some((id) => !Number.isInteger(id) || id <= 0)) {
+      throw new BadRequestException(
+        'warehouses debe enviarse como JSON válido: [{"warehouseId":1,"quantity":5}]',
+      );
+    }
+
     const uniqueIds = [...new Set(ids)];
     const count = await this.prisma.warehouse.count({
       where: { id: { in: uniqueIds }, isActive: true },

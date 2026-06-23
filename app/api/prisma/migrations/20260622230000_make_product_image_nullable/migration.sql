@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Product" ALTER COLUMN "imageUrl" DROP DEFAULT;
+ALTER TABLE "Product" ALTER COLUMN "imageUrl" DROP NOT NULL;

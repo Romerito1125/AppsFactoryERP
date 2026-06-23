@@ -40,7 +40,6 @@ export class UpdateProductDto {
   taxRate?: number;
 
   @IsOptional()
-  @IsOptional()
   @IsString()
   @MinLength(1)
   brand?: string;
@@ -60,7 +59,6 @@ export class UpdateProductDto {
   @IsOptional()
   @IsArray()
   @ArrayUnique()
-  @Type(() => Number)
   @IsInt({ each: true })
   @IsPositive({ each: true })
   tagIds?: number[];
