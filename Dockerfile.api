@@ -24,6 +24,7 @@ COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/bun.lock ./bun.lock
 COPY --from=builder /app/app/api/package.json ./app/api/package.json
 COPY --from=builder /app/app/api/dist ./app/api/dist
+COPY --from=builder /app/app/api/node_modules ./app/api/node_modules
 COPY --from=builder /app/app/api/prisma ./app/api/prisma
 COPY --from=builder /app/app/api/prisma.config.ts ./app/api/prisma.config.ts
 COPY --from=builder /app/app/api/scripts ./app/api/scripts
