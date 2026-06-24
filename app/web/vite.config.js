@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '')
-  const apiTarget = env.VITE_API_PROXY_TARGET ?? 'http://localhost:7502'
+  const apiTarget = env.VITE_API_PROXY_TARGET ?? 'http://localhost:3000'
 
   return {
     plugins: [react(), tailwindcss()],
