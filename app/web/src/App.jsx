@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
+import { ProtectedRoute, PublicOnlyRoute } from '@/auth/route-guard'
 import { AppProviders } from '@/app/providers'
 import { AdminLayout } from '@/layouts/admin-layout'
 
@@ -58,6 +59,15 @@ const WarehousesPage = lazy(() =>
 const InvoicesPage = lazy(() =>
   import('@/modules/invoices/page').then((module) => ({ default: module.InvoicesPage })),
 )
+const ReportsPage = lazy(() =>
+  import('@/modules/reports/page').then((module) => ({ default: module.ReportsPage })),
+)
+const LoginPage = lazy(() =>
+  import('@/modules/auth/login-page').then((module) => ({ default: module.LoginPage })),
+)
+const PosPage = lazy(() =>
+  import('@/modules/pos/page').then((module) => ({ default: module.PosPage })),
+)
 
 function RouteFallback() {
   return (
@@ -76,9 +86,35 @@ function App() {
   return (
     <AppProviders>
       <BrowserRouter>
-        <Suspense fallback={<RouteFallback />}>
+        <Suspense fallback={<RouteFallback />}> 
           <Routes>
-            <Route element={<AdminLayout />}>
+            <Route
+              path="/login"
+              element={
+                <PublicOnlyRoute>
+                  <div className="min-h-screen bg-[radial-gradient(circle_at_top,#eff7ff,transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.98),rgba(245,247,250,1))] px-4 py-8 dark:bg-[radial-gradient(circle_at_top,#132235,transparent_35%),linear-gradient(180deg,rgba(12,18,28,0.96),rgba(8,12,20,1))] md:px-6 md:py-10">
+                    <LoginPage />
+                  </div>
+                </PublicOnlyRoute>
+              }
+            />
+            <Route
+              path="/pos"
+              element={
+                <ProtectedRoute allowedRoles={['ADMIN', 'VENDEDOR', 'BODEGA', 'CONTADOR']}>
+                  <div className="min-h-screen bg-[radial-gradient(circle_at_top,#eff7ff,transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.98),rgba(245,247,250,1))] px-4 py-6 dark:bg-[radial-gradient(circle_at_top,#132235,transparent_35%),linear-gradient(180deg,rgba(12,18,28,0.96),rgba(8,12,20,1))] md:px-6 md:py-8">
+                    <PosPage />
+                  </div>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              element={
+                <ProtectedRoute allowedRoles={['ADMIN']}>
+                  <AdminLayout />
+                </ProtectedRoute>
+              }
+            >
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/usuarios" element={<UsersPage />} />
@@ -98,6 +134,7 @@ function App() {
               <Route path="/etiquetas" element={<TagsPage />} />
               <Route path="/bodegas" element={<WarehousesPage />} />
               <Route path="/facturas" element={<InvoicesPage />} />
+              <Route path="/reportes" element={<ReportsPage />} />
             </Route>
           </Routes>
         </Suspense>

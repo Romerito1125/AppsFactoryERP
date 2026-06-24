@@ -1,5 +1,6 @@
 import {
   ArrowLeftRight,
+  BarChart3,
   Bike,
   Box,
   Building2,
@@ -145,6 +146,12 @@ export const navigationGroups = [
         label: 'Movimientos',
         description: 'Tesoreria operativa',
         icon: ArrowLeftRight,
+      },
+      {
+        path: '/reportes',
+        label: 'Reportes',
+        description: 'IVA, exogenas y analitica',
+        icon: BarChart3,
       },
     ],
   },

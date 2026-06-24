@@ -14,6 +14,14 @@ export interface UploadedFileResult {
   size: number;
 }
 
+interface R2Config {
+  accountId: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  bucket: string;
+  publicUrl: string;
+}
+
 @Injectable()
 export class R2StorageService {
   private readonly logger = new Logger(R2StorageService.name);
@@ -23,29 +31,33 @@ export class R2StorageService {
     ['image/png', 'png'],
     ['image/webp', 'webp'],
   ]);
-  private readonly client = new S3Client({
-    region: 'auto',
-    endpoint: `https://${envs.cloudflareR2.accountId}.r2.cloudflarestorage.com`,
-    credentials: {
-      accessKeyId: envs.cloudflareR2.accessKeyId,
-      secretAccessKey: envs.cloudflareR2.secretAccessKey,
-    },
-  });
+  private readonly config = this.getR2Config();
+  private readonly client = this.config
+    ? new S3Client({
+        region: 'auto',
+        endpoint: `https://${this.config.accountId}.r2.cloudflarestorage.com`,
+        credentials: {
+          accessKeyId: this.config.accessKeyId,
+          secretAccessKey: this.config.secretAccessKey,
+        },
+      })
+    : null;
 
   async uploadProductImage(
     file: Express.Multer.File,
     productId?: number,
   ): Promise<UploadedFileResult> {
     this.validateImage(file);
+    const { client, config } = this.getRequiredStorage();
 
     const extension = this.allowedMimeTypes.get(file.mimetype)!;
     const owner = productId ? String(productId) : 'temp';
     const key = `products/${owner}/${Date.now()}-${randomUUID()}.${extension}`;
 
     try {
-      await this.client.send(
+      await client.send(
         new PutObjectCommand({
-          Bucket: envs.cloudflareR2.bucket,
+          Bucket: config.bucket,
           Key: key,
           Body: file.buffer,
           ContentType: file.mimetype,
@@ -54,7 +66,7 @@ export class R2StorageService {
     } catch (error) {
       const errorMessage = this.getStorageErrorMessage(error);
       this.logger.error(
-        `Error subiendo imagen a Cloudflare R2. bucket=${envs.cloudflareR2.bucket} key=${key} error=${errorMessage}`,
+        `Error subiendo imagen a Cloudflare R2. bucket=${config.bucket} key=${key} error=${errorMessage}`,
         error instanceof Error ? error.stack : undefined,
       );
       throw new BadRequestException(
@@ -64,27 +76,29 @@ export class R2StorageService {
 
     return {
       key,
-      url: `${envs.cloudflareR2.publicUrl}/${key}`,
+      url: `${config.publicUrl}/${key}`,
       mimeType: file.mimetype,
       size: file.size,
     };
   }
 
   async deleteFile(keyOrUrl?: string | null) {
+    if (!this.config || !this.client) return;
+
     const key = this.extractKey(keyOrUrl);
     if (!key) return;
 
     try {
       await this.client.send(
         new DeleteObjectCommand({
-          Bucket: envs.cloudflareR2.bucket,
+          Bucket: this.config.bucket,
           Key: key,
         }),
       );
     } catch (error) {
       const errorMessage = this.getStorageErrorMessage(error);
       this.logger.error(
-        `Error eliminando imagen de Cloudflare R2. bucket=${envs.cloudflareR2.bucket} key=${key} error=${errorMessage}`,
+        `Error eliminando imagen de Cloudflare R2. bucket=${this.config.bucket} key=${key} error=${errorMessage}`,
         error instanceof Error ? error.stack : undefined,
       );
       throw new BadRequestException(
@@ -112,7 +126,9 @@ export class R2StorageService {
   private extractKey(keyOrUrl?: string | null) {
     if (!keyOrUrl) return null;
 
-    const publicUrl = `${envs.cloudflareR2.publicUrl}/`;
+    if (!this.config) return null;
+
+    const publicUrl = `${this.config.publicUrl}/`;
     if (keyOrUrl.startsWith(publicUrl)) {
       return keyOrUrl.slice(publicUrl.length);
     }
@@ -138,5 +154,32 @@ export class R2StorageService {
     }
 
     return 'Error desconocido del proveedor de almacenamiento';
+  }
+
+  private getRequiredStorage() {
+    if (!this.config || !this.client) {
+      throw new BadRequestException(
+        'El almacenamiento de imagenes no esta configurado en el servidor',
+      );
+    }
+
+    return {
+      config: this.config,
+      client: this.client,
+    };
+  }
+
+  private getR2Config(): R2Config | null {
+    if (!envs.cloudflareR2.enabled) {
+      return null;
+    }
+
+    return {
+      accountId: envs.cloudflareR2.accountId!,
+      accessKeyId: envs.cloudflareR2.accessKeyId!,
+      secretAccessKey: envs.cloudflareR2.secretAccessKey!,
+      bucket: envs.cloudflareR2.bucket!,
+      publicUrl: envs.cloudflareR2.publicUrl!,
+    };
   }
 }

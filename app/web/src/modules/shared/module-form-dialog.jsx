@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
+import { ProductImage } from '@/components/product-image'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -159,7 +160,53 @@ export function ModuleFormDialog({
                     />
                   ) : null}
 
-                  {!['textarea', 'select', 'switch'].includes(field.type) ? (
+                  {field.type === 'file' ? (
+                    <Controller
+                      name={field.name}
+                      control={control}
+                      render={({ field: controllerField }) => {
+                        const currentImage = field.getPreviewValue?.(record)
+
+                        return (
+                          <div className="grid gap-3">
+                            {currentImage ? (
+                              <div className="flex items-start gap-3 rounded-2xl border border-border/70 bg-muted/20 p-3">
+                                <ProductImage
+                                  src={currentImage}
+                                  alt={record?.name ?? field.label}
+                                  className="size-16 rounded-lg"
+                                  iconClassName="size-4"
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium text-foreground">Imagen actual</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Selecciona otra imagen solo si deseas reemplazarla.
+                                  </p>
+                                </div>
+                              </div>
+                            ) : null}
+
+                            <Input
+                              id={field.name}
+                              type="file"
+                              accept={field.accept}
+                              onChange={(event) =>
+                                controllerField.onChange(event.target.files?.[0] ?? undefined)
+                              }
+                            />
+
+                            {controllerField.value?.name ? (
+                              <p className="text-xs text-muted-foreground">
+                                Archivo seleccionado: {controllerField.value.name}
+                              </p>
+                            ) : null}
+                          </div>
+                        )
+                      }}
+                    />
+                  ) : null}
+
+                  {!['textarea', 'select', 'switch', 'file'].includes(field.type) ? (
                     <Input
                       id={field.name}
                       type={field.type ?? 'text'}

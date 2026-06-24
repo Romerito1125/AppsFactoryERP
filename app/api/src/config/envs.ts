@@ -4,11 +4,11 @@ import * as Joi from 'joi';
 interface EnvVars {
   PORT: number;
   DATABASE_URL: string;
-  CLOUDFLARE_R2_ACCOUNT_ID: string;
-  CLOUDFLARE_R2_ACCESS_KEY_ID: string;
-  CLOUDFLARE_R2_SECRET_ACCESS_KEY: string;
-  CLOUDFLARE_R2_BUCKET: string;
-  CLOUDFLARE_R2_PUBLIC_URL: string;
+  CLOUDFLARE_R2_ACCOUNT_ID?: string;
+  CLOUDFLARE_R2_ACCESS_KEY_ID?: string;
+  CLOUDFLARE_R2_SECRET_ACCESS_KEY?: string;
+  CLOUDFLARE_R2_BUCKET?: string;
+  CLOUDFLARE_R2_PUBLIC_URL?: string;
 }
 
 const envSchema = Joi.object<EnvVars>({
@@ -16,11 +16,11 @@ const envSchema = Joi.object<EnvVars>({
 
   DATABASE_URL: Joi.string().required(),
 
-  CLOUDFLARE_R2_ACCOUNT_ID: Joi.string().required(),
-  CLOUDFLARE_R2_ACCESS_KEY_ID: Joi.string().required(),
-  CLOUDFLARE_R2_SECRET_ACCESS_KEY: Joi.string().required(),
-  CLOUDFLARE_R2_BUCKET: Joi.string().required(),
-  CLOUDFLARE_R2_PUBLIC_URL: Joi.string().uri().required(),
+  CLOUDFLARE_R2_ACCOUNT_ID: Joi.string().allow('').optional(),
+  CLOUDFLARE_R2_ACCESS_KEY_ID: Joi.string().allow('').optional(),
+  CLOUDFLARE_R2_SECRET_ACCESS_KEY: Joi.string().allow('').optional(),
+  CLOUDFLARE_R2_BUCKET: Joi.string().allow('').optional(),
+  CLOUDFLARE_R2_PUBLIC_URL: Joi.string().uri().allow('').optional(),
 })
   .unknown(true)
   .required();
@@ -32,15 +32,27 @@ if (error) {
 }
 
 const envVars = value;
+const cloudflareR2 = {
+  accountId: envVars.CLOUDFLARE_R2_ACCOUNT_ID || null,
+  accessKeyId: envVars.CLOUDFLARE_R2_ACCESS_KEY_ID || null,
+  secretAccessKey: envVars.CLOUDFLARE_R2_SECRET_ACCESS_KEY || null,
+  bucket: envVars.CLOUDFLARE_R2_BUCKET || null,
+  publicUrl: envVars.CLOUDFLARE_R2_PUBLIC_URL
+    ? envVars.CLOUDFLARE_R2_PUBLIC_URL.replace(/\/$/, '')
+    : null,
+};
 
 export const envs = {
   port: envVars.PORT,
   databaseUrl: envVars.DATABASE_URL,
   cloudflareR2: {
-    accountId: envVars.CLOUDFLARE_R2_ACCOUNT_ID,
-    accessKeyId: envVars.CLOUDFLARE_R2_ACCESS_KEY_ID,
-    secretAccessKey: envVars.CLOUDFLARE_R2_SECRET_ACCESS_KEY,
-    bucket: envVars.CLOUDFLARE_R2_BUCKET,
-    publicUrl: envVars.CLOUDFLARE_R2_PUBLIC_URL.replace(/\/$/, ''),
+    ...cloudflareR2,
+    enabled: Boolean(
+      cloudflareR2.accountId &&
+        cloudflareR2.accessKeyId &&
+        cloudflareR2.secretAccessKey &&
+        cloudflareR2.bucket &&
+        cloudflareR2.publicUrl,
+    ),
   },
 };

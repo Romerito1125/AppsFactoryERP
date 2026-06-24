@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Bell, CalendarDays, ChevronDown, Search, X } from 'lucide-react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Bell, CalendarDays, ChevronDown, LogOut, Search, Store, X } from 'lucide-react'
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 
+import { useAuth } from '@/auth/auth-context'
 import { getNavigationItem, navigationGroups } from '@/app/navigation'
 import { BrandMark } from '@/components/brand/brand-mark'
 import { ThemeToggle } from '@/components/theme/theme-toggle'
@@ -300,6 +301,14 @@ function AppSidebar() {
 export function AdminLayout() {
   const location = useLocation()
   const currentItem = getNavigationItem(location.pathname)
+  const { user, logout } = useAuth()
+  const initials = user?.displayName
+    ?.split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase() ?? 'MM'
 
   return (
     <SidebarProvider
@@ -337,15 +346,29 @@ export function AdminLayout() {
                 <CalendarDays className="size-3.5 text-primary animate-pulse" />
                 {new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium' }).format(new Date())}
               </Badge>
+              <Button asChild variant="outline" className="rounded-full border-border/80 bg-background/50 backdrop-blur shadow-xs">
+                <Link to="/pos">
+                  <Store className="mr-2 size-4" />
+                  POS
+                </Link>
+              </Button>
               <Button variant="outline" size="icon-sm" className="rounded-full border-border/80 bg-background/50 backdrop-blur shadow-xs hover:bg-accent hover:text-accent-foreground hover:scale-105 active:scale-95 transition-all duration-300 relative">
                 <Bell className="size-4" />
                 <span className="absolute top-1 right-1 flex size-2 rounded-full bg-primary animate-pulse" />
                 <span className="sr-only">Notificaciones</span>
               </Button>
               <ThemeToggle />
-              <Avatar className="size-9 border-2 border-primary/20 shadow-md shadow-primary/5 hover:border-primary/50 hover:scale-105 active:scale-95 transition-all duration-300 cursor-pointer">
-                <AvatarFallback className="bg-primary/10 font-bold text-primary text-xs">MMM</AvatarFallback>
+              <div className="hidden text-right sm:block">
+                <p className="text-sm font-medium text-foreground">{user?.displayName ?? 'Administrador'}</p>
+                <p className="text-xs text-muted-foreground">{user?.username ?? 'sesion activa'}</p>
+              </div>
+              <Avatar className="size-9 border-2 border-primary/20 shadow-md shadow-primary/5 transition-all duration-300">
+                <AvatarFallback className="bg-primary/10 font-bold text-primary text-xs">{initials}</AvatarFallback>
               </Avatar>
+              <Button variant="outline" size="icon-sm" className="rounded-full" onClick={logout}>
+                <LogOut className="size-4" />
+                <span className="sr-only">Cerrar sesion</span>
+              </Button>
             </div>
           </div>
         </header>

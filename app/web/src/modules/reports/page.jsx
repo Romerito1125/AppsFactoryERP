@@ -1,0 +1,1180 @@
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import {
+  AlertTriangle,
+  ArrowRightLeft,
+  BarChart3,
+  CircleDollarSign,
+  Download,
+  FileSpreadsheet,
+  Landmark,
+  PackageSearch,
+  Printer,
+  Receipt,
+  ScrollText,
+  TrendingUp,
+  Wallet,
+} from 'lucide-react'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  XAxis,
+  YAxis,
+} from 'recharts'
+
+import { ProductImage } from '@/components/product-image'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+} from '@/components/ui/chart'
+import { Input } from '@/components/ui/input'
+import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { apiClient } from '@/lib/api-client'
+import {
+  formatClientType,
+  formatCurrency,
+  formatDate,
+  formatInvoiceStatus,
+  formatNumber,
+} from '@/lib/format'
+import { cn } from '@/lib/utils'
+
+const GMF_RATE = 0.004
+const GMF_TYPES = new Set(['EGRESO', 'TRANSFERENCIA_SALIENTE'])
+
+const chartConfig = {
+  total: { label: 'Total facturado', color: 'var(--chart-1)' },
+  taxes: { label: 'IVA', color: 'var(--chart-2)' },
+  quantity: { label: 'Unidades', color: 'var(--chart-3)' },
+  critical: { label: 'Critico', color: '#ef4444' },
+  warning: { label: 'Regular', color: '#f59e0b' },
+  good: { label: 'Buen stock', color: '#10b981' },
+}
+
+function ReportsSkeleton() {
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 6 }).map((_, index) => (
+          <Skeleton key={index} className="h-28 rounded-2xl" />
+        ))}
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Skeleton className="h-[360px] rounded-2xl" />
+        <Skeleton className="h-[360px] rounded-2xl" />
+      </div>
+      <Skeleton className="h-[520px] rounded-2xl" />
+    </div>
+  )
+}
+
+function toInputDate(value) {
+  return value.toISOString().slice(0, 10)
+}
+
+function createDateRange(startDate, endDate) {
+  return {
+    start: startDate ? new Date(`${startDate}T00:00:00`) : null,
+    end: endDate ? new Date(`${endDate}T23:59:59.999`) : null,
+  }
+}
+
+function isWithinRange(value, range) {
+  if (!value) return false
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return false
+  if (range.start && date < range.start) return false
+  if (range.end && date > range.end) return false
+  return true
+}
+
+function formatShortDate(value) {
+  return new Intl.DateTimeFormat('es-CO', {
+    day: '2-digit',
+    month: 'short',
+  }).format(new Date(value))
+}
+
+function formatPercent(value) {
+  return `${Number(value ?? 0).toFixed(2)}%`
+}
+
+function getTotalStock(product) {
+  return (product.warehouses ?? []).reduce((sum, item) => sum + Number(item.quantity ?? 0), 0)
+}
+
+function getStockSignal(product) {
+  const totalStock = getTotalStock(product)
+  const minimumStock = Number(product.minimumStock ?? 0)
+  const maximumStock =
+    product.maximumStock === null || product.maximumStock === undefined
+      ? null
+      : Number(product.maximumStock)
+  const warningThreshold = maximumStock !== null ? Math.max(minimumStock + 1, maximumStock * 0.45) : Math.max(6, minimumStock * 2)
+
+  if (totalStock <= minimumStock) {
+    return {
+      label: 'Falta stock',
+      tone: 'critical',
+      badgeClass: 'border-destructive/30 bg-destructive/10 text-destructive',
+    }
+  }
+
+  if (totalStock <= warningThreshold) {
+    return {
+      label: 'Stock regular',
+      tone: 'warning',
+      badgeClass: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+    }
+  }
+
+  return {
+    label: 'Buen stock',
+    tone: 'good',
+    badgeClass: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+  }
+}
+
+function toCsvValue(value) {
+  const normalized = value === null || value === undefined ? '' : String(value)
+  return `"${normalized.replace(/"/g, '""')}"`
+}
+
+function downloadCsv(filename, rows) {
+  if (!rows.length) return
+
+  const csv = rows.map((row) => row.map(toCsvValue).join(',')).join('\n')
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function rankRows(items, pickLabel) {
+  return items.map((item, index) => ({
+    rank: index + 1,
+    label: pickLabel(item),
+    quantity: item.quantity,
+    total: item.total,
+  }))
+}
+
+export function ReportsPage() {
+  const [startDate, setStartDate] = useState(() => toInputDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
+  const [endDate, setEndDate] = useState(() => toInputDate(new Date()))
+
+  const reportsQuery = useQuery({
+    queryKey: ['reportes-overview'],
+    queryFn: async () => {
+      const [invoices, credits, accounts, bankMovements, products, inventoryMovements, clients] = await Promise.all([
+        apiClient.get('/facturas'),
+        apiClient.get('/creditos'),
+        apiClient.get('/cuentas-bancarias', { estado: 'todos' }),
+        apiClient.get('/movimientos-bancarios'),
+        apiClient.get('/productos', { estado: 'todos' }),
+        apiClient.get('/inventario/movimientos'),
+        apiClient.get('/clientes', { estado: 'todos' }),
+      ])
+
+      return { invoices, credits, accounts, bankMovements, products, inventoryMovements, clients }
+    },
+  })
+
+  const range = useMemo(() => createDateRange(startDate, endDate), [startDate, endDate])
+
+  const report = useMemo(() => {
+    const source = reportsQuery.data
+
+    if (!source) {
+      return null
+    }
+
+    const productsById = new Map(source.products.map((product) => [product.id, product]))
+    const creditsByInvoiceId = new Map(source.credits.map((credit) => [credit.invoiceId, credit]))
+
+    const rangedInvoices = source.invoices.filter((invoice) => isWithinRange(invoice.createdAt, range))
+    const activeInvoices = rangedInvoices.filter((invoice) => invoice.status === 'ACTIVA')
+    const rangedBankMovements = source.bankMovements.filter((movement) => isWithinRange(movement.createdAt, range))
+    const rangedInventoryMovements = source.inventoryMovements.filter((movement) => isWithinRange(movement.createdAt, range))
+
+    const invoiceRows = rangedInvoices.map((invoice) => {
+      const linkedCredit = creditsByInvoiceId.get(invoice.id)
+      const total = Number(invoice.total ?? 0)
+
+      return {
+        id: invoice.id,
+        consecutive: invoice.consecutive,
+        clientName: `${invoice.client?.firstName ?? ''} ${invoice.client?.lastName ?? ''}`.trim(),
+        status: invoice.status,
+        createdAt: invoice.createdAt,
+        subtotal: Number(invoice.subtotal ?? 0),
+        taxes: Number(invoice.taxes ?? 0),
+        total,
+        contado: linkedCredit ? 0 : total,
+        credito: linkedCredit ? total : 0,
+      }
+    })
+
+    const totals = activeInvoices.reduce(
+      (accumulator, invoice) => {
+        accumulator.subtotal += Number(invoice.subtotal ?? 0)
+        accumulator.taxes += Number(invoice.taxes ?? 0)
+        accumulator.total += Number(invoice.total ?? 0)
+        accumulator.items += invoice.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0)
+        return accumulator
+      },
+      { subtotal: 0, taxes: 0, total: 0, items: 0 },
+    )
+
+    const salesTimeline = Array.from(
+      activeInvoices.reduce((map, invoice) => {
+        const key = toInputDate(new Date(invoice.createdAt))
+        const current = map.get(key) ?? { dateKey: key, label: formatShortDate(invoice.createdAt), total: 0, taxes: 0 }
+        current.total += Number(invoice.total ?? 0)
+        current.taxes += Number(invoice.taxes ?? 0)
+        map.set(key, current)
+        return map
+      }, new Map()).values(),
+    ).sort((left, right) => left.dateKey.localeCompare(right.dateKey))
+
+    const productSales = Array.from(
+      activeInvoices.reduce((map, invoice) => {
+        for (const item of invoice.items ?? []) {
+          const catalogProduct = productsById.get(item.productId)
+          const current = map.get(item.productId) ?? {
+            productId: item.productId,
+            name: item.product?.name ?? catalogProduct?.name ?? `Producto #${item.productId}`,
+            brand: catalogProduct?.brand ?? item.product?.brand ?? 'Sin marca',
+            imageUrl: catalogProduct?.imageUrl ?? item.product?.imageUrl ?? null,
+            productTypeName: catalogProduct?.productType?.name ?? item.product?.productType?.name ?? 'Sin tipo',
+            providerName: catalogProduct?.provider?.name ?? 'Sin proveedor',
+            quantity: 0,
+            subtotal: 0,
+            taxes: 0,
+            total: 0,
+          }
+
+          current.quantity += Number(item.quantity ?? 0)
+          current.subtotal += Number(item.subtotal ?? 0)
+          current.taxes += Number(item.taxAmount ?? 0)
+          current.total += Number(item.total ?? 0)
+          map.set(item.productId, current)
+        }
+
+        return map
+      }, new Map()).values(),
+    ).sort((left, right) => right.quantity - left.quantity)
+
+    const ivaRows = Array.from(
+      activeInvoices.reduce((map, invoice) => {
+        for (const item of invoice.items ?? []) {
+          const key = Number(item.taxRate ?? 0)
+          const current = map.get(key) ?? { rate: key, base: 0, taxes: 0, total: 0, items: 0 }
+          current.base += Number(item.subtotal ?? 0)
+          current.taxes += Number(item.taxAmount ?? 0)
+          current.total += Number(item.total ?? 0)
+          current.items += Number(item.quantity ?? 0)
+          map.set(key, current)
+        }
+
+        return map
+      }, new Map()).values(),
+    ).sort((left, right) => right.taxes - left.taxes)
+
+    const exogenousRows = Array.from(
+      activeInvoices.reduce((map, invoice) => {
+        const client = source.clients.find((item) => item.id === invoice.clientId) ?? invoice.client
+        const current = map.get(invoice.clientId) ?? {
+          clientId: invoice.clientId,
+          identification: client?.identification ?? 'Sin documento',
+          clientName: `${client?.firstName ?? ''} ${client?.lastName ?? ''}`.trim() || 'Cliente',
+          clientType: client?.clientType ?? null,
+          invoices: 0,
+          subtotal: 0,
+          taxes: 0,
+          total: 0,
+          pendingCredit: 0,
+        }
+
+        current.invoices += 1
+        current.subtotal += Number(invoice.subtotal ?? 0)
+        current.taxes += Number(invoice.taxes ?? 0)
+        current.total += Number(invoice.total ?? 0)
+        current.pendingCredit += Number(creditsByInvoiceId.get(invoice.id)?.balance ?? 0)
+        map.set(invoice.clientId, current)
+        return map
+      }, new Map()).values(),
+    ).sort((left, right) => right.total - left.total)
+
+    const gmfMovements = rangedBankMovements
+      .filter((movement) => GMF_TYPES.has(movement.movementType))
+      .map((movement) => {
+        const base = Number(movement.amount ?? 0)
+        const tax = base * GMF_RATE
+
+        return {
+          ...movement,
+          base,
+          tax,
+          impact: base + tax,
+        }
+      })
+
+    const gmfByAccount = Array.from(
+      gmfMovements.reduce((map, movement) => {
+        const key = movement.bankAccountId ?? 0
+        const current = map.get(key) ?? {
+          bankAccountId: movement.bankAccountId,
+          accountName: movement.bankAccount?.name ?? `Cuenta #${movement.bankAccountId}`,
+          bankName: movement.bankAccount?.bankName ?? 'Sin banco',
+          movements: 0,
+          base: 0,
+          tax: 0,
+          impact: 0,
+        }
+
+        current.movements += 1
+        current.base += movement.base
+        current.tax += movement.tax
+        current.impact += movement.impact
+        map.set(key, current)
+        return map
+      }, new Map()).values(),
+    ).sort((left, right) => right.tax - left.tax)
+
+    const outstandingCredits = source.credits.reduce((sum, credit) => sum + Number(credit.balance ?? 0), 0)
+    const collectedInBanks = rangedBankMovements
+      .filter((movement) => movement.movementType === 'INGRESO')
+      .reduce((sum, movement) => sum + Number(movement.amount ?? 0), 0)
+    const currentBankBalance = source.accounts
+      .filter((account) => account.isActive !== false)
+      .reduce((sum, account) => sum + Number(account.currentBalance ?? 0), 0)
+
+    const salesByCategory = Array.from(
+      productSales.reduce((map, item) => {
+        const key = item.productTypeName
+        const current = map.get(key) ?? { label: key, quantity: 0, total: 0 }
+        current.quantity += item.quantity
+        current.total += item.total
+        map.set(key, current)
+        return map
+      }, new Map()).values(),
+    ).sort((left, right) => right.total - left.total)
+
+    const salesByProvider = Array.from(
+      productSales.reduce((map, item) => {
+        const key = item.providerName
+        const current = map.get(key) ?? { label: key, quantity: 0, total: 0 }
+        current.quantity += item.quantity
+        current.total += item.total
+        map.set(key, current)
+        return map
+      }, new Map()).values(),
+    ).sort((left, right) => right.total - left.total)
+
+    const salesByClient = exogenousRows.map((row) => ({
+      label: row.clientName,
+      quantity: row.invoices,
+      total: row.total,
+    }))
+
+    const activeProducts = source.products.filter((product) => product.isActive !== false)
+    const stockRows = activeProducts.map((product) => ({
+      ...product,
+      totalStock: getTotalStock(product),
+      signal: getStockSignal(product),
+    }))
+
+    const stockHealth = {
+      critical: stockRows.filter((product) => product.signal.tone === 'critical').length,
+      warning: stockRows.filter((product) => product.signal.tone === 'warning').length,
+      good: stockRows.filter((product) => product.signal.tone === 'good').length,
+    }
+
+    const lowStockProducts = stockRows
+      .filter((product) => product.signal.tone !== 'good')
+      .sort((left, right) => left.totalStock - right.totalStock)
+
+    const transfers = rangedInventoryMovements.filter((movement) => movement.movementType === 'TRASLADO')
+
+    return {
+      rangedInvoices,
+      activeInvoices,
+      invoiceRows,
+      totals,
+      salesTimeline,
+      productSales,
+      ivaRows,
+      exogenousRows,
+      gmfMovements,
+      gmfByAccount,
+      outstandingCredits,
+      collectedInBanks,
+      currentBankBalance,
+      salesByCategory,
+      salesByProvider,
+      salesByClient,
+      stockRows,
+      stockHealth,
+      lowStockProducts,
+      transfers,
+    }
+  }, [range, reportsQuery.data])
+
+  if (reportsQuery.isLoading) {
+    return <ReportsSkeleton />
+  }
+
+  if (reportsQuery.isError) {
+    return (
+      <div className="rounded-2xl border border-destructive/25 bg-destructive/5 p-6 text-sm text-destructive">
+        {reportsQuery.error.message}
+      </div>
+    )
+  }
+
+  const summaryCards = [
+    {
+      label: 'Facturacion neta',
+      value: formatCurrency(report.totals.subtotal),
+      help: 'Base imponible del periodo filtrado.',
+      icon: TrendingUp,
+    },
+    {
+      label: 'IVA cobrado',
+      value: formatCurrency(report.totals.taxes),
+      help: 'Impuesto acumulado en facturas activas del corte.',
+      icon: Receipt,
+    },
+    {
+      label: 'Total facturado',
+      value: formatCurrency(report.totals.total),
+      help: 'Operacion comercial activa dentro del rango.',
+      icon: CircleDollarSign,
+    },
+    {
+      label: 'Cartera pendiente',
+      value: formatCurrency(report.outstandingCredits),
+      help: 'Saldo actual abierto en creditos.',
+      icon: Wallet,
+    },
+    {
+      label: 'Saldo bancario',
+      value: formatCurrency(report.currentBankBalance),
+      help: 'Suma de cuentas activas con la API actual.',
+      icon: Landmark,
+    },
+    {
+      label: '4x1000 estimado',
+      value: formatCurrency(report.gmfMovements.reduce((sum, item) => sum + item.tax, 0)),
+      help: 'Calculado sobre egresos y transferencias salientes del corte.',
+      icon: FileSpreadsheet,
+    },
+  ]
+
+  const topProducts = report.productSales.slice(0, 6)
+  const topCategories = rankRows(report.salesByCategory.slice(0, 5), (item) => item.label)
+  const topProviders = rankRows(report.salesByProvider.slice(0, 5), (item) => item.label)
+  const topClients = rankRows(report.salesByClient.slice(0, 5), (item) => item.label)
+  const stockDistribution = [
+    { name: 'critical', label: 'Falta stock', value: report.stockHealth.critical, fill: chartConfig.critical.color },
+    { name: 'warning', label: 'Stock regular', value: report.stockHealth.warning, fill: chartConfig.warning.color },
+    { name: 'good', label: 'Buen stock', value: report.stockHealth.good, fill: chartConfig.good.color },
+  ]
+
+  function handlePrint() {
+    window.print()
+  }
+
+  function exportInvoiceReport() {
+    downloadCsv('reporte-facturas.csv', [
+      ['Fecha', 'Consecutivo', 'Cliente', 'Estado', 'Monto Neto', 'Contado', 'Credito', 'IVA', 'Total'],
+      ...report.invoiceRows.map((row) => [
+        formatDate(row.createdAt),
+        row.consecutive,
+        row.clientName,
+        formatInvoiceStatus(row.status),
+        row.subtotal.toFixed(2),
+        row.contado.toFixed(2),
+        row.credito.toFixed(2),
+        row.taxes.toFixed(2),
+        row.total.toFixed(2),
+      ]),
+    ])
+  }
+
+  function exportIvaReport() {
+    downloadCsv('reporte-iva.csv', [
+      ['Tarifa', 'Base', 'IVA', 'Total', 'Unidades'],
+      ...report.ivaRows.map((row) => [
+        formatPercent(row.rate),
+        row.base.toFixed(2),
+        row.taxes.toFixed(2),
+        row.total.toFixed(2),
+        row.items,
+      ]),
+    ])
+  }
+
+  function exportExogenousReport() {
+    downloadCsv('reporte-exogenas-base.csv', [
+      ['Documento', 'Cliente', 'Tipo', 'Facturas', 'Base', 'IVA', 'Total', 'Credito Pendiente'],
+      ...report.exogenousRows.map((row) => [
+        row.identification,
+        row.clientName,
+        row.clientType ? formatClientType(row.clientType) : 'Sin tipo',
+        row.invoices,
+        row.subtotal.toFixed(2),
+        row.taxes.toFixed(2),
+        row.total.toFixed(2),
+        row.pendingCredit.toFixed(2),
+      ]),
+    ])
+  }
+
+  return (
+    <div className="grid gap-6">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <Badge className="mb-3 bg-primary/12 text-primary hover:bg-primary/12">
+            Reportes · Analitica
+          </Badge>
+          <h2 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
+            Reportes del negocio
+          </h2>
+          <p className="mt-2 max-w-4xl text-sm text-muted-foreground md:text-base">
+            Estado comercial, IVA cobrado, base para exogenas, comportamiento de productos vendidos y lectura financiera con 4x1000 estimado usando la API actual.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={handlePrint}>
+            <Printer className="mr-2 size-4" />
+            Imprimir
+          </Button>
+          <Button variant="outline" onClick={exportInvoiceReport}>
+            <Download className="mr-2 size-4" />
+            Facturas CSV
+          </Button>
+          <Button variant="outline" onClick={exportIvaReport}>
+            <Receipt className="mr-2 size-4" />
+            IVA CSV
+          </Button>
+          <Button onClick={exportExogenousReport}>
+            <FileSpreadsheet className="mr-2 size-4" />
+            Exogenas CSV
+          </Button>
+        </div>
+      </div>
+
+      <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+        <CardHeader className="gap-4 xl:flex-row xl:items-end xl:justify-between">
+          <div>
+            <CardTitle>Corte configurable</CardTitle>
+            <CardDescription>
+              Filtra el analisis por fecha para cierres, declaraciones y lectura ejecutiva.
+            </CardDescription>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:min-w-[420px]">
+            <div className="grid gap-2">
+              <span className="text-sm font-medium text-foreground">Desde</span>
+              <Input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+            </div>
+            <div className="grid gap-2">
+              <span className="text-sm font-medium text-foreground">Hasta</span>
+              <Input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            <span>
+              Facturas en corte: <span className="font-medium text-foreground">{formatNumber(report.rangedInvoices.length)}</span>
+            </span>
+            <span>
+              Recaudo bancario: <span className="font-medium text-foreground">{formatCurrency(report.collectedInBanks)}</span>
+            </span>
+            <span>
+              Traslados inventario: <span className="font-medium text-foreground">{formatNumber(report.transfers.length)}</span>
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+        {summaryCards.map((card) => {
+          const Icon = card.icon
+
+          return (
+            <Card key={card.label} className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+              <CardHeader className="flex-row items-start justify-between gap-4">
+                <div>
+                  <CardDescription>{card.label}</CardDescription>
+                  <CardTitle className="mt-2 text-2xl font-semibold">{card.value}</CardTitle>
+                </div>
+                <div className="rounded-2xl bg-primary/10 p-2 text-primary">
+                  <Icon className="size-5" />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-muted-foreground">{card.help}</p>
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>Transacciones procesadas</CardTitle>
+            <CardDescription>Comportamiento del total facturado y del IVA dentro del periodo.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer config={chartConfig} className="h-[320px] w-full">
+              <LineChart data={report.salesTimeline}>
+                <CartesianGrid vertical={false} />
+                <XAxis dataKey="label" tickLine={false} axisLine={false} />
+                <YAxis tickLine={false} axisLine={false} tickFormatter={(value) => `$${Math.round(value / 1000)}k`} />
+                <ChartTooltip content={<ChartTooltipContent />} />
+                <Line type="monotone" dataKey="total" stroke="var(--color-total)" strokeWidth={3} dot={{ fill: 'var(--color-total)' }} />
+                <Line type="monotone" dataKey="taxes" stroke="var(--color-taxes)" strokeWidth={2} dot={{ fill: 'var(--color-taxes)' }} />
+              </LineChart>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>Semaforo de stock</CardTitle>
+            <CardDescription>Lectura rapida para reposicion, seguimiento y ventas.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer config={chartConfig} className="h-[320px] w-full">
+              <PieChart>
+                <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                <ChartLegend content={<ChartLegendContent nameKey="name" />} />
+                <Pie data={stockDistribution} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} paddingAngle={4}>
+                  {stockDistribution.map((item) => (
+                    <Cell key={item.name} fill={item.fill} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>Productos mas vendidos</CardTitle>
+            <CardDescription>Ranking por unidades y total vendido en facturas activas.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ChartContainer config={chartConfig} className="h-[320px] w-full">
+              <BarChart data={topProducts} margin={{ top: 12, right: 12, left: -12, bottom: 0 }}>
+                <CartesianGrid vertical={false} />
+                <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} interval={0} angle={-18} textAnchor="end" height={60} />
+                <YAxis tickLine={false} axisLine={false} tickFormatter={formatNumber} />
+                <ChartTooltip content={<ChartTooltipContent />} />
+                <Bar dataKey="quantity" fill="var(--color-quantity)" radius={[8, 8, 0, 0]} />
+              </BarChart>
+            </ChartContainer>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>Lectura analitica</CardTitle>
+            <CardDescription>Dimensiones comerciales que hoy si soporta la API.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4 text-sm">
+            <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+              <div className="flex items-center gap-2 text-primary">
+                <BarChart3 className="size-4" />
+                <span className="font-medium">Mejor categoria</span>
+              </div>
+              <p className="mt-2 text-lg font-semibold text-foreground">{topCategories[0]?.label ?? 'Sin ventas'}</p>
+              <p className="text-xs text-muted-foreground">
+                {topCategories[0] ? `${formatCurrency(topCategories[0].total)} en ${formatNumber(topCategories[0].quantity)} unidades` : 'Aun no hay facturas activas en el corte.'}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+              <div className="flex items-center gap-2 text-primary">
+                <PackageSearch className="size-4" />
+                <span className="font-medium">Proveedor lider</span>
+              </div>
+              <p className="mt-2 text-lg font-semibold text-foreground">{topProviders[0]?.label ?? 'Sin ventas'}</p>
+              <p className="text-xs text-muted-foreground">
+                {topProviders[0] ? formatCurrency(topProviders[0].total) : 'Sin acumulado en el rango.'}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 text-amber-900 dark:text-amber-100">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="size-4" />
+                <span className="font-medium">Alcance actual</span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                La API actual no expone costos, utilidad, vendedor ni bodega por item facturado. Este modulo profundiza en ventas, impuestos, cartera, bancos y stock con los datos disponibles hoy.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+        <CardHeader>
+          <CardTitle>Reporte de facturas</CardTitle>
+          <CardDescription>Lectura operativa con neto, contado, credito, impuestos y total por factura.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Fecha</TableHead>
+                  <TableHead>Numero</TableHead>
+                  <TableHead>Cliente</TableHead>
+                  <TableHead>Monto neto</TableHead>
+                  <TableHead>Contado</TableHead>
+                  <TableHead>Credito</TableHead>
+                  <TableHead>Impuestos</TableHead>
+                  <TableHead>Total</TableHead>
+                  <TableHead>Estado</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {report.invoiceRows.length ? (
+                  report.invoiceRows.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell>{formatDate(row.createdAt)}</TableCell>
+                      <TableCell className="font-medium">{row.consecutive}</TableCell>
+                      <TableCell>{row.clientName}</TableCell>
+                      <TableCell>{formatCurrency(row.subtotal)}</TableCell>
+                      <TableCell>{formatCurrency(row.contado)}</TableCell>
+                      <TableCell>{formatCurrency(row.credito)}</TableCell>
+                      <TableCell>{formatCurrency(row.taxes)}</TableCell>
+                      <TableCell>{formatCurrency(row.total)}</TableCell>
+                      <TableCell>
+                        <Badge variant={row.status === 'ACTIVA' ? 'default' : 'secondary'}>
+                          {formatInvoiceStatus(row.status)}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={9} className="py-12 text-center text-muted-foreground">
+                      No hay facturas en el rango seleccionado.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 xl:grid-cols-[1.1fr_1.4fr]">
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>IVA cobrado</CardTitle>
+            <CardDescription>Detalle del impuesto por tarifa para declaraciones y revisiones.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {report.ivaRows.length ? (
+              report.ivaRows.map((row) => (
+                <div key={row.rate} className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Tarifa {formatPercent(row.rate)}</p>
+                      <p className="text-xs text-muted-foreground">Base {formatCurrency(row.base)} · Total {formatCurrency(row.total)}</p>
+                    </div>
+                    <p className="text-lg font-semibold text-foreground">{formatCurrency(row.taxes)}</p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-6 text-sm text-muted-foreground">
+                No hay IVA para el rango seleccionado.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>Base para exogenas</CardTitle>
+            <CardDescription>Consolidado por cliente para analisis y exportacion contable.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Documento</TableHead>
+                    <TableHead>Cliente</TableHead>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead>Facturas</TableHead>
+                    <TableHead>Base</TableHead>
+                    <TableHead>IVA</TableHead>
+                    <TableHead>Total</TableHead>
+                    <TableHead>Credito pendiente</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {report.exogenousRows.length ? (
+                    report.exogenousRows.map((row) => (
+                      <TableRow key={row.clientId}>
+                        <TableCell>{row.identification}</TableCell>
+                        <TableCell className="font-medium">{row.clientName}</TableCell>
+                        <TableCell>{row.clientType ? formatClientType(row.clientType) : 'Sin tipo'}</TableCell>
+                        <TableCell>{formatNumber(row.invoices)}</TableCell>
+                        <TableCell>{formatCurrency(row.subtotal)}</TableCell>
+                        <TableCell>{formatCurrency(row.taxes)}</TableCell>
+                        <TableCell>{formatCurrency(row.total)}</TableCell>
+                        <TableCell>{formatCurrency(row.pendingCredit)}</TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={8} className="py-12 text-center text-muted-foreground">
+                        No hay base exogena para este corte.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.15fr_1.25fr]">
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>4x1000 segmentado</CardTitle>
+            <CardDescription>
+              Estimacion del GMF sobre movimientos que salen de las cuentas bancarias del negocio.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Cuenta</TableHead>
+                    <TableHead>Banco</TableHead>
+                    <TableHead>Movimientos</TableHead>
+                    <TableHead>Base</TableHead>
+                    <TableHead>4x1000</TableHead>
+                    <TableHead>Impacto total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {report.gmfByAccount.length ? (
+                    report.gmfByAccount.map((row) => (
+                      <TableRow key={row.bankAccountId}>
+                        <TableCell className="font-medium">{row.accountName}</TableCell>
+                        <TableCell>{row.bankName}</TableCell>
+                        <TableCell>{formatNumber(row.movements)}</TableCell>
+                        <TableCell>{formatCurrency(row.base)}</TableCell>
+                        <TableCell>{formatCurrency(row.tax)}</TableCell>
+                        <TableCell>{formatCurrency(row.impact)}</TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
+                        No hay movimientos gravables con 4x1000 en el corte.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Referencia de calculo: por cada {formatCurrency(1000000)} debitado, el impacto estimado es {formatCurrency(1000000 * GMF_RATE)} adicionales de GMF.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>Movimientos con impacto GMF</CardTitle>
+            <CardDescription>Detalle de cada egreso o transferencia saliente del rango.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Fecha</TableHead>
+                    <TableHead>Cuenta</TableHead>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead>Base</TableHead>
+                    <TableHead>4x1000</TableHead>
+                    <TableHead>Factura</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {report.gmfMovements.length ? (
+                    report.gmfMovements.slice(0, 10).map((movement) => (
+                      <TableRow key={movement.id}>
+                        <TableCell>{formatDate(movement.createdAt)}</TableCell>
+                        <TableCell>{movement.bankAccount?.name ?? `Cuenta #${movement.bankAccountId}`}</TableCell>
+                        <TableCell>{movement.movementType}</TableCell>
+                        <TableCell>{formatCurrency(movement.base)}</TableCell>
+                        <TableCell>{formatCurrency(movement.tax)}</TableCell>
+                        <TableCell>{movement.invoice?.consecutive ?? 'Sin factura'}</TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
+                        Sin movimientos bancarios que generen calculo de 4x1000.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>Ventas por categoria</CardTitle>
+            <CardDescription>Que tipo de producto se esta moviendo mas.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {topCategories.length ? topCategories.map((row) => (
+              <div key={row.label} className="flex items-center justify-between rounded-2xl border border-border/70 bg-muted/20 px-4 py-3 text-sm">
+                <div>
+                  <p className="font-medium text-foreground">#{row.rank} {row.label}</p>
+                  <p className="text-xs text-muted-foreground">{formatNumber(row.quantity)} unidades</p>
+                </div>
+                <span className="font-semibold text-foreground">{formatCurrency(row.total)}</span>
+              </div>
+            )) : <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-6 text-sm text-muted-foreground">Sin ventas por categoria en el corte.</div>}
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>Ventas por proveedor</CardTitle>
+            <CardDescription>Lectura de dependencia y rotacion por abastecedor.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {topProviders.length ? topProviders.map((row) => (
+              <div key={row.label} className="flex items-center justify-between rounded-2xl border border-border/70 bg-muted/20 px-4 py-3 text-sm">
+                <div>
+                  <p className="font-medium text-foreground">#{row.rank} {row.label}</p>
+                  <p className="text-xs text-muted-foreground">{formatNumber(row.quantity)} unidades</p>
+                </div>
+                <span className="font-semibold text-foreground">{formatCurrency(row.total)}</span>
+              </div>
+            )) : <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-6 text-sm text-muted-foreground">Sin ventas por proveedor en el corte.</div>}
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>Top clientes</CardTitle>
+            <CardDescription>Clientes con mayor volumen de facturacion.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {topClients.length ? topClients.map((row) => (
+              <div key={row.label} className="flex items-center justify-between rounded-2xl border border-border/70 bg-muted/20 px-4 py-3 text-sm">
+                <div>
+                  <p className="font-medium text-foreground">#{row.rank} {row.label}</p>
+                  <p className="text-xs text-muted-foreground">{formatNumber(row.quantity)} facturas</p>
+                </div>
+                <span className="font-semibold text-foreground">{formatCurrency(row.total)}</span>
+              </div>
+            )) : <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-6 text-sm text-muted-foreground">Sin ventas por cliente en el corte.</div>}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.25fr_1fr]">
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>Stock critico y regular</CardTitle>
+            <CardDescription>Semaforo rojo, amarillo y verde para tomar decisiones rapidas.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Producto</TableHead>
+                    <TableHead>Stock</TableHead>
+                    <TableHead>Min / Max</TableHead>
+                    <TableHead>Semaforo</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {report.lowStockProducts.length ? (
+                    report.lowStockProducts.slice(0, 10).map((product) => (
+                      <TableRow key={product.id}>
+                        <TableCell>
+                          <div className="flex items-center gap-3">
+                            <ProductImage src={product.imageUrl} alt={product.name} className="size-12 rounded-lg" iconClassName="size-4" />
+                            <div>
+                              <p className="font-medium text-foreground">{product.name}</p>
+                              <p className="text-xs text-muted-foreground">{product.brand}</p>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>{formatNumber(product.totalStock)}</TableCell>
+                        <TableCell>
+                          Min {formatNumber(product.minimumStock)}
+                          {product.maximumStock !== null && product.maximumStock !== undefined
+                            ? ` · Max ${formatNumber(product.maximumStock)}`
+                            : ' · Max libre'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={product.signal.badgeClass}>
+                            {product.signal.label}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={4} className="py-12 text-center text-muted-foreground">
+                        No hay productos en rojo o amarillo con el inventario actual.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+          <CardHeader>
+            <CardTitle>Traslados de inventario</CardTitle>
+            <CardDescription>Reporte interno para cierres y control logistico.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {report.transfers.length ? (
+              report.transfers.slice(0, 8).map((movement) => (
+                <div key={movement.id} className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-foreground">{movement.product?.name ?? `Producto #${movement.productId}`}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {movement.fromWarehouse?.location ?? 'Origen N/A'} → {movement.toWarehouse?.location ?? 'Destino N/A'}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="border-primary/20 bg-primary/5 text-primary">
+                      {formatNumber(movement.quantity)} und
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {movement.reason ?? 'Sin motivo'} · {formatDate(movement.createdAt)}
+                  </p>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-6 text-sm text-muted-foreground">
+                No hay traslados de inventario en el rango seleccionado.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+        <CardHeader>
+          <CardTitle>Top de productos vendidos</CardTitle>
+          <CardDescription>Profundizacion sobre lo que mas rota y cuanto factura cada referencia.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Producto</TableHead>
+                  <TableHead>Categoria</TableHead>
+                  <TableHead>Proveedor</TableHead>
+                  <TableHead>Unidades</TableHead>
+                  <TableHead>Neto</TableHead>
+                  <TableHead>IVA</TableHead>
+                  <TableHead>Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {report.productSales.length ? (
+                  report.productSales.map((product) => (
+                    <TableRow key={product.productId}>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <ProductImage src={product.imageUrl} alt={product.name} className="size-12 rounded-lg" iconClassName="size-4" />
+                          <div>
+                            <p className="font-medium text-foreground">{product.name}</p>
+                            <p className="text-xs text-muted-foreground">{product.brand}</p>
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>{product.productTypeName}</TableCell>
+                      <TableCell>{product.providerName}</TableCell>
+                      <TableCell>{formatNumber(product.quantity)}</TableCell>
+                      <TableCell>{formatCurrency(product.subtotal)}</TableCell>
+                      <TableCell>{formatCurrency(product.taxes)}</TableCell>
+                      <TableCell>{formatCurrency(product.total)}</TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">
+                      Aun no hay items facturados para el rango actual.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}

@@ -1,5 +1,9 @@
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
 
+function isFormDataBody(body) {
+  return typeof FormData !== 'undefined' && body instanceof FormData
+}
+
 function buildUrl(path, params) {
   const url = new URL(`${API_BASE_URL}${path}`, window.location.origin)
 
@@ -35,9 +39,11 @@ function getErrorMessage(payload, fallback) {
 }
 
 async function request(path, options = {}, params) {
+  const isFormData = isFormDataBody(options.body)
+
   const response = await fetch(buildUrl(path, params), {
     headers: {
-      'Content-Type': 'application/json',
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...(options.headers ?? {}),
     },
     ...options,
@@ -53,17 +59,25 @@ async function request(path, options = {}, params) {
   return payload
 }
 
+function withBody(body) {
+  if (body === undefined) {
+    return undefined
+  }
+
+  return isFormDataBody(body) ? body : JSON.stringify(body)
+}
+
 export const apiClient = {
   get: (path, params) => request(path, { method: 'GET' }, params),
   post: (path, body) =>
     request(path, {
       method: 'POST',
-      body: JSON.stringify(body),
+      body: withBody(body),
     }),
   patch: (path, body) =>
     request(path, {
       method: 'PATCH',
-      body: JSON.stringify(body),
+      body: withBody(body),
     }),
   delete: (path) => request(path, { method: 'DELETE' }),
 }

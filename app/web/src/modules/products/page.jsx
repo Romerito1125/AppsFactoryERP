@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 
+import { ProductImage } from '@/components/product-image'
 import { Badge } from '@/components/ui/badge'
 import { apiClient } from '@/lib/api-client'
 import {
@@ -13,6 +14,22 @@ import {
 } from '@/lib/format'
 import { CrudModulePage } from '@/modules/shared/crud-module-page'
 
+const optionalImageSchema = z
+  .custom(
+    (value) => value === undefined || value === null || (typeof File !== 'undefined' && value instanceof File),
+    'Selecciona una imagen valida',
+  )
+  .optional()
+  .refine(
+    (file) => !file || file.size <= 5 * 1024 * 1024,
+    'La imagen no puede superar 5 MB',
+  )
+  .refine(
+    (file) =>
+      !file || ['image/jpeg', 'image/png', 'image/webp'].includes(file.type),
+    'Usa una imagen JPG, PNG o WEBP',
+  )
+
 const createProductSchema = z
   .object({
     productTypeId: z.number({ message: 'Selecciona un tipo' }).int().positive('Selecciona un tipo'),
@@ -23,6 +40,7 @@ const createProductSchema = z
     taxRate: z.number({ message: 'Impuesto obligatorio' }).min(0, 'No puede ser negativo'),
     minimumStock: z.number({ message: 'Stock minimo obligatorio' }).int().min(0, 'No puede ser negativo'),
     maximumStock: z.number().int().min(0, 'No puede ser negativo').optional(),
+    image: optionalImageSchema,
     initialPriceName: z.string().min(2, 'Minimo 2 caracteres'),
     initialPrice: z.number({ message: 'Precio obligatorio' }).positive('Debe ser mayor a cero'),
     initialWarehouseId: z.number({ message: 'Selecciona una bodega' }).int().positive('Selecciona una bodega'),
@@ -46,6 +64,7 @@ const updateProductSchema = z
     taxRate: z.number({ message: 'Impuesto obligatorio' }).min(0, 'No puede ser negativo'),
     minimumStock: z.number({ message: 'Stock minimo obligatorio' }).int().min(0, 'No puede ser negativo'),
     maximumStock: z.number().int().min(0, 'No puede ser negativo').optional(),
+    image: optionalImageSchema,
   })
   .refine(
     (values) => values.maximumStock === undefined || values.maximumStock >= values.minimumStock,
@@ -71,6 +90,61 @@ function formatWarehouseStock(product) {
   return product.warehouses
     .map((item) => `${item.warehouse?.location ?? `Bodega #${item.warehouseId}`}: ${formatNumber(item.quantity)}`)
     .join(' · ')
+}
+
+function appendFormValue(formData, key, value) {
+  if (value === undefined || value === null || value === '') {
+    return
+  }
+
+  if (typeof File !== 'undefined' && value instanceof File) {
+    formData.append(key, value)
+    return
+  }
+
+  if (Array.isArray(value) || typeof value === 'object') {
+    formData.append(key, JSON.stringify(value))
+    return
+  }
+
+  formData.append(key, String(value))
+}
+
+function buildProductFormData(values) {
+  const formData = new FormData()
+
+  Object.entries(values).forEach(([key, value]) => appendFormValue(formData, key, value))
+
+  return formData
+}
+
+function getStockSignal(product) {
+  const totalStock = getTotalStock(product)
+  const minimumStock = Number(product.minimumStock ?? 0)
+  const maximumStock =
+    product.maximumStock === null || product.maximumStock === undefined
+      ? null
+      : Number(product.maximumStock)
+  const warningThreshold = maximumStock !== null ? Math.max(minimumStock + 1, maximumStock * 0.45) : Math.max(6, minimumStock * 2)
+
+  if (totalStock <= minimumStock) {
+    return {
+      label: 'Falta stock',
+      className: 'border-destructive/30 bg-destructive/10 text-destructive',
+    }
+  }
+
+  if (totalStock <= warningThreshold) {
+    return {
+      label: 'Stock regular',
+      className: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+    }
+  }
+
+  return {
+    label: 'Buen stock',
+    className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+  }
 }
 
 function createProductsConfig(lookups) {
@@ -122,6 +196,15 @@ function createProductsConfig(lookups) {
       { name: 'name', label: 'Nombre', placeholder: 'Cafe premium' },
       { name: 'brand', label: 'Marca', placeholder: 'Marca propia' },
       {
+        name: 'image',
+        label: 'Imagen del producto',
+        type: 'file',
+        accept: 'image/jpeg,image/png,image/webp',
+        helpText: 'JPG, PNG o WEBP. Maximo 5 MB.',
+        fullWidth: true,
+        getPreviewValue: (record) => record?.imageUrl,
+      },
+      {
         name: 'description',
         label: 'Descripcion',
         type: 'textarea',
@@ -170,6 +253,7 @@ function createProductsConfig(lookups) {
       name: record?.name ?? '',
       description: record?.description ?? '',
       brand: record?.brand ?? '',
+      image: undefined,
       taxRate: Number(record?.taxRate ?? 0),
       minimumStock: Number(record?.minimumStock ?? 0),
       maximumStock:
@@ -184,13 +268,14 @@ function createProductsConfig(lookups) {
     prepareValues: (mode, values) => {
       if (mode === 'edit') {
         const { initialPriceName, initialPrice, initialWarehouseId, initialQuantity, ...payload } = values
-        return payload
+        return buildProductFormData(payload)
       }
 
-      return {
+      return buildProductFormData({
         productTypeId: values.productTypeId,
         providerId: values.providerId,
         name: values.name,
+        image: values.image,
         description: values.description,
         brand: values.brand,
         taxRate: values.taxRate,
@@ -209,7 +294,7 @@ function createProductsConfig(lookups) {
             quantity: values.initialQuantity,
           },
         ],
-      }
+      })
     },
     fetchRecords: (status) => apiClient.get('/productos', { estado: toApiStatus(status) }),
     createRecord: (payload) => apiClient.post('/productos', payload),
@@ -260,11 +345,19 @@ function createProductsConfig(lookups) {
         key: 'product',
         label: 'Producto',
         render: (record) => (
-          <div>
-            <p className="font-medium text-foreground">{record.name}</p>
-            <p className="text-xs text-muted-foreground">
-              {record.brand} · {record.productType?.name ?? 'Sin tipo'}
-            </p>
+          <div className="flex items-center gap-3">
+            <ProductImage
+              src={record.imageUrl}
+              alt={record.name}
+              className="size-12 rounded-lg"
+              iconClassName="size-4"
+            />
+            <div>
+              <p className="font-medium text-foreground">{record.name}</p>
+              <p className="text-xs text-muted-foreground">
+                {record.brand} · {record.productType?.name ?? 'Sin tipo'}
+              </p>
+            </div>
           </div>
         ),
       },
@@ -293,6 +386,9 @@ function createProductsConfig(lookups) {
                 ? ` · Max ${formatNumber(record.maximumStock)}`
                 : ''}
             </p>
+            <Badge variant="outline" className={`mt-2 ${getStockSignal(record).className}`}>
+              {getStockSignal(record).label}
+            </Badge>
           </div>
         ),
       },
@@ -313,6 +409,17 @@ function createProductsConfig(lookups) {
         {
           label: 'Ficha comercial',
           items: [
+            {
+              label: 'Imagen',
+              value: (
+                <ProductImage
+                  src={record.imageUrl}
+                  alt={record.name}
+                  className="size-20 rounded-xl"
+                  iconClassName="size-5"
+                />
+              ),
+            },
             { label: 'Tipo', value: record.productType?.name ?? 'Sin tipo' },
             { label: 'Proveedor', value: record.provider?.name ?? 'Sin proveedor' },
             { label: 'Marca', value: record.brand },
@@ -330,6 +437,14 @@ function createProductsConfig(lookups) {
                 record.maximumStock === null || record.maximumStock === undefined
                   ? 'Sin definir'
                   : formatNumber(record.maximumStock),
+            },
+            {
+              label: 'Semaforo',
+              value: (
+                <Badge variant="outline" className={getStockSignal(record).className}>
+                  {getStockSignal(record).label}
+                </Badge>
+              ),
             },
             { label: 'Bodegas', value: formatWarehouseStock(record) },
           ],
