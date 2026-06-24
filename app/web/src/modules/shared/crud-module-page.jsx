@@ -141,6 +141,20 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
     )
   }, [config.searchResolver, config.statusFilter, deferredSearch, records, status])
 
+  const ITEMS_PER_PAGE = 10
+  const [currentPage, setCurrentPage] = useState(1)
+
+  const totalItems = visibleRecords.length
+  const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
+
+  const paginatedRecords = useMemo(() => {
+    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
+    return visibleRecords.slice(startIndex, startIndex + ITEMS_PER_PAGE)
+  }, [visibleRecords, currentPage])
+
+  const startIndex = totalItems === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1
+  const endIndex = Math.min(currentPage * ITEMS_PER_PAGE, totalItems)
+
   const summaryCards = config.getSummaryCards({ records: visibleRecords, rawRecords: records })
 
   async function handleSave(payload) {
@@ -243,13 +257,22 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  setCurrentPage(1)
+                }}
                 placeholder={config.searchPlaceholder}
                 className="pl-9"
               />
             </div>
             {config.statusFilter ? (
-              <Select value={status} onValueChange={setStatus}>
+              <Select
+                value={status}
+                onValueChange={(val) => {
+                  setStatus(val)
+                  setCurrentPage(1)
+                }}
+              >
                 <SelectTrigger className="w-full md:w-[170px]">
                   <SelectValue placeholder="Estado" />
                 </SelectTrigger>
@@ -272,84 +295,160 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
           ) : null}
 
           {!recordsQuery.isError ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {config.columns.map((column) => (
-                    <TableHead key={column.key}>{column.label}</TableHead>
-                  ))}
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {visibleRecords.length ? (
-                  visibleRecords.map((record) => (
-                    <TableRow key={record.id}>
-                      {config.columns.map((column) => (
-                        <TableCell
-                          key={column.key}
-                          className={cn(column.className, 'align-top')}
-                        >
-                          {column.render(record)}
-                        </TableCell>
-                      ))}
-                      <TableCell className="text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon-sm" className="rounded-full">
-                              <MoreHorizontal className="size-4" />
-                              <span className="sr-only">Abrir acciones</span>
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-48">
-                            <DropdownMenuItem onClick={() => setDetailRecord(record)}>
-                              <Eye className="mr-2 size-4" />
-                              Ver detalle
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() =>
-                                setFormState({ open: true, mode: 'edit', record })
-                              }
-                            >
-                              <Pencil className="mr-2 size-4" />
-                              Editar
-                            </DropdownMenuItem>
-                            {record.isActive === false ? (
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {config.columns.map((column) => (
+                      <TableHead key={column.key}>{column.label}</TableHead>
+                    ))}
+                    <TableHead className="text-right">Acciones</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {paginatedRecords.length ? (
+                    paginatedRecords.map((record) => (
+                      <TableRow key={record.id}>
+                        {config.columns.map((column) => (
+                          <TableCell
+                            key={column.key}
+                            className={cn(column.className, 'align-top')}
+                          >
+                            {column.render(record)}
+                          </TableCell>
+                        ))}
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon-sm" className="rounded-full">
+                                <MoreHorizontal className="size-4" />
+                                <span className="sr-only">Abrir acciones</span>
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-48">
+                              <DropdownMenuItem onClick={() => setDetailRecord(record)}>
+                                <Eye className="mr-2 size-4" />
+                                Ver detalle
+                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={() =>
-                                  setActionState({ type: 'reactivate', record })
+                                  setFormState({ open: true, mode: 'edit', record })
                                 }
                               >
-                                <RotateCcw className="mr-2 size-4" />
-                                Reactivar
+                                <Pencil className="mr-2 size-4" />
+                                Editar
                               </DropdownMenuItem>
-                            ) : (
-                              <DropdownMenuItem
-                                onClick={() => setActionState({ type: 'archive', record })}
-                                className="text-destructive focus:text-destructive"
-                              >
-                                <Trash2 className="mr-2 size-4" />
-                                Desactivar
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                              {record.isActive === false ? (
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    setActionState({ type: 'reactivate', record })
+                                  }
+                                >
+                                  <RotateCcw className="mr-2 size-4" />
+                                  Reactivar
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem
+                                  onClick={() => setActionState({ type: 'archive', record })}
+                                  className="text-destructive focus:text-destructive"
+                                >
+                                  <Trash2 className="mr-2 size-4" />
+                                  Desactivar
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={config.columns.length + 1} className="py-12 text-center">
+                        <div className="mx-auto max-w-md rounded-2xl border border-dashed border-border/70 bg-muted/20 p-6">
+                          <Power className="mx-auto mb-3 size-8 text-primary" />
+                          <p className="font-medium text-foreground">{config.emptyTitle}</p>
+                          <p className="mt-1 text-sm text-muted-foreground">{config.emptyDescription}</p>
+                        </div>
                       </TableCell>
                     </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell colSpan={config.columns.length + 1} className="py-12 text-center">
-                      <div className="mx-auto max-w-md rounded-2xl border border-dashed border-border/70 bg-muted/20 p-6">
-                        <Power className="mx-auto mb-3 size-8 text-primary" />
-                        <p className="font-medium text-foreground">{config.emptyTitle}</p>
-                        <p className="mt-1 text-sm text-muted-foreground">{config.emptyDescription}</p>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                  )}
+                </TableBody>
+              </Table>
+
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="flex flex-col items-center justify-between gap-4 border-t border-border/60 px-2 py-4 sm:flex-row mt-4">
+                  <div className="text-xs text-muted-foreground">
+                    Mostrando <span className="font-semibold text-foreground">{startIndex}</span> a{' '}
+                    <span className="font-semibold text-foreground">{endIndex}</span> de{' '}
+                    <span className="font-semibold text-foreground">{totalItems}</span>{' '}
+                    {totalItems === 1 ? config.singularLabel.toLowerCase() : config.title.toLowerCase()}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+                      disabled={currentPage === 1}
+                      className="h-8 rounded-lg px-3 text-xs"
+                    >
+                      Anterior
+                    </Button>
+
+                    {Array.from({ length: totalPages }).map((_, index) => {
+                      const pageNumber = index + 1
+                      if (
+                        totalPages > 5 &&
+                        pageNumber !== 1 &&
+                        pageNumber !== totalPages &&
+                        Math.abs(pageNumber - currentPage) > 1
+                      ) {
+                        if (pageNumber === 2 && currentPage > 3) {
+                          return (
+                            <span key="left-ellipsis" className="px-1.5 text-xs text-muted-foreground">
+                              ...
+                            </span>
+                          )
+                        }
+                        if (pageNumber === totalPages - 1 && currentPage < totalPages - 2) {
+                          return (
+                            <span key="right-ellipsis" className="px-1.5 text-xs text-muted-foreground">
+                              ...
+                            </span>
+                          )
+                        }
+                        return null
+                      }
+
+                      return (
+                        <Button
+                          key={pageNumber}
+                          variant={currentPage === pageNumber ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setCurrentPage(pageNumber)}
+                          className={cn(
+                            'size-8 rounded-lg p-0 text-xs font-medium transition-all duration-250',
+                            currentPage === pageNumber && 'shadow-xs shadow-primary/20 bg-primary text-primary-foreground'
+                          )}
+                        >
+                          {pageNumber}
+                        </Button>
+                      )
+                    })}
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+                      disabled={currentPage === totalPages}
+                      className="h-8 rounded-lg px-3 text-xs"
+                    >
+                      Siguiente
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : null}
         </CardContent>
       </Card>

@@ -17,6 +17,11 @@ const roleLabels = {
   CONTADOR: 'Contador',
 }
 
+const clientTypeLabels = {
+  MAYORISTA: 'Mayorista',
+  MINORISTA: 'Minorista',
+}
+
 const invoiceStatusLabels = {
   ACTIVA: 'Activa',
   ANULADA: 'Anulada',
@@ -46,6 +51,10 @@ export function formatDate(value) {
 
 export function formatRole(value) {
   return roleLabels[value] ?? value ?? 'Sin rol'
+}
+
+export function formatClientType(value) {
+  return clientTypeLabels[value] ?? value ?? 'Sin tipo'
 }
 
 export function formatInvoiceStatus(value) {

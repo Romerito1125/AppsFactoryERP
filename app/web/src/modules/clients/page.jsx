@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { Badge } from '@/components/ui/badge'
 import { apiClient } from '@/lib/api-client'
 import {
+  formatClientType,
   formatDate,
   formatNumber,
   getRecordStatus,
@@ -15,9 +16,15 @@ const clientSchema = z.object({
   identification: z.string().min(5, 'Minimo 5 caracteres'),
   firstName: z.string().min(2, 'Minimo 2 caracteres'),
   lastName: z.string().min(2, 'Minimo 2 caracteres'),
+  clientType: z.enum(['MAYORISTA', 'MINORISTA']),
   phone: z.string().optional(),
   address: z.string().optional(),
 })
+
+const clientTypeOptions = [
+  { value: 'MAYORISTA', label: 'Mayorista' },
+  { value: 'MINORISTA', label: 'Minorista' },
+]
 
 const clientsConfig = {
   key: 'clientes',
@@ -51,6 +58,14 @@ const clientsConfig = {
     { name: 'identification', label: 'Identificacion', placeholder: '123456789' },
     { name: 'firstName', label: 'Nombres', placeholder: 'Juan' },
     { name: 'lastName', label: 'Apellidos', placeholder: 'Perez' },
+    {
+      name: 'clientType',
+      label: 'Tipo de cliente',
+      type: 'select',
+      placeholder: 'Selecciona un tipo',
+      options: clientTypeOptions,
+      hiddenOnEdit: true,
+    },
     { name: 'phone', label: 'Telefono', placeholder: '3001234567' },
     {
       name: 'address',
@@ -67,9 +82,19 @@ const clientsConfig = {
     identification: record?.identification ?? '',
     firstName: record?.firstName ?? '',
     lastName: record?.lastName ?? '',
+    clientType: record?.clientType ?? 'MINORISTA',
     phone: record?.phone ?? '',
     address: record?.address ?? '',
   }),
+  prepareValues: (mode, values) => {
+    if (mode === 'edit') {
+      const payload = { ...values }
+      delete payload.clientType
+      return payload
+    }
+
+    return values
+  },
   fetchRecords: (status) => apiClient.get('/clientes', { estado: toApiStatus(status) }),
   createRecord: (payload) => apiClient.post('/clientes', payload),
   updateRecord: (id, payload) => apiClient.patch(`/clientes/${id}`, payload),
@@ -78,8 +103,10 @@ const clientsConfig = {
   searchResolver: (record) => [
     record.identification,
     `${record.firstName} ${record.lastName}`,
+    formatClientType(record.clientType),
     record.phone,
     record.address,
+    record.referralCode,
   ],
   getSummaryCards: ({ rawRecords }) => {
     const activeCount = rawRecords.filter((record) => record.isActive).length
@@ -114,7 +141,9 @@ const clientsConfig = {
       render: (record) => (
         <div>
           <p className="font-medium text-foreground">{`${record.firstName} ${record.lastName}`}</p>
-          <p className="text-xs text-muted-foreground">{record.identification}</p>
+          <p className="text-xs text-muted-foreground">
+            {record.identification} · {formatClientType(record.clientType)}
+          </p>
         </div>
       ),
     },
@@ -148,9 +177,17 @@ const clientsConfig = {
       label: 'Perfil comercial',
       items: [
         { label: 'Documento', value: record.identification },
+        { label: 'Tipo', value: formatClientType(record.clientType) },
         { label: 'Telefono', value: record.phone ?? 'Sin telefono' },
         { label: 'Direccion', value: record.address ?? 'Sin direccion' },
         { label: 'Estado', value: getRecordStatus(record) },
+      ],
+    },
+    {
+      label: 'Referidos',
+      items: [
+        { label: 'Codigo', value: record.referralCode ?? 'Sin generar' },
+        { label: 'Nivel', value: formatNumber(record.referralLevel ?? 0) },
       ],
     },
     {
