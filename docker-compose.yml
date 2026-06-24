@@ -5,10 +5,16 @@ services:
       dockerfile: Dockerfile.api
     container_name: appsfactoryerp-api
     restart: unless-stopped
+    command: ["sh", "-c", "bun run db:deploy && bun run start:prod"]
     environment:
       NODE_ENV: production
       PORT: 7502
       DATABASE_URL: ${DATABASE_URL}
+      CLOUDFLARE_R2_ACCOUNT_ID: ${CLOUDFLARE_R2_ACCOUNT_ID:-}
+      CLOUDFLARE_R2_ACCESS_KEY_ID: ${CLOUDFLARE_R2_ACCESS_KEY_ID:-}
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}
+      CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET:-}
+      CLOUDFLARE_R2_PUBLIC_URL: ${CLOUDFLARE_R2_PUBLIC_URL:-}
 
   web:
     build:
