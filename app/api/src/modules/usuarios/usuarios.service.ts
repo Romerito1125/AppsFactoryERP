@@ -61,7 +61,9 @@ export class UsuariosService {
 
   async createEmployee(createEmployeeDto: CreateEmployeeDto) {
     if (createEmployeeDto.role === Role.CLIENTE) {
-      throw new BadRequestException('Un funcionario no puede tener rol CLIENTE');
+      throw new BadRequestException(
+        'Un funcionario no puede tener rol CLIENTE',
+      );
     }
 
     const existingEmployee = await this.prisma.employee.findUnique({

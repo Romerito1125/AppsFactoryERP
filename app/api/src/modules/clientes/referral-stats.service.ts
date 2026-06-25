@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Client, InvoiceStatus } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 
@@ -43,7 +47,8 @@ export class ReferralStatsService {
       generations.map(async (generation) => {
         const clientIds = generation.clients.map((client) => client.id);
         const totalSold = await this.sumInvoicesByClientIds(clientIds);
-        const commissionRate = COMMISSION_RATES_BY_GENERATION[generation.generation] ?? 0;
+        const commissionRate =
+          COMMISSION_RATES_BY_GENERATION[generation.generation] ?? 0;
 
         return {
           generation: generation.generation,
@@ -55,7 +60,9 @@ export class ReferralStatsService {
       }),
     );
 
-    const directGeneration = generationStats.find((item) => item.generation === 1);
+    const directGeneration = generationStats.find(
+      (item) => item.generation === 1,
+    );
 
     return {
       clientId,
@@ -140,7 +147,9 @@ export class ReferralStatsService {
       throw new BadRequestException('El id debe ser un número positivo');
     }
 
-    const client = await this.prisma.client.findUnique({ where: { id: clientId } });
+    const client = await this.prisma.client.findUnique({
+      where: { id: clientId },
+    });
 
     if (!client) {
       throw new NotFoundException('Cliente no encontrado');

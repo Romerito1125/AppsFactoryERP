@@ -1,5 +1,12 @@
 import { Transform, Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsPositive, IsString, Max } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsPositive,
+  IsString,
+  Max,
+} from 'class-validator';
 
 export class StorefrontProductsQueryDto {
   @IsOptional()

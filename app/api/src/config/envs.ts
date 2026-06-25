@@ -58,10 +58,10 @@ export const envs = {
     ...cloudflareR2,
     enabled: Boolean(
       cloudflareR2.accountId &&
-        cloudflareR2.accessKeyId &&
-        cloudflareR2.secretAccessKey &&
-        cloudflareR2.bucket &&
-        cloudflareR2.publicUrl,
+      cloudflareR2.accessKeyId &&
+      cloudflareR2.secretAccessKey &&
+      cloudflareR2.bucket &&
+      cloudflareR2.publicUrl,
     ),
   },
 };
