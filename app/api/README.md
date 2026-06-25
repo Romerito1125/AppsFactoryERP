@@ -14,6 +14,12 @@ Para enviar bodies JSON usa:
 Content-Type: application/json
 ```
 
+Para endpoints protegidos, envía el JWT en cada request:
+
+```http
+Authorization: Bearer <accessToken>
+```
+
 Excepción: los endpoints de productos que reciben imagen usan `multipart/form-data`. En ese caso no fijes manualmente el header `Content-Type`; deja que el navegador, `fetch`, `axios` o Postman agreguen el `boundary` automáticamente.
 
 ## Comandos
@@ -63,6 +69,73 @@ GET /recurso?estado=todos
 
 Aplica a clientes, productos, tipos de producto, etiquetas, bodegas, proveedores y ofertas.
 
+## Autenticación
+
+| Método | Ruta | Qué hace | Body | Auth |
+| --- | --- | --- | --- | --- |
+| POST | `/auth/registro` | Registra cliente final, crea usuario `CLIENTE` y retorna JWT | Sí | No |
+| POST | `/auth/login` | Valida credenciales y retorna JWT | Sí | No |
+| GET | `/auth/perfil` | Retorna usuario autenticado con `client` o `employee` | No | Bearer JWT |
+
+Registro de cliente final desde frontend:
+
+```json
+{
+  "identification": "123456789",
+  "firstName": "Juan",
+  "lastName": "Zuluaga",
+  "phone": "3000000000",
+  "address": "Cali",
+  "username": "juan",
+  "password": "Password123"
+}
+```
+
+Login:
+
+```json
+{
+  "username": "juan",
+  "password": "Password123"
+}
+```
+
+Respuesta esperada en registro y login:
+
+```json
+{
+  "accessToken": "jwt...",
+  "user": {
+    "id": 1,
+    "clientId": 1,
+    "username": "juan",
+    "role": "CLIENTE",
+    "isActive": true
+  },
+  "client": {
+    "id": 1,
+    "identification": "123456789",
+    "firstName": "Juan",
+    "lastName": "Zuluaga"
+  },
+  "employee": null,
+  "role": "CLIENTE"
+}
+```
+
+El token contiene:
+
+```json
+{
+  "sub": 1,
+  "clientId": 1,
+  "role": "CLIENTE",
+  "username": "juan"
+}
+```
+
+Para funcionarios, `clientId` puede ser `null` y la respuesta incluye `employee`.
+
 ## Clientes
 
 | Método | Ruta | Qué hace | Body |
@@ -74,6 +147,8 @@ Aplica a clientes, productos, tipos de producto, etiquetas, bodegas, proveedores
 | DELETE | `/clientes/:id` | Soft delete | No |
 | PATCH | `/clientes/:id/reactivar` | Reactiva cliente | No |
 | GET | `/clientes/:id/referidos` | Lista referidos hechos por el cliente | No |
+| GET | `/clientes/:id/red-referidos` | Devuelve la red completa de referidos agrupada por generación | No |
+| GET | `/clientes/:id/estadisticas-referidos` | Calcula compras y comisiones por red de referidos | No |
 | POST | `/clientes/:id/codigo-referido` | Genera o retorna código de referido | No |
 | PATCH | `/clientes/:id/nivel-referido` | Actualiza manualmente el nivel de referido | Sí |
 
@@ -107,6 +182,7 @@ Actualizar nivel de referido:
 | GET | `/usuarios` | Lista usuarios sin contraseña | No |
 | GET | `/usuarios/:id` | Consulta usuario | No |
 | POST | `/usuarios` | Crea usuario | Sí |
+| POST | `/usuarios/funcionarios` | Crea funcionario interno con usuario y perfil `Employee` | Sí |
 | PATCH | `/usuarios/:id` | Actualiza usuario | Sí |
 | DELETE | `/usuarios/:id` | Soft delete | No |
 
@@ -122,6 +198,90 @@ Crear usuario:
 ```
 
 `role`: `ADMIN`, `VENDEDOR`, `BODEGA`, `CONTADOR`.
+
+Crear funcionario interno desde frontend:
+
+```json
+{
+  "identification": "123456789",
+  "firstName": "Carlos",
+  "lastName": "Perez",
+  "phone": "3000000000",
+  "address": "Cali",
+  "username": "cperez",
+  "password": "Password123",
+  "role": "VENDEDOR"
+}
+```
+
+Protección requerida:
+
+```http
+Authorization: Bearer <token-admin>
+```
+
+Reglas:
+
+- Solo un usuario con rol `ADMIN` puede crear funcionarios.
+- Un funcionario no crea `Client`; crea `User` sin `clientId` y un perfil `Employee` asociado.
+- Roles permitidos para funcionarios: `ADMIN`, `VENDEDOR`, `BODEGA`, `CONTADOR`.
+- `CLIENTE` solo debe usarse en `/auth/registro`.
+
+Roles disponibles en el sistema: `CLIENTE`, `ADMIN`, `VENDEDOR`, `BODEGA`, `CONTADOR`.
+
+## Tienda Pública
+
+Estos endpoints son públicos y no requieren JWT.
+
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/tienda/productos` | Lista productos ecommerce con paginación, filtros y ordenamiento | No |
+| GET | `/tienda/productos/:id` | Consulta detalle público de producto | No |
+| GET | `/tienda/categorias` | Lista categorías activas | No |
+| GET | `/tienda/etiquetas` | Lista etiquetas activas | No |
+| GET | `/tienda/ofertas` | Lista ofertas activas públicas | No |
+
+Ejemplo de consulta desde frontend:
+
+```http
+GET /tienda/productos?page=1&limit=20&q=coca&productTypeId=1&tagIds=1,2&sortBy=price&sortOrder=asc
+```
+
+Parámetros disponibles:
+
+- `page`: página, default `1`.
+- `limit`: tamaño de página, default `20`, máximo `100`.
+- `q`: búsqueda por nombre, descripción o marca.
+- `productTypeId`: filtro por categoría.
+- `tagIds`: ids separados por coma, por ejemplo `1,2,3`.
+- `sortBy`: `price` o `createdAt`.
+- `sortOrder`: `asc` o `desc`.
+
+Respuesta paginada:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Coca-Cola 1.5L",
+      "description": "Gaseosa 1.5 litros",
+      "imageUrl": "https://cdn.example.com/productos/1.webp",
+      "brand": "Coca-Cola",
+      "productType": { "id": 1, "name": "Bebidas" },
+      "tags": [{ "id": 1, "name": "Promocion" }],
+      "currentPrice": 5000,
+      "stock": 35,
+      "activeOffer": null,
+      "createdAt": "2026-06-01T00:00:00.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 100,
+  "totalPages": 5
+}
+```
 
 ## Tipos De Producto
 
@@ -571,13 +731,15 @@ Notas:
 
 ## Domicilios
 
+Los endpoints administrativos de consulta y actualización de domicilios requieren `ADMIN`.
+
 | Método | Ruta | Qué hace | Body |
 | --- | --- | --- | --- |
-| GET | `/domicilios` | Lista domicilios | No |
-| GET | `/domicilios/:id` | Consulta domicilio | No |
+| GET | `/domicilios` | Lista domicilios, solo `ADMIN` | No |
+| GET | `/domicilios/:id` | Consulta domicilio, solo `ADMIN` | No |
 | POST | `/domicilios` | Crea domicilio para factura | Sí |
-| PATCH | `/domicilios/:id` | Actualiza domicilio | Sí |
-| PATCH | `/domicilios/:id/estado` | Cambia estado | Sí |
+| PATCH | `/domicilios/:id` | Actualiza domicilio, solo `ADMIN` | Sí |
+| PATCH | `/domicilios/:id/estado` | Cambia estado, solo `ADMIN` | Sí |
 | DELETE | `/domicilios/:id` | Cancela domicilio | No |
 
 Crear domicilio:
@@ -602,6 +764,16 @@ Cambiar estado:
 
 Estados: `PENDIENTE`, `EN_PREPARACION`, `EN_CAMINO`, `ENTREGADO`, `CANCELADO`.
 
+Desde frontend, para consultar o actualizar domicilios administrativos:
+
+```ts
+await fetch('http://localhost:3000/domicilios', {
+  headers: {
+    Authorization: `Bearer ${accessToken}`,
+  },
+});
+```
+
 ## Referidos
 
 | Método | Ruta | Qué hace | Body |
@@ -609,6 +781,7 @@ Estados: `PENDIENTE`, `EN_PREPARACION`, `EN_CAMINO`, `ENTREGADO`, `CANCELADO`.
 | GET | `/referidos` | Lista referidos con referente y referido | No |
 | GET | `/referidos/:id` | Consulta referido | No |
 | POST | `/referidos` | Registra referido usando código | Sí |
+| POST | `/referidos/validar` | Valida código sin registrar referido | Sí |
 
 Registrar referido:
 
@@ -618,6 +791,88 @@ Registrar referido:
   "codeUsed": "JUAN1ABCD"
 }
 ```
+
+Validar código antes de registrar:
+
+```json
+{
+  "codeUsed": "JUAN1ABCD",
+  "referredClientId": 2
+}
+```
+
+Respuesta válida:
+
+```json
+{
+  "valid": true,
+  "referrerClient": {
+    "id": 1,
+    "firstName": "Juan",
+    "lastName": "Zuluaga"
+  }
+}
+```
+
+Red de referidos:
+
+```http
+GET /clientes/1/red-referidos
+```
+
+Respuesta:
+
+```json
+{
+  "clientId": 1,
+  "generations": [
+    {
+      "generation": 1,
+      "clients": []
+    },
+    {
+      "generation": 2,
+      "clients": []
+    }
+  ]
+}
+```
+
+Estadísticas y comisiones:
+
+```http
+GET /clientes/1/estadisticas-referidos
+```
+
+Respuesta:
+
+```json
+{
+  "clientId": 1,
+  "totalReferidosDirectos": 2,
+  "totalReferidosRed": 5,
+  "totalCompradoPorReferidos": 600000,
+  "ventasPorGeneracion": [
+    { "generation": 1, "total": 300000 },
+    { "generation": 2, "total": 200000 },
+    { "generation": 3, "total": 100000 }
+  ],
+  "comisionGanada": 22000,
+  "comisionPorGeneracion": [
+    { "generation": 1, "percentage": 5, "commission": 15000 },
+    { "generation": 2, "percentage": 3, "commission": 6000 },
+    { "generation": 3, "percentage": 1, "commission": 1000 }
+  ]
+}
+```
+
+Política actual de comisión:
+
+- Generación 1: `5%` sobre facturas activas de referidos directos.
+- Generación 2: `3%` sobre facturas activas de esa generación.
+- Generación 3: `1%` sobre facturas activas de esa generación.
+- Las generaciones no configuradas calculan comisión `0`.
+- El cálculo usa `Invoice.total` de facturas con estado `ACTIVA`.
 
 Reglas:
 

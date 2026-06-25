@@ -4,8 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import { randomBytes, scryptSync } from 'crypto';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
@@ -52,6 +54,52 @@ export class UsuariosService {
         password: this.hashPassword(createUserDto.password),
       },
       select: this.userSelect(),
+    });
+
+    return user;
+  }
+
+  async createEmployee(createEmployeeDto: CreateEmployeeDto) {
+    if (createEmployeeDto.role === Role.CLIENTE) {
+      throw new BadRequestException('Un funcionario no puede tener rol CLIENTE');
+    }
+
+    const existingEmployee = await this.prisma.employee.findUnique({
+      where: { identification: createEmployeeDto.identification },
+    });
+
+    if (existingEmployee) {
+      throw new ConflictException('La identificación ya existe');
+    }
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { username: createEmployeeDto.username },
+    });
+
+    if (existingUser) {
+      throw new ConflictException('El username ya existe');
+    }
+
+    const user = await this.prisma.$transaction(async (tx) => {
+      const createdUser = await tx.user.create({
+        data: {
+          username: createEmployeeDto.username,
+          password: this.hashPassword(createEmployeeDto.password),
+          role: createEmployeeDto.role,
+        },
+      });
+
+      return tx.employee.create({
+        data: {
+          userId: createdUser.id,
+          identification: createEmployeeDto.identification,
+          firstName: createEmployeeDto.firstName,
+          lastName: createEmployeeDto.lastName,
+          phone: createEmployeeDto.phone,
+          address: createEmployeeDto.address,
+        },
+        include: { user: { select: this.userSelect() } },
+      });
     });
 
     return user;

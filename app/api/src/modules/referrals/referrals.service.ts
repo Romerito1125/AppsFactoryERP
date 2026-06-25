@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateReferralDto } from './dto/create-referral.dto';
+import { ValidateReferralDto } from './dto/validate-referral.dto';
 
 @Injectable()
 export class ReferralsService {
@@ -34,7 +35,35 @@ export class ReferralsService {
   }
 
   async create(createReferralDto: CreateReferralDto) {
-    const codeUsed = createReferralDto.codeUsed.trim().toUpperCase();
+    const { codeUsed, referrerClient, referredClient } =
+      await this.validateReferralRules(createReferralDto);
+
+    return this.prisma.referral.create({
+      data: {
+        referrerClientId: referrerClient.id,
+        referredClientId: referredClient.id,
+        codeUsed,
+      },
+      include: this.referralInclude,
+    });
+  }
+
+  async validate(validateReferralDto: ValidateReferralDto) {
+    const { referrerClient } =
+      await this.validateReferralRules(validateReferralDto);
+
+    return {
+      valid: true,
+      referrerClient: {
+        id: referrerClient.id,
+        firstName: referrerClient.firstName,
+        lastName: referrerClient.lastName,
+      },
+    };
+  }
+
+  private async validateReferralRules(dto: ValidateReferralDto) {
+    const codeUsed = dto.codeUsed.trim().toUpperCase();
     const referrerClient = await this.prisma.client.findUnique({
       where: { referralCode: codeUsed },
     });
@@ -50,7 +79,7 @@ export class ReferralsService {
     }
 
     const referredClient = await this.prisma.client.findUnique({
-      where: { id: createReferralDto.referredClientId },
+      where: { id: dto.referredClientId },
     });
 
     if (!referredClient) {
@@ -73,14 +102,7 @@ export class ReferralsService {
       throw new ConflictException('El cliente ya fue registrado como referido');
     }
 
-    return this.prisma.referral.create({
-      data: {
-        referrerClientId: referrerClient.id,
-        referredClientId: referredClient.id,
-        codeUsed,
-      },
-      include: this.referralInclude,
-    });
+    return { codeUsed, referrerClient, referredClient };
   }
 
   private readonly referralInclude = {

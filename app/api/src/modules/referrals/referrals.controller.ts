@@ -7,6 +7,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { CreateReferralDto } from './dto/create-referral.dto';
+import { ValidateReferralDto } from './dto/validate-referral.dto';
 import { ReferralsService } from './referrals.service';
 
 @Controller('referidos')
@@ -26,5 +27,10 @@ export class ReferralsController {
   @Post()
   create(@Body() createReferralDto: CreateReferralDto) {
     return this.referralsService.create(createReferralDto);
+  }
+
+  @Post('validar')
+  validate(@Body() validateReferralDto: ValidateReferralDto) {
+    return this.referralsService.validate(validateReferralDto);
   }
 }

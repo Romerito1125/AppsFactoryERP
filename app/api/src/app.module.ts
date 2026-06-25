@@ -19,10 +19,13 @@ import { ProductosModule } from './modules/productos/productos.module';
 import { ReferralsModule } from './modules/referrals/referrals.module';
 import { TagsModule } from './modules/tags/tags.module';
 import { UsuariosModule } from './modules/usuarios/usuarios.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { TiendaModule } from './modules/tienda/tienda.module';
 
 @Module({
   imports: [
     PrismaModule,
+    AuthModule,
     UsuariosModule,
     ClientesModule,
     ProductosModule,
@@ -40,6 +43,7 @@ import { UsuariosModule } from './modules/usuarios/usuarios.module';
     DeliveriesModule,
     ReferralsModule,
     ProductPricesModule,
+    TiendaModule,
   ],
   controllers: [AppController],
   providers: [AppService],

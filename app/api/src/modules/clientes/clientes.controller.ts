@@ -14,10 +14,14 @@ import { CreateClientDto } from './dto/create-client.dto';
 import { FilterClientsDto } from './dto/filter-clients.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 import { UpdateReferralLevelDto } from './dto/update-referral-level.dto';
+import { ReferralStatsService } from './referral-stats.service';
 
 @Controller('clientes')
 export class ClientesController {
-  constructor(private readonly clientesService: ClientesService) {}
+  constructor(
+    private readonly clientesService: ClientesService,
+    private readonly referralStatsService: ReferralStatsService,
+  ) {}
 
   @Get()
   findAll(@Query() filter: FilterClientsDto) {
@@ -32,6 +36,16 @@ export class ClientesController {
   @Get(':id/referidos')
   findReferrals(@Param('id', ParseIntPipe) id: number) {
     return this.clientesService.findReferrals(id);
+  }
+
+  @Get(':id/red-referidos')
+  getReferralNetwork(@Param('id', ParseIntPipe) id: number) {
+    return this.referralStatsService.getNetwork(id);
+  }
+
+  @Get(':id/estadisticas-referidos')
+  getReferralStats(@Param('id', ParseIntPipe) id: number) {
+    return this.referralStatsService.getStats(id);
   }
 
   @Post()

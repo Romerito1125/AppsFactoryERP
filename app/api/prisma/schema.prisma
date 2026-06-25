@@ -8,15 +8,33 @@ datasource db {
 
 model User {
   id        Int       @id @default(autoincrement())
-  clientId  Int       @unique
+  clientId  Int?      @unique
   username  String    @unique
   password  String
-  role      Role      @default(VENDEDOR)
+  role      Role      @default(CLIENTE)
   isActive  Boolean   @default(true)
   deletedAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @default(now()) @updatedAt
-  client    Client    @relation(fields: [clientId], references: [id])
+  client    Client?   @relation(fields: [clientId], references: [id])
+  employee  Employee?
+
+  @@index([isActive])
+}
+
+model Employee {
+  id             Int       @id @default(autoincrement())
+  userId         Int       @unique
+  identification String    @unique
+  firstName      String
+  lastName       String
+  phone          String?
+  address        String?
+  isActive       Boolean   @default(true)
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+  user           User      @relation(fields: [userId], references: [id])
 
   @@index([isActive])
 }
@@ -486,6 +504,7 @@ enum QuoteStatus {
 }
 
 enum Role {
+  CLIENTE
   ADMIN
   VENDEDOR
   BODEGA

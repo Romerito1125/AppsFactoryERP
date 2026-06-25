@@ -4,6 +4,8 @@ import * as Joi from 'joi';
 interface EnvVars {
   PORT: number;
   DATABASE_URL: string;
+  JWT_SECRET?: string;
+  JWT_EXPIRES_IN?: string;
   CLOUDFLARE_R2_ACCOUNT_ID?: string;
   CLOUDFLARE_R2_ACCESS_KEY_ID?: string;
   CLOUDFLARE_R2_SECRET_ACCESS_KEY?: string;
@@ -15,6 +17,9 @@ const envSchema = Joi.object<EnvVars>({
   PORT: Joi.number().default(3000),
 
   DATABASE_URL: Joi.string().required(),
+
+  JWT_SECRET: Joi.string().default('dev-jwt-secret-change-me'),
+  JWT_EXPIRES_IN: Joi.string().default('1d'),
 
   CLOUDFLARE_R2_ACCOUNT_ID: Joi.string().allow('').optional(),
   CLOUDFLARE_R2_ACCESS_KEY_ID: Joi.string().allow('').optional(),
@@ -45,6 +50,10 @@ const cloudflareR2 = {
 export const envs = {
   port: envVars.PORT,
   databaseUrl: envVars.DATABASE_URL,
+  jwt: {
+    secret: envVars.JWT_SECRET,
+    expiresIn: envVars.JWT_EXPIRES_IN,
+  },
   cloudflareR2: {
     ...cloudflareR2,
     enabled: Boolean(
