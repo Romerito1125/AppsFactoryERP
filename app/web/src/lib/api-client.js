@@ -1,3 +1,5 @@
+import { getStoredSession } from '@/auth/auth-context'
+
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
 
 function isFormDataBody(body) {
@@ -40,10 +42,12 @@ function getErrorMessage(payload, fallback) {
 
 async function request(path, options = {}, params) {
   const isFormData = isFormDataBody(options.body)
+  const accessToken = getStoredSession()?.accessToken
 
   const response = await fetch(buildUrl(path, params), {
     headers: {
       ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...(options.headers ?? {}),
     },
     ...options,

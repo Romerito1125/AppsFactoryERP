@@ -4,7 +4,7 @@ import { Bell, CalendarDays, ChevronDown, LogOut, Search, Store, X } from 'lucid
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 
 import { useAuth } from '@/auth/auth-context'
-import { getNavigationItem, navigationGroups } from '@/app/navigation'
+import { getNavigationGroupsForRole, getNavigationItem } from '@/app/navigation'
 import { BrandMark } from '@/components/brand/brand-mark'
 import { ThemeToggle } from '@/components/theme/theme-toggle'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -38,10 +38,12 @@ import {
 import { cn } from '@/lib/utils'
 
 function AppSidebar() {
+  const { user } = useAuth()
   const { state, toggleSidebar } = useSidebar()
   const location = useLocation()
   const [searchQuery, setSearchQuery] = useState('')
   const searchInputRef = useRef(null)
+  const roleNavigationGroups = useMemo(() => getNavigationGroupsForRole(user?.role), [user?.role])
 
   // Initialize expandedGroup state from localStorage or active route
   const [expandedGroup, setExpandedGroup] = useState(() => {
@@ -51,10 +53,10 @@ function AppSidebar() {
     }
 
     // Fallback: find the group containing the active path
-    const activeGroup = navigationGroups.find((group) =>
+    const activeGroup = roleNavigationGroups.find((group) =>
       group.items.some((item) => location.pathname.startsWith(item.path))
     )
-    return activeGroup ? activeGroup.label : (navigationGroups[0]?.label || null)
+    return activeGroup ? activeGroup.label : (roleNavigationGroups[0]?.label || null)
   })
 
   // Persist expandedGroup state
@@ -71,10 +73,10 @@ function AppSidebar() {
 
   // Filter groups based on search query
   const filteredGroups = useMemo(() => {
-    if (!searchQuery.trim()) return navigationGroups
+    if (!searchQuery.trim()) return roleNavigationGroups
 
     const normalizedQuery = searchQuery.toLowerCase().trim()
-    return navigationGroups
+    return roleNavigationGroups
       .map((group) => {
         const matchedItems = group.items.filter(
           (item) =>
@@ -87,7 +89,7 @@ function AppSidebar() {
         }
       })
       .filter((group) => group.items.length > 0)
-  }, [searchQuery])
+  }, [roleNavigationGroups, searchQuery])
 
   const toggleGroup = (label) => {
     setExpandedGroup((prev) => (prev === label ? null : label))

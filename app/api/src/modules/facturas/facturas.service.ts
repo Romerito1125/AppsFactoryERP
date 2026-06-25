@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { InvoiceSource } from '@prisma/client';
 import { InvoiceStatus } from '../../common/enums/invoice-status.enum';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
@@ -122,6 +123,7 @@ export class FacturasService {
         data: {
           consecutive: this.generateConsecutive(),
           clientId: createInvoiceDto.clientId,
+          source: createInvoiceDto.source ?? InvoiceSource.ADMIN,
           subtotal,
           taxes,
           total,

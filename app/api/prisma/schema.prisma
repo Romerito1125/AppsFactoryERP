@@ -252,6 +252,7 @@ model Invoice {
   consecutive String        @unique
   quoteId     Int?          @unique
   clientId    Int
+  source      InvoiceSource @default(ADMIN)
   subtotal    Decimal       @db.Decimal(12, 2)
   taxes       Decimal       @db.Decimal(12, 2)
   total       Decimal       @db.Decimal(12, 2)
@@ -519,6 +520,12 @@ enum ClientType {
 enum InvoiceStatus {
   ACTIVA
   ANULADA
+}
+
+enum InvoiceSource {
+  ADMIN
+  POS
+  APP_MOVIL
 }
 
 enum DiscountType {

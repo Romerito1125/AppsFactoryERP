@@ -1,11 +1,24 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InvoiceSource, Prisma } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { CreateStoreOrderDto } from './dto/create-store-order.dto';
 import { StorefrontProductsQueryDto } from './dto/storefront-products-query.dto';
 
 @Injectable()
 export class TiendaService {
   constructor(private readonly prisma: PrismaService) {}
+
+  findOrders() {
+    return this.prisma.invoice.findMany({
+      where: { source: InvoiceSource.APP_MOVIL },
+      include: this.storeOrderInclude,
+      orderBy: { id: 'desc' },
+    });
+  }
 
   async findProducts(query: StorefrontProductsQueryDto) {
     const page = query.page ?? 1;
@@ -22,13 +35,17 @@ export class TiendaService {
       skip: query.sortBy === 'price' ? undefined : (page - 1) * limit,
       take: query.sortBy === 'price' ? undefined : limit,
     });
-    const formattedProducts = products.map((product) => this.formatProduct(product));
+    const formattedProducts = products.map((product) =>
+      this.formatProduct(product),
+    );
     const data =
       query.sortBy === 'price'
-        ? formattedProducts.sort((left, right) => {
-            const direction = query.sortOrder === 'asc' ? 1 : -1;
-            return (left.currentPrice - right.currentPrice) * direction;
-          }).slice((page - 1) * limit, page * limit)
+        ? formattedProducts
+            .sort((left, right) => {
+              const direction = query.sortOrder === 'asc' ? 1 : -1;
+              return (left.currentPrice - right.currentPrice) * direction;
+            })
+            .slice((page - 1) * limit, page * limit)
         : formattedProducts;
 
     return {
@@ -90,6 +107,61 @@ export class TiendaService {
     }));
   }
 
+  async createOrder(createStoreOrderDto: CreateStoreOrderDto) {
+    return this.prisma.$transaction(async (tx) => {
+      const client = await tx.client.findUnique({
+        where: { id: createStoreOrderDto.clientId },
+      });
+
+      if (!client) {
+        throw new NotFoundException('Cliente no encontrado');
+      }
+
+      if (!client.isActive) {
+        throw new BadRequestException(
+          'No se puede crear un pedido para un cliente inactivo',
+        );
+      }
+
+      const groupedItems = this.groupInvoiceItems(createStoreOrderDto.items);
+      const productIds = [...new Set(groupedItems.map((item) => item.productId))];
+      const products = await tx.product.findMany({
+        where: { id: { in: productIds } },
+        include: { prices: { where: { isActive: true } } },
+      });
+
+      if (products.length !== productIds.length) {
+        throw new NotFoundException('Uno o más productos no existen');
+      }
+
+      const invoiceItems = this.buildInvoiceItems(groupedItems, products);
+      const subtotal = invoiceItems.reduce((sum, item) => sum + item.subtotal, 0);
+      const taxes = invoiceItems.reduce((sum, item) => sum + item.taxAmount, 0);
+      const total = invoiceItems.reduce((sum, item) => sum + item.total, 0);
+
+      return tx.invoice.create({
+        data: {
+          consecutive: this.generateConsecutive(),
+          clientId: createStoreOrderDto.clientId,
+          source: InvoiceSource.APP_MOVIL,
+          subtotal,
+          taxes,
+          total,
+          items: { create: invoiceItems },
+          delivery: {
+            create: {
+              address: createStoreOrderDto.delivery.address,
+              recipientName: createStoreOrderDto.delivery.recipientName,
+              recipientPhone: createStoreOrderDto.delivery.recipientPhone,
+              notes: createStoreOrderDto.delivery.notes,
+            },
+          },
+        },
+        include: this.storeOrderInclude,
+      });
+    });
+  }
+
   private readonly productInclude: Prisma.ProductInclude = {
     productType: { include: { offers: { include: { offer: true } } } },
     tags: {
@@ -103,7 +175,21 @@ export class TiendaService {
     offers: { include: { offer: true } },
   };
 
-  private buildProductWhere(query: StorefrontProductsQueryDto): Prisma.ProductWhereInput {
+  private readonly storeOrderInclude = {
+    client: true,
+    delivery: true,
+    credit: true,
+    items: {
+      include: {
+        product: { include: { productType: true } },
+        productPrice: true,
+      },
+    },
+  } as const;
+
+  private buildProductWhere(
+    query: StorefrontProductsQueryDto,
+  ): Prisma.ProductWhereInput {
     return {
       isActive: true,
       deletedAt: null,
@@ -136,9 +222,10 @@ export class TiendaService {
     const activeOffer = [
       ...product.offers.map((item) => item.offer),
       ...productTypeOffers.map((item) => item.offer),
-      ...product.tags.flatMap((item) => item.tag.offers.map((offerTag) => offerTag.offer)),
-    ]
-      .find((offer) => this.isOfferActive(offer));
+      ...product.tags.flatMap((item) =>
+        item.tag.offers.map((offerTag) => offerTag.offer),
+      ),
+    ].find((offer) => this.isOfferActive(offer));
 
     return {
       id: product.id,
@@ -153,6 +240,82 @@ export class TiendaService {
       activeOffer: activeOffer ?? null,
       createdAt: product.createdAt,
     };
+  }
+
+  private buildInvoiceItems(
+    items: CreateStoreOrderDto['items'],
+    products: Array<
+      Prisma.ProductGetPayload<{
+        include: { prices: true };
+      }>
+    >,
+  ) {
+    return items.map((item) => {
+      const product = products.find((current) => current.id === item.productId);
+
+      if (!product) {
+        throw new NotFoundException('Producto no encontrado');
+      }
+
+      if (!product.isActive) {
+        throw new BadRequestException(
+          `El producto ${product.id} está inactivo`,
+        );
+      }
+
+      const productPrice = item.productPriceId
+        ? product.prices.find((price) => price.id === item.productPriceId)
+        : product.prices.find((price) => price.isDefault);
+
+      if (!productPrice) {
+        throw new BadRequestException(
+          item.productPriceId
+            ? `El precio ${item.productPriceId} no existe, está inactivo o no pertenece al producto ${product.id}`
+            : `El producto ${product.id} no tiene precio default activo`,
+        );
+      }
+
+      const unitPrice = Number(productPrice.price);
+      const taxRate = Number(product.taxRate);
+      const subtotal = unitPrice * item.quantity;
+      const taxAmount = subtotal * (taxRate / 100);
+      const total = subtotal + taxAmount;
+
+      return {
+        productId: product.id,
+        productPriceId: productPrice.id,
+        quantity: item.quantity,
+        unitPrice,
+        taxRate,
+        subtotal,
+        taxAmount,
+        total,
+      };
+    });
+  }
+
+  private groupInvoiceItems(items: CreateStoreOrderDto['items']) {
+    const groupedItems = new Map<
+      string,
+      { productId: number; productPriceId?: number; quantity: number }
+    >();
+
+    for (const item of items) {
+      const key = `${item.productId}:${item.productPriceId ?? 'default'}`;
+      const current = groupedItems.get(key);
+
+      groupedItems.set(key, {
+        productId: item.productId,
+        productPriceId: item.productPriceId,
+        quantity: (current?.quantity ?? 0) + item.quantity,
+      });
+    }
+
+    return Array.from(groupedItems.values());
+  }
+
+  private generateConsecutive() {
+    return `APP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   }
 
   private activeOfferWhere(): Prisma.OfferWhereInput {

@@ -1,5 +1,6 @@
 require('dotenv').config()
 
+const { randomBytes, scryptSync } = require('crypto')
 const { PrismaPg } = require('@prisma/adapter-pg')
 const { PrismaClient } = require('@prisma/client')
 
@@ -10,6 +11,12 @@ const BASE_NOW = new Date()
 
 function round2(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100
+}
+
+function hashPassword(password) {
+  const salt = randomBytes(16).toString('hex')
+  const hash = scryptSync(password, salt, 64).toString('hex')
+  return `${salt}:${hash}`
 }
 
 function daysAgo(days, hour = 10, minute = 0) {
@@ -1222,7 +1229,7 @@ async function main() {
           data: {
             clientId: state.clients.get(item.clientKey).id,
             username: item.username,
-            password: item.password,
+            password: hashPassword(item.password),
             role: item.role,
             createdAt: item.createdAt,
             updatedAt: item.createdAt,

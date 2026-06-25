@@ -217,6 +217,7 @@ export function PosPage() {
 
       const invoicePayload = {
         clientId: activeClientId,
+        source: 'POS',
         items: cart.map((item) => ({
           productId: item.productId,
           productPriceId: item.productPriceId,

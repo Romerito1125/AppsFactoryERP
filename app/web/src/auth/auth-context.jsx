@@ -11,30 +11,30 @@ export const demoCredentials = {
   'camila.conta': 'Conta123*',
 }
 
+export function getStoredSession() {
+  try {
+    const storedSession = localStorage.getItem(AUTH_STORAGE_KEY)
+    return storedSession ? JSON.parse(storedSession) : null
+  } catch {
+    localStorage.removeItem(AUTH_STORAGE_KEY)
+    return null
+  }
+}
+
 export function defaultRouteForRole(role) {
-  if (role === 'ADMIN' || role === 'CONTADOR') {
+  if (role === 'ADMIN') {
     return '/dashboard'
+  }
+
+  if (role === 'CONTADOR') {
+    return '/creditos'
   }
 
   return '/pos'
 }
 
 export function AuthProvider({ children }) {
-  const [session, setSession] = useState(null)
-
-  useEffect(() => {
-    try {
-      const storedSession = localStorage.getItem(AUTH_STORAGE_KEY)
-      if (!storedSession) {
-        return
-      }
-
-      setSession(JSON.parse(storedSession))
-    } catch {
-      localStorage.removeItem(AUTH_STORAGE_KEY)
-      setSession(null)
-    }
-  }, [])
+  const [session, setSession] = useState(() => getStoredSession())
 
   function login(nextSession) {
     setSession(nextSession)

@@ -1,4 +1,5 @@
-import { Controller, Get, Param, ParseIntPipe, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { CreateStoreOrderDto } from './dto/create-store-order.dto';
 import { StorefrontProductsQueryDto } from './dto/storefront-products-query.dto';
 import { TiendaService } from './tienda.service';
 
@@ -29,5 +30,15 @@ export class TiendaController {
   @Get('ofertas')
   findOffers() {
     return this.tiendaService.findOffers();
+  }
+
+  @Post('pedidos')
+  createOrder(@Body() createStoreOrderDto: CreateStoreOrderDto) {
+    return this.tiendaService.createOrder(createStoreOrderDto);
+  }
+
+  @Get('pedidos')
+  findOrders() {
+    return this.tiendaService.findOrders();
   }
 }

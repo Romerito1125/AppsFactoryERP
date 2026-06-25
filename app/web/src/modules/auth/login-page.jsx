@@ -99,39 +99,31 @@ export function LoginPage() {
   async function handleSubmit(event) {
     event.preventDefault()
 
-    if (!accessQuery.data) {
-      return
-    }
-
     setIsSubmitting(true)
 
     try {
-      const user = accessQuery.data.users.find(
-        (item) => item.username === username.trim() && item.isActive !== false,
-      )
+      const authResponse = await apiClient.post('/auth/login', {
+        username: username.trim(),
+        password,
+      })
 
-      const expectedPassword = demoCredentials[username.trim()]
-
-      if (!user || !expectedPassword || expectedPassword !== password) {
-        throw new Error('Credenciales invalidas para el acceso demo')
-      }
-
-      const client = accessQuery.data.clients.find((item) => item.id === user.clientId)
-      const displayName = `${client?.firstName ?? ''} ${client?.lastName ?? ''}`.trim() || user.username
+      const displayName = `${authResponse.client?.firstName ?? ''} ${authResponse.client?.lastName ?? ''}`.trim()
+      const sessionUser = authResponse.user ?? {}
 
       login({
-        id: user.id,
-        username: user.username,
-        role: user.role,
-        clientId: user.clientId,
-        displayName,
-        identification: client?.identification ?? null,
+        accessToken: authResponse.accessToken,
+        id: sessionUser.id,
+        username: sessionUser.username,
+        role: authResponse.role,
+        clientId: sessionUser.clientId ?? authResponse.client?.id ?? null,
+        displayName: displayName || sessionUser.username,
+        identification: authResponse.client?.identification ?? null,
         loginAt: new Date().toISOString(),
       })
 
       const redirectTo = location.state?.from?.pathname
-      navigate(redirectTo ?? defaultRouteForRole(user.role), { replace: true })
-      toast.success(`Sesion iniciada como ${displayName}`)
+      navigate(redirectTo ?? defaultRouteForRole(authResponse.role), { replace: true })
+      toast.success(`Sesion iniciada como ${displayName || sessionUser.username}`)
     } catch (error) {
       toast.error(error.message)
     } finally {

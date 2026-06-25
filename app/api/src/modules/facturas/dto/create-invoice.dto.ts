@@ -2,10 +2,13 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsEnum,
   IsInt,
+  IsOptional,
   IsPositive,
   ValidateNested,
 } from 'class-validator';
+import { InvoiceSource } from '@prisma/client';
 import { CreateInvoiceItemDto } from './create-invoice-item.dto';
 
 export class CreateInvoiceDto {
@@ -19,4 +22,8 @@ export class CreateInvoiceDto {
   @ValidateNested({ each: true })
   @Type(() => CreateInvoiceItemDto)
   items: CreateInvoiceItemDto[];
+
+  @IsOptional()
+  @IsEnum(InvoiceSource)
+  source?: InvoiceSource;
 }

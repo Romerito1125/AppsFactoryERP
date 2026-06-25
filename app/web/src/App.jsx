@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
+import { defaultRouteForRole, useAuth } from '@/auth/auth-context'
 import { ProtectedRoute, PublicOnlyRoute } from '@/auth/route-guard'
 import { AppProviders } from '@/app/providers'
 import { AdminLayout } from '@/layouts/admin-layout'
@@ -40,6 +41,9 @@ const BankMovementsPage = lazy(() =>
 )
 const DeliveriesPage = lazy(() =>
   import('@/modules/deliveries/page').then((module) => ({ default: module.DeliveriesPage })),
+)
+const AppOrdersPage = lazy(() =>
+  import('@/modules/app-orders/page').then((module) => ({ default: module.AppOrdersPage })),
 )
 const ReferralsPage = lazy(() =>
   import('@/modules/referrals/page').then((module) => ({ default: module.ReferralsPage })),
@@ -82,6 +86,12 @@ function RouteFallback() {
   )
 }
 
+function RoleHomeRedirect() {
+  const { user } = useAuth()
+
+  return <Navigate to={defaultRouteForRole(user.role)} replace />
+}
+
 function App() {
   return (
     <AppProviders>
@@ -110,31 +120,32 @@ function App() {
             />
             <Route
               element={
-                <ProtectedRoute allowedRoles={['ADMIN']}>
+                <ProtectedRoute allowedRoles={['ADMIN', 'CONTADOR']}>
                   <AdminLayout />
                 </ProtectedRoute>
               }
             >
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              <Route path="/dashboard" element={<DashboardPage />} />
-              <Route path="/usuarios" element={<UsersPage />} />
-              <Route path="/clientes" element={<ClientsPage />} />
-              <Route path="/productos" element={<ProductsPage />} />
-              <Route path="/inventario" element={<InventoryPage />} />
-              <Route path="/precios-producto" element={<ProductPricesPage />} />
-              <Route path="/cotizaciones" element={<QuotesPage />} />
-              <Route path="/ofertas" element={<OffersPage />} />
-              <Route path="/creditos" element={<CreditsPage />} />
-              <Route path="/cuentas-bancarias" element={<BankAccountsPage />} />
-              <Route path="/movimientos-bancarios" element={<BankMovementsPage />} />
-              <Route path="/domicilios" element={<DeliveriesPage />} />
-              <Route path="/referidos" element={<ReferralsPage />} />
-              <Route path="/tipos-producto" element={<ProductTypesPage />} />
-              <Route path="/proveedores" element={<ProvidersPage />} />
-              <Route path="/etiquetas" element={<TagsPage />} />
-              <Route path="/bodegas" element={<WarehousesPage />} />
-              <Route path="/facturas" element={<InvoicesPage />} />
-              <Route path="/reportes" element={<ReportsPage />} />
+              <Route path="/" element={<RoleHomeRedirect />} />
+              <Route path="/dashboard" element={<ProtectedRoute allowedRoles={['ADMIN']}><DashboardPage /></ProtectedRoute>} />
+              <Route path="/usuarios" element={<ProtectedRoute allowedRoles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
+              <Route path="/clientes" element={<ProtectedRoute allowedRoles={['ADMIN']}><ClientsPage /></ProtectedRoute>} />
+              <Route path="/productos" element={<ProtectedRoute allowedRoles={['ADMIN']}><ProductsPage /></ProtectedRoute>} />
+              <Route path="/inventario" element={<ProtectedRoute allowedRoles={['ADMIN']}><InventoryPage /></ProtectedRoute>} />
+              <Route path="/precios-producto" element={<ProtectedRoute allowedRoles={['ADMIN']}><ProductPricesPage /></ProtectedRoute>} />
+              <Route path="/cotizaciones" element={<ProtectedRoute allowedRoles={['ADMIN']}><QuotesPage /></ProtectedRoute>} />
+              <Route path="/ofertas" element={<ProtectedRoute allowedRoles={['ADMIN']}><OffersPage /></ProtectedRoute>} />
+              <Route path="/creditos" element={<ProtectedRoute allowedRoles={['ADMIN', 'CONTADOR']}><CreditsPage /></ProtectedRoute>} />
+              <Route path="/cuentas-bancarias" element={<ProtectedRoute allowedRoles={['ADMIN', 'CONTADOR']}><BankAccountsPage /></ProtectedRoute>} />
+              <Route path="/movimientos-bancarios" element={<ProtectedRoute allowedRoles={['ADMIN', 'CONTADOR']}><BankMovementsPage /></ProtectedRoute>} />
+              <Route path="/domicilios" element={<ProtectedRoute allowedRoles={['ADMIN']}><DeliveriesPage /></ProtectedRoute>} />
+              <Route path="/pedidos-app" element={<ProtectedRoute allowedRoles={['ADMIN']}><AppOrdersPage /></ProtectedRoute>} />
+              <Route path="/referidos" element={<ProtectedRoute allowedRoles={['ADMIN']}><ReferralsPage /></ProtectedRoute>} />
+              <Route path="/tipos-producto" element={<ProtectedRoute allowedRoles={['ADMIN']}><ProductTypesPage /></ProtectedRoute>} />
+              <Route path="/proveedores" element={<ProtectedRoute allowedRoles={['ADMIN']}><ProvidersPage /></ProtectedRoute>} />
+              <Route path="/etiquetas" element={<ProtectedRoute allowedRoles={['ADMIN']}><TagsPage /></ProtectedRoute>} />
+              <Route path="/bodegas" element={<ProtectedRoute allowedRoles={['ADMIN']}><WarehousesPage /></ProtectedRoute>} />
+              <Route path="/facturas" element={<ProtectedRoute allowedRoles={['ADMIN']}><InvoicesPage /></ProtectedRoute>} />
+              <Route path="/reportes" element={<ProtectedRoute allowedRoles={['ADMIN', 'CONTADOR']}><ReportsPage /></ProtectedRoute>} />
             </Route>
           </Routes>
         </Suspense>

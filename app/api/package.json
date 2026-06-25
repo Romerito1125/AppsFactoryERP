@@ -23,7 +23,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "db:generate": "bunx --bun prisma generate --schema prisma/schema.prisma",
     "db:migrate": "bunx --bun prisma migrate dev --schema prisma/schema.prisma",
-    "db:deploy": "bunx --bun prisma migrate deploy --schema prisma/schema.prisma"
+    "db:deploy": "bunx --bun prisma migrate deploy --schema prisma/schema.prisma",
+    "db:seed:quick-access": "node scripts/seed-quick-access-and-mobile-orders.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1074.0",
