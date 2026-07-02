@@ -1,7 +1,9 @@
+import { UnitType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
+  IsEnum,
   IsNumber,
   IsOptional,
   IsPositive,
@@ -20,6 +22,16 @@ export class UpdateProductPriceDto {
   @IsNumber()
   @IsPositive()
   price?: number;
+
+  @IsOptional()
+  @IsEnum(UnitType)
+  unit?: UnitType;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  quantity?: number;
 
   @IsOptional()
   @IsBoolean()

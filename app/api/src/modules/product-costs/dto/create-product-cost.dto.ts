@@ -7,36 +7,21 @@ import {
   IsNumber,
   IsOptional,
   IsPositive,
-  IsString,
-  MinLength,
 } from 'class-validator';
 
-export class CreateProductPriceDto {
-  @IsString()
-  @MinLength(2)
-  name: string;
-
+export class CreateProductCostDto {
   @Type(() => Number)
   @IsNumber()
   @IsPositive()
-  price: number;
+  cost: number;
 
   @IsEnum(UnitType)
   unit: UnitType;
 
-  @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @IsPositive()
-  quantity?: number;
-
-  @IsOptional()
-  @IsBoolean()
-  isDefault?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  isActive?: boolean;
+  quantity: number;
 
   @IsOptional()
   @IsDateString()
@@ -45,4 +30,8 @@ export class CreateProductPriceDto {
   @IsOptional()
   @IsDateString()
   endsAt?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

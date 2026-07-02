@@ -71,6 +71,8 @@ export class ProductPricesService {
         data: {
           name: createProductPriceDto.name,
           price: createProductPriceDto.price,
+          unit: createProductPriceDto.unit,
+          quantity: createProductPriceDto.quantity ?? 1,
           productId,
           isActive: data.isActive ?? true,
           isDefault: data.isDefault ?? false,

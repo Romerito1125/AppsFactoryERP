@@ -1,9 +1,11 @@
+import { UnitType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   ArrayUnique,
   IsArray,
   IsBoolean,
   IsDateString,
+  IsEnum,
   IsInt,
   IsNumber,
   IsOptional,
@@ -23,6 +25,16 @@ export class CreateInitialProductPriceDto {
   @IsNumber()
   @IsPositive()
   price: number;
+
+  @IsOptional()
+  @IsEnum(UnitType)
+  unit?: UnitType;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  quantity?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -64,6 +76,10 @@ export class CreateProductDto {
   @IsNumber()
   @Min(0)
   taxRate: number;
+
+  @IsOptional()
+  @IsEnum(UnitType)
+  unit?: UnitType;
 
   @IsString()
   @MinLength(1)

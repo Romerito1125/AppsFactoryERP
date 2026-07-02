@@ -13,6 +13,7 @@ import { MovimientosBancariosModule } from './modules/movimientos-bancarios/movi
 import { CreditosModule } from './modules/creditos/creditos.module';
 import { CotizacionesModule } from './modules/cotizaciones/cotizaciones.module';
 import { OfertasModule } from './modules/ofertas/ofertas.module';
+import { ProductCostsModule } from './modules/product-costs/product-costs.module';
 import { ProductPricesModule } from './modules/product-prices/product-prices.module';
 import { ProductTypesModule } from './modules/product-types/product-types.module';
 import { ProductosModule } from './modules/productos/productos.module';
@@ -43,6 +44,7 @@ import { TiendaModule } from './modules/tienda/tienda.module';
     DeliveriesModule,
     ReferralsModule,
     ProductPricesModule,
+    ProductCostsModule,
     TiendaModule,
   ],
   controllers: [AppController],

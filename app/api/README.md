@@ -378,6 +378,8 @@ Crear bodega:
 | DELETE | `/productos/:id/imagen` | Elimina la imagen del producto | No |
 | DELETE | `/productos/:id` | Soft delete | No |
 | PATCH | `/productos/:id/reactivar` | Reactiva producto | No |
+| GET | `/productos/:id/utilidades` | Calcula utilidad por cada precio activo, solo `ADMIN` y `CONTADOR` | No |
+| GET | `/productos/utilidades?page=1&limit=20` | Lista utilidades paginadas por producto, solo `ADMIN` y `CONTADOR` | No |
 
 Crear producto:
 
@@ -389,6 +391,7 @@ Crear producto:
   "description": "Gaseosa 1.5 litros",
   "taxRate": 19,
   "brand": "Coca-Cola",
+  "unit": "L",
   "minimumStock": 10,
   "maximumStock": 100,
   "tagIds": [1, 2],
@@ -396,6 +399,8 @@ Crear producto:
     {
       "name": "Precio normal",
       "price": 5000,
+      "unit": "L",
+      "quantity": 1.5,
       "isDefault": true
     }
   ],
@@ -423,6 +428,7 @@ formData.append('name', 'Coca-Cola 1.5L');
 formData.append('description', 'Gaseosa 1.5 litros');
 formData.append('taxRate', String(19));
 formData.append('brand', 'Coca-Cola');
+formData.append('unit', 'L');
 formData.append('minimumStock', String(10));
 formData.append('maximumStock', String(100));
 formData.append('tagIds', JSON.stringify([1, 2]));
@@ -432,6 +438,8 @@ formData.append(
     {
       name: 'Precio normal',
       price: 5000,
+      unit: 'L',
+      quantity: 1.5,
       isDefault: true,
     },
   ]),
@@ -474,10 +482,11 @@ Formato esperado en `multipart/form-data`:
 | `description` | Text | `Gaseosa 1.5 litros` |
 | `taxRate` | Text | `19` |
 | `brand` | Text | `Coca-Cola` |
+| `unit` | Text | `L` |
 | `minimumStock` | Text | `10` |
 | `maximumStock` | Text | `100` |
 | `tagIds` | Text | `[1,2]` |
-| `prices` | Text | `[{"name":"Precio normal","price":5000,"isDefault":true}]` |
+| `prices` | Text | `[{"name":"Precio normal","price":5000,"unit":"L","quantity":1.5,"isDefault":true}]` |
 | `warehouses` | Text | `[{"warehouseId":1,"quantity":20}]` |
 | `image` | File | Archivo JPG, PNG o WEBP |
 
@@ -535,6 +544,49 @@ Reglas:
 - `warehouses` crea `ProductWarehouse` y movimientos `ENTRADA` como stock inicial.
 - El stock después de creado se mueve por `/inventario`, no por `PATCH /productos/:id`.
 - Solo puede haber un precio default activo por producto.
+- `unit` debe ser una de: `UND`, `KG`, `G`, `LB`, `L`, `ML`, `CAJA`, `PAQUETE`.
+- La utilidad no se expone en tienda pública; solo está en endpoints administrativos con JWT.
+
+Consultar utilidad de un producto:
+
+```http
+GET /productos/1/utilidades
+Authorization: Bearer <token-admin-o-contador>
+```
+
+Respuesta cuando hay costo activo y precios compatibles:
+
+```json
+{
+  "productId": 1,
+  "productName": "Arroz Diana",
+  "currentCost": {
+    "cost": "4000",
+    "unit": "KG",
+    "quantity": "1"
+  },
+  "prices": [
+    {
+      "priceId": 1,
+      "name": "Minorista",
+      "price": "6000",
+      "unit": "KG",
+      "quantity": "1",
+      "profitAmount": "2000",
+      "profitPercentage": "50.00"
+    }
+  ]
+}
+```
+
+Consultar utilidades paginadas:
+
+```http
+GET /productos/utilidades?page=1&limit=20
+Authorization: Bearer <token-admin-o-contador>
+```
+
+Si no hay costo activo, la respuesta incluye `warning` y no calcula utilidad. Si el costo y el precio usan unidades incompatibles, la línea del precio incluye `warning` y `profitAmount`/`profitPercentage` en `null`.
 
 ## Inventario
 
@@ -616,6 +668,8 @@ Crear precio:
 {
   "name": "Precio mayorista",
   "price": 4500,
+  "unit": "KG",
+  "quantity": 1,
   "isDefault": false,
   "startsAt": "2026-06-01T00:00:00.000Z",
   "endsAt": "2026-12-31T23:59:59.000Z"
@@ -631,7 +685,59 @@ Cambiar valor y registrar historial:
 }
 ```
 
-`price` debe ser mayor que 0. `endsAt` debe ser mayor que `startsAt`.
+`price` y `quantity` deben ser mayores que 0. `unit` debe ser una unidad válida. `endsAt` debe ser mayor que `startsAt`. Si cambia `price`, se registra en `ProductPriceHistory`.
+
+## Costos De Producto
+
+Estos endpoints requieren JWT y rol `ADMIN` o `CONTADOR`.
+
+| Método | Ruta | Qué hace | Body |
+| --- | --- | --- | --- |
+| GET | `/productos/:id/costos` | Lista costos históricos de un producto | No |
+| POST | `/productos/:id/costos` | Crea costo histórico para producto | Sí |
+| PATCH | `/costos-producto/:id` | Actualiza un costo histórico | Sí |
+| DELETE | `/costos-producto/:id` | Desactiva costo histórico sin borrarlo físicamente | No |
+
+Crear costo:
+
+```json
+{
+  "cost": 4000,
+  "unit": "KG",
+  "quantity": 1
+}
+```
+
+Crear costo con fechas:
+
+```json
+{
+  "cost": 4500,
+  "unit": "KG",
+  "quantity": 1,
+  "startsAt": "2026-07-01T00:00:00.000Z",
+  "isActive": true
+}
+```
+
+Actualizar costo:
+
+```json
+{
+  "cost": 4200,
+  "unit": "KG",
+  "quantity": 1,
+  "isActive": true
+}
+```
+
+Reglas:
+
+- `cost` y `quantity` deben ser mayores que 0.
+- `unit` debe ser una de: `UND`, `KG`, `G`, `LB`, `L`, `ML`, `CAJA`, `PAQUETE`.
+- Al crear un nuevo costo activo, se desactiva el costo activo anterior y se cierra con `endsAt`.
+- `DELETE /costos-producto/:id` no borra el registro; lo deja con `isActive = false` y `endsAt`.
+- La utilidad usa el costo activo más reciente por `startsAt` e `id`.
 
 ## Ofertas
 

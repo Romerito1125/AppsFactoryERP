@@ -1,7 +1,9 @@
+import { UnitType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   ArrayUnique,
   IsArray,
+  IsEnum,
   IsInt,
   IsNumber,
   IsOptional,
@@ -38,6 +40,10 @@ export class UpdateProductDto {
   @IsNumber()
   @Min(0)
   taxRate?: number;
+
+  @IsOptional()
+  @IsEnum(UnitType)
+  unit?: UnitType;
 
   @IsOptional()
   @IsString()

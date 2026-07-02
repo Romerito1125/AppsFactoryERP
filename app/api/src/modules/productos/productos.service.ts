@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InventoryMovementType } from '@prisma/client';
+import { InventoryMovementType, UnitType } from '@prisma/client';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { R2StorageService } from '../../shared/storage/r2-storage.service';
@@ -62,7 +62,10 @@ export class ProductosService {
       await this.ensureWarehousesExist(
         warehouses?.map((item) => item.warehouseId),
       );
-      const normalizedPrices = this.normalizeInitialPrices(prices);
+      const normalizedPrices = this.normalizeInitialPrices(
+        prices,
+        productData.unit ?? UnitType.UND,
+      );
 
       const product = await this.prisma.$transaction(async (tx) => {
         const createdProduct = await tx.product.create({
@@ -280,7 +283,10 @@ export class ProductosService {
     };
   }
 
-  private normalizeInitialPrices(prices?: CreateProductDto['prices']) {
+  private normalizeInitialPrices(
+    prices?: CreateProductDto['prices'],
+    defaultUnit: UnitType = UnitType.UND,
+  ) {
     if (!prices?.length) return [];
 
     const defaultCount = prices.filter((price) => price.isDefault).length;
@@ -304,6 +310,8 @@ export class ProductosService {
       return {
         name: price.name,
         price: price.price,
+        unit: price.unit ?? defaultUnit,
+        quantity: price.quantity ?? 1,
         isActive: price.isActive ?? true,
         // Si no se envía default, se toma el primer precio para dejar uno activo por defecto.
         isDefault: price.isDefault ?? (defaultCount === 0 && index === 0),
