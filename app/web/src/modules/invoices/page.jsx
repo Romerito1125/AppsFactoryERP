@@ -693,6 +693,22 @@ export function InvoicesPage() {
       }),
     placeholderData: (previousData) => previousData,
   })
+
+  const invoices = invoicesQuery.data?.data ?? []
+
+  useEffect(() => {
+    if (invoiceIdParam && invoices.length) {
+      const targetInvoice = invoices.find((inv) => inv.id === Number(invoiceIdParam))
+      if (targetInvoice) {
+        setDetailInvoice(targetInvoice)
+        setSearchParams((params) => {
+          params.delete('invoiceId')
+          return params
+        }, { replace: true })
+      }
+    }
+  }, [invoiceIdParam, invoices, setSearchParams])
+
   const clientsQuery = useQuery({
     queryKey: ['facturas-clientes'],
     queryFn: () => apiClient.getAllPages('/clientes'),
@@ -744,21 +760,6 @@ export function InvoicesPage() {
       </div>
     )
   }
-
-  const invoices = invoicesQuery.data?.data ?? []
-
-  useEffect(() => {
-    if (invoiceIdParam && invoices.length) {
-      const targetInvoice = invoices.find((inv) => inv.id === Number(invoiceIdParam))
-      if (targetInvoice) {
-        setDetailInvoice(targetInvoice)
-        setSearchParams((params) => {
-          params.delete('invoiceId')
-          return params
-        }, { replace: true })
-      }
-    }
-  }, [invoiceIdParam, invoices, setSearchParams])
 
   const totalItems = Number(invoicesQuery.data?.total ?? 0)
   const totalPages = Math.max(1, Number(invoicesQuery.data?.totalPages ?? 1))
