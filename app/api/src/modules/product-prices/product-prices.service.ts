@@ -3,19 +3,37 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateProductPriceDto } from './dto/create-product-price.dto';
+import { FilterProductPricesDto } from './dto/filter-product-prices.dto';
 import { UpdateProductPriceDto } from './dto/update-product-price.dto';
 
 @Injectable()
 export class ProductPricesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
-    return this.prisma.productPrice.findMany({
-      include: { product: true },
-      orderBy: { id: 'asc' },
-    });
+  async findAll(query: FilterProductPricesDto) {
+    const where = {
+      ...this.getStatusWhere(query.estado),
+      ...this.getSearchWhere(query.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.productPrice.count({ where }),
+      this.prisma.productPrice.findMany({
+        where,
+        include: { product: true },
+        orderBy: { id: 'asc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findOne(id: number) {
@@ -209,5 +227,26 @@ export class ProductPricesService {
     if (id <= 0) {
       throw new BadRequestException('El id debe ser un número positivo');
     }
+  }
+
+  private getStatusWhere(status?: FilterProductPricesDto['estado']) {
+    if (!status || status === 'TODOS') return undefined;
+    if (status === 'ACTIVOS') return { isActive: true };
+    if (status === 'INACTIVOS') return { isActive: false };
+    return { isDefault: true };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { name: { contains: q, mode: 'insensitive' as const } },
+        { product: { name: { contains: q, mode: 'insensitive' as const } } },
+        { product: { brand: { contains: q, mode: 'insensitive' as const } } },
+      ],
+    };
   }
 }

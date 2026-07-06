@@ -5,6 +5,10 @@ import {
 } from '@nestjs/common';
 import { DiscountType } from '@prisma/client';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { ApplicableOffersDto } from './dto/applicable-offers.dto';
 import { CreateOfferDto } from './dto/create-offer.dto';
@@ -15,14 +19,29 @@ import { UpdateOfferDto } from './dto/update-offer.dto';
 export class OfertasService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll(filter: FilterOffersDto) {
-    return this.prisma.offer
-      .findMany({
-        where: this.getStatusWhere(filter.estado),
+  async findAll(filter: FilterOffersDto) {
+    const where = {
+      ...this.getStatusWhere(filter.estado),
+      ...this.getSearchWhere(filter.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(filter);
+    const [total, offers] = await Promise.all([
+      this.prisma.offer.count({ where }),
+      this.prisma.offer.findMany({
+        where,
         include: this.offerInclude,
         orderBy: { id: 'asc' },
-      })
-      .then((offers) => offers.map((offer) => this.formatOffer(offer)));
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(
+      offers.map((offer) => this.formatOffer(offer)),
+      total,
+      page,
+      limit,
+    );
   }
 
   async findOne(id: number) {
@@ -424,6 +443,24 @@ export class OfertasService {
     if (status === RecordStatusQuery.TODOS) return undefined;
     if (status === RecordStatusQuery.INACTIVOS) return { isActive: false };
     return { isActive: true };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { name: { contains: q, mode: 'insensitive' as const } },
+        { description: { contains: q, mode: 'insensitive' as const } },
+        { clients: { some: { client: { firstName: { contains: q, mode: 'insensitive' as const } } } } },
+        { clients: { some: { client: { lastName: { contains: q, mode: 'insensitive' as const } } } } },
+        { products: { some: { product: { name: { contains: q, mode: 'insensitive' as const } } } } },
+        { productTypes: { some: { productType: { name: { contains: q, mode: 'insensitive' as const } } } } },
+        { tags: { some: { tag: { name: { contains: q, mode: 'insensitive' as const } } } } },
+      ],
+    };
   }
 
   private ensurePositiveId(id: number) {

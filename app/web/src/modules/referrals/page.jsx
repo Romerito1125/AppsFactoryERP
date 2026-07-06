@@ -51,6 +51,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { apiClient } from '@/lib/api-client'
 import { formatDate, formatNumber, matchesSearch } from '@/lib/format'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { DEFAULT_ITEMS_PER_PAGE, LocalPagination, useLocalPagination } from '@/modules/shared/local-pagination'
+
+const PAGE_SIZE = DEFAULT_ITEMS_PER_PAGE
 
 const createReferralSchema = z.object({
   referredClientId: z.number({ message: 'Selecciona un cliente' }).int().positive('Selecciona un cliente'),
@@ -169,15 +172,32 @@ export function ReferralsPage() {
   const [view, setView] = useState('relations')
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
+  const [currentPage, setCurrentPage] = useState(1)
   const [createOpen, setCreateOpen] = useState(false)
   const [levelClient, setLevelClient] = useState(null)
   const [selectedClient, setSelectedClient] = useState(null)
   const [detailReferral, setDetailReferral] = useState(null)
 
-  const referralsQuery = useQuery({ queryKey: ['referidos'], queryFn: () => apiClient.get('/referidos') })
+  const referralsQuery = useQuery({
+    queryKey: ['referidos', deferredSearch, currentPage],
+    queryFn: () =>
+      apiClient.get('/referidos', {
+        page: currentPage,
+        limit: PAGE_SIZE,
+        q: deferredSearch,
+      }),
+    placeholderData: (previousData) => previousData,
+  })
   const clientsQuery = useQuery({
     queryKey: ['referidos-clientes'],
-    queryFn: () => apiClient.get('/clientes', { estado: 'todos' }),
+    queryFn: () => apiClient.getAllPages('/clientes', { estado: 'todos' }),
+    enabled: view === 'clients' || createOpen || Boolean(levelClient) || Boolean(selectedClient),
+  })
+
+  const referralLookupQuery = useQuery({
+    queryKey: ['referidos-lookup'],
+    queryFn: () => apiClient.getAllPages('/referidos'),
+    enabled: createOpen,
   })
 
   const clientReferralsQuery = useQuery({
@@ -209,29 +229,14 @@ export function ReferralsPage() {
     },
   })
 
-  if (referralsQuery.isLoading || clientsQuery.isLoading) {
-    return <ReferralsSkeleton />
-  }
-
-  if (referralsQuery.isError) {
-    return (
-      <div className="rounded-2xl border border-destructive/25 bg-destructive/5 p-6 text-sm text-destructive">
-        {referralsQuery.error.message}
-      </div>
-    )
-  }
-
-  const referrals = referralsQuery.data ?? []
+  const referrals = referralsQuery.data?.data ?? []
+  const totalItems = Number(referralsQuery.data?.total ?? 0)
+  const totalPages = Math.max(1, Number(referralsQuery.data?.totalPages ?? 1))
   const clients = clientsQuery.data ?? []
-  const referredClientIds = new Set(referrals.map((referral) => referral.referredClient.id))
-
-  const visibleReferrals = referrals.filter((referral) =>
-    matchesSearch(referral, deferredSearch, (record) => [
-      record.codeUsed,
-      `${record.referrerClient.firstName} ${record.referrerClient.lastName}`,
-      `${record.referredClient.firstName} ${record.referredClient.lastName}`,
-    ]),
-  )
+  const referralLookup = referralLookupQuery.data ?? []
+  const referredClientIds = new Set(referralLookup.map((referral) => referral.referredClient.id))
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
+  const endItem = Math.min(startItem + referrals.length - 1, totalItems)
 
   const visibleClients = clients.filter((client) =>
     matchesSearch(client, deferredSearch, (record) => [
@@ -242,7 +247,33 @@ export function ReferralsPage() {
     ]),
   )
 
+  const {
+    currentPage: clientPage,
+    setCurrentPage: setClientPage,
+    paginatedItems: paginatedRecords,
+    totalItems: totalClientItems,
+    totalPages: totalClientPages,
+    startItem: clientStartItem,
+    endItem: clientEndItem,
+  } = useLocalPagination(visibleClients)
+
   const eligibleClients = clients.filter((client) => client.isActive && !referredClientIds.has(client.id))
+
+  if (
+    referralsQuery.isLoading ||
+    ((view === 'clients' || createOpen || levelClient || selectedClient) && clientsQuery.isLoading) ||
+    (createOpen && referralLookupQuery.isLoading)
+  ) {
+    return <ReferralsSkeleton />
+  }
+
+  if (referralsQuery.isError) {
+    return (
+      <div className="rounded-2xl border border-destructive/25 bg-destructive/5 p-6 text-sm text-destructive">
+        {referralsQuery.error.message}
+      </div>
+    )
+  }
 
   const summaryCards = [
     {
@@ -349,12 +380,23 @@ export function ReferralsPage() {
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  setCurrentPage(1)
+                  setClientPage(1)
+                }}
                 placeholder="Buscar por cliente, codigo o documento..."
                 className="pl-9"
               />
             </div>
-            <Tabs value={view} onValueChange={setView}>
+            <Tabs
+              value={view}
+                onValueChange={(value) => {
+                  setView(value)
+                  setCurrentPage(1)
+                  setClientPage(1)
+                }}
+            >
               <TabsList>
                 <TabsTrigger value="relations">Relaciones</TabsTrigger>
                 <TabsTrigger value="clients">Clientes</TabsTrigger>
@@ -374,8 +416,8 @@ export function ReferralsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visibleReferrals.length ? (
-                  visibleReferrals.map((referral) => (
+                {referrals.length ? (
+                  referrals.map((referral) => (
                     <TableRow key={referral.id} className="cursor-pointer" onClick={() => setDetailReferral(referral)}>
                       <TableCell className="font-medium">{referral.codeUsed}</TableCell>
                       <TableCell>{`${referral.referrerClient.firstName} ${referral.referrerClient.lastName}`}</TableCell>
@@ -405,7 +447,7 @@ export function ReferralsPage() {
               </TableHeader>
               <TableBody>
                 {visibleClients.length ? (
-                  visibleClients.map((client) => (
+                  paginatedRecords.map((client) => (
                     <TableRow key={client.id}>
                       <TableCell>
                         <div>
@@ -450,6 +492,17 @@ export function ReferralsPage() {
               </TableBody>
             </Table>
           )}
+
+          <LocalPagination
+            currentPage={view === 'relations' ? currentPage : clientPage}
+            totalPages={view === 'relations' ? totalPages : totalClientPages}
+            totalItems={view === 'relations' ? totalItems : totalClientItems}
+            startItem={view === 'relations' ? startItem : clientStartItem}
+            endItem={view === 'relations' ? endItem : clientEndItem}
+            singularLabel={view === 'relations' ? 'relacion' : 'cliente'}
+            pluralLabel={view === 'relations' ? 'relaciones' : 'clientes'}
+            onPageChange={view === 'relations' ? setCurrentPage : setClientPage}
+          />
         </CardContent>
       </Card>
 

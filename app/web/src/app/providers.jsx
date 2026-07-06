@@ -13,7 +13,10 @@ export function AppProviders({ children }) {
         defaultOptions: {
           queries: {
             refetchOnWindowFocus: false,
-            staleTime: 15_000,
+            refetchOnReconnect: false,
+            retry: 1,
+            staleTime: 60_000,
+            gcTime: 10 * 60_000,
           },
         },
       }),

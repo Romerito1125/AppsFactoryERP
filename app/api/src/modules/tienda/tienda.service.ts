@@ -4,20 +4,42 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InvoiceSource, Prisma } from '@prisma/client';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateStoreOrderDto } from './dto/create-store-order.dto';
+import { ListStoreOrdersQueryDto } from './dto/list-store-orders-query.dto';
 import { StorefrontProductsQueryDto } from './dto/storefront-products-query.dto';
 
 @Injectable()
 export class TiendaService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificacionesService: NotificacionesService,
+  ) {}
 
-  findOrders() {
-    return this.prisma.invoice.findMany({
-      where: { source: InvoiceSource.APP_MOVIL },
-      include: this.storeOrderInclude,
-      orderBy: { id: 'desc' },
-    });
+  async findOrders(query: ListStoreOrdersQueryDto) {
+    const where = {
+      source: InvoiceSource.APP_MOVIL,
+      ...this.getOrderStatusWhere(query.status),
+      ...this.getOrderSearchWhere(query.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.invoice.count({ where }),
+      this.prisma.invoice.findMany({
+        where,
+        include: this.storeOrderInclude,
+        orderBy: { id: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findProducts(query: StorefrontProductsQueryDto) {
@@ -139,10 +161,13 @@ export class TiendaService {
       const taxes = invoiceItems.reduce((sum, item) => sum + item.taxAmount, 0);
       const total = invoiceItems.reduce((sum, item) => sum + item.total, 0);
 
-      return tx.invoice.create({
+      const invoice = await tx.invoice.create({
         data: {
           consecutive: this.generateConsecutive(),
           clientId: createStoreOrderDto.clientId,
+          createdByUserId: null,
+          createdByRole: null,
+          createdByUsername: null,
           source: InvoiceSource.APP_MOVIL,
           subtotal,
           taxes,
@@ -159,6 +184,10 @@ export class TiendaService {
         },
         include: this.storeOrderInclude,
       });
+
+      await this.notificacionesService.createInvoiceNotification(tx, invoice);
+
+      return invoice;
     });
   }
 
@@ -177,6 +206,13 @@ export class TiendaService {
 
   private readonly storeOrderInclude = {
     client: true,
+    createdByUser: {
+      select: {
+        id: true,
+        username: true,
+        role: true,
+      },
+    },
     delivery: true,
     credit: true,
     items: {
@@ -196,9 +232,9 @@ export class TiendaService {
       productTypeId: query.productTypeId,
       ...(query.q && {
         OR: [
-          { name: { contains: query.q, mode: 'insensitive' } },
-          { description: { contains: query.q, mode: 'insensitive' } },
-          { brand: { contains: query.q, mode: 'insensitive' } },
+          { name: { contains: query.q, mode: 'insensitive' as const } },
+          { description: { contains: query.q, mode: 'insensitive' as const } },
+          { brand: { contains: query.q, mode: 'insensitive' as const } },
         ],
       }),
       ...(query.tagIds?.length && {
@@ -338,5 +374,28 @@ export class TiendaService {
       (!offer.startsAt || offer.startsAt <= now) &&
       (!offer.endsAt || offer.endsAt >= now)
     );
+  }
+
+  private getOrderStatusWhere(status?: ListStoreOrdersQueryDto['status']) {
+    if (!status) return undefined;
+    return { delivery: { status } };
+  }
+
+  private getOrderSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { consecutive: { contains: q, mode: 'insensitive' as const } },
+        { client: { firstName: { contains: q, mode: 'insensitive' as const } } },
+        { client: { lastName: { contains: q, mode: 'insensitive' as const } } },
+        { client: { identification: { contains: q, mode: 'insensitive' as const } } },
+        { delivery: { address: { contains: q, mode: 'insensitive' as const } } },
+        { delivery: { recipientName: { contains: q, mode: 'insensitive' as const } } },
+        { delivery: { recipientPhone: { contains: q, mode: 'insensitive' as const } } },
+      ],
+    };
   }
 }

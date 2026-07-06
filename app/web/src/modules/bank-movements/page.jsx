@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState } from 'react'
+import { useDeferredValue, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useForm } from 'react-hook-form'
@@ -44,8 +44,11 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { apiClient } from '@/lib/api-client'
-import { formatCurrency, formatDate, formatNumber, matchesSearch } from '@/lib/format'
+import { formatCurrency, formatDate, formatNumber } from '@/lib/format'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { DEFAULT_ITEMS_PER_PAGE, LocalPagination } from '@/modules/shared/local-pagination'
+
+const PAGE_SIZE = DEFAULT_ITEMS_PER_PAGE
 
 const bankMovementTypeOptions = [
   { value: 'ingreso', label: 'Ingreso' },
@@ -388,22 +391,32 @@ export function BankMovementsPage() {
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [typeTab, setTypeTab] = useState('TODOS')
+  const [currentPage, setCurrentPage] = useState(1)
   const [createOpen, setCreateOpen] = useState(false)
   const [detailMovement, setDetailMovement] = useState(null)
 
   const movementsQuery = useQuery({
-    queryKey: ['movimientos-bancarios'],
-    queryFn: () => apiClient.get('/movimientos-bancarios'),
+    queryKey: ['movimientos-bancarios', deferredSearch, typeTab, currentPage],
+    queryFn: () =>
+      apiClient.get('/movimientos-bancarios', {
+        page: currentPage,
+        limit: PAGE_SIZE,
+        q: deferredSearch,
+        movementType: typeTab === 'TODOS' ? undefined : typeTab,
+      }),
+    placeholderData: (previousData) => previousData,
   })
 
   const accountsQuery = useQuery({
     queryKey: ['movimientos-bancarios-cuentas'],
-    queryFn: () => apiClient.get('/cuentas-bancarias'),
+    queryFn: () => apiClient.getAllPages('/cuentas-bancarias'),
+    enabled: createOpen,
   })
 
   const invoicesQuery = useQuery({
     queryKey: ['movimientos-bancarios-facturas'],
-    queryFn: () => apiClient.get('/facturas'),
+    queryFn: () => apiClient.getAllPages('/facturas'),
+    enabled: createOpen,
   })
 
   const createMutation = useMutation({
@@ -419,27 +432,13 @@ export function BankMovementsPage() {
     },
   })
 
-  const movements = movementsQuery.data ?? []
+  const movements = movementsQuery.data?.data ?? []
   const accounts = accountsQuery.data ?? []
   const invoices = invoicesQuery.data ?? []
-
-  const visibleMovements = useMemo(
-    () =>
-      movements.filter((movement) => {
-        const matchesType = typeTab === 'TODOS' ? true : movement.movementType === typeTab
-
-        return (
-          matchesType &&
-          matchesSearch(movement, deferredSearch, (record) => [
-            record.bankAccount?.name,
-            formatBankMovementType(record.movementType),
-            record.description,
-            record.invoice?.consecutive,
-          ])
-        )
-      }),
-    [deferredSearch, movements, typeTab],
-  )
+  const totalItems = Number(movementsQuery.data?.total ?? 0)
+  const totalPages = Math.max(1, Number(movementsQuery.data?.totalPages ?? 1))
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
+  const endItem = Math.min(startItem + movements.length - 1, totalItems)
 
   const summaryCards = [
     {
@@ -470,7 +469,7 @@ export function BankMovementsPage() {
     },
   ]
 
-  if (movementsQuery.isLoading || accountsQuery.isLoading || invoicesQuery.isLoading) {
+  if (movementsQuery.isLoading || (createOpen && (accountsQuery.isLoading || invoicesQuery.isLoading))) {
     return <BankMovementsSkeleton />
   }
 
@@ -544,12 +543,21 @@ export function BankMovementsPage() {
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                   setCurrentPage(1)
+                 }}
                 placeholder="Buscar por cuenta, tipo o factura..."
                 className="pl-9"
               />
             </div>
-            <Tabs value={typeTab} onValueChange={setTypeTab}>
+            <Tabs
+              value={typeTab}
+                onValueChange={(value) => {
+                  setTypeTab(value)
+                  setCurrentPage(1)
+                }}
+            >
               <TabsList>
                 <TabsTrigger value="TODOS">Todos</TabsTrigger>
                 <TabsTrigger value="INGRESO">Ingresos</TabsTrigger>
@@ -572,8 +580,8 @@ export function BankMovementsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visibleMovements.length ? (
-                visibleMovements.map((movement) => (
+              {movements.length ? (
+                movements.map((movement) => (
                   <TableRow key={movement.id} className="cursor-pointer" onClick={() => setDetailMovement(movement)}>
                     <TableCell>
                       <Badge variant={bankMovementVariants[movement.movementType] ?? 'outline'}>
@@ -596,6 +604,17 @@ export function BankMovementsPage() {
               )}
             </TableBody>
           </Table>
+
+            <LocalPagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={totalItems}
+            startItem={startItem}
+            endItem={endItem}
+            singularLabel="movimiento"
+            pluralLabel="movimientos"
+            onPageChange={setCurrentPage}
+          />
         </CardContent>
       </Card>
 

@@ -17,6 +17,12 @@ export class CreateInvoiceDto {
   @IsPositive()
   clientId: number;
 
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  createdByUserId?: number;
+
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })

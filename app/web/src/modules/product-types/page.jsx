@@ -58,7 +58,8 @@ const productTypesConfig = {
     name: record?.name ?? '',
     description: record?.description ?? '',
   }),
-  fetchRecords: (status) => apiClient.get('/tipos-producto', { estado: toApiStatus(status) }),
+  fetchRecords: ({ status, search, page, limit }) =>
+    apiClient.get('/tipos-producto', { estado: toApiStatus(status), q: search, page, limit }),
   createRecord: (payload) => apiClient.post('/tipos-producto', payload),
   updateRecord: (id, payload) => apiClient.patch(`/tipos-producto/${id}`, payload),
   archiveRecord: (id) => apiClient.delete(`/tipos-producto/${id}`),

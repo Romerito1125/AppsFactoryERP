@@ -5,8 +5,10 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CreateReferralDto } from './dto/create-referral.dto';
+import { ListReferralsQueryDto } from './dto/list-referrals-query.dto';
 import { ValidateReferralDto } from './dto/validate-referral.dto';
 import { ReferralsService } from './referrals.service';
 
@@ -15,8 +17,8 @@ export class ReferralsController {
   constructor(private readonly referralsService: ReferralsService) {}
 
   @Get()
-  findAll() {
-    return this.referralsService.findAll();
+  findAll(@Query() query: ListReferralsQueryDto) {
+    return this.referralsService.findAll(query);
   }
 
   @Get(':id')

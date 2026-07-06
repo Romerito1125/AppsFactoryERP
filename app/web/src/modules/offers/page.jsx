@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useForm } from 'react-hook-form'
@@ -43,8 +43,11 @@ import {
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { apiClient } from '@/lib/api-client'
-import { formatCurrency, formatDate, formatNumber, matchesSearch, toApiStatus } from '@/lib/format'
+import { formatCurrency, formatDate, formatNumber, toApiStatus } from '@/lib/format'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { DEFAULT_ITEMS_PER_PAGE, LocalPagination } from '@/modules/shared/local-pagination'
+
+const PAGE_SIZE = DEFAULT_ITEMS_PER_PAGE
 
 const discountTypeOptions = [
   { value: 'PORCENTAJE', label: 'Porcentaje' },
@@ -392,20 +395,29 @@ export function OffersPage() {
   const queryClient = useQueryClient()
   const [status, setStatus] = useState('activos')
   const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search)
+  const [currentPage, setCurrentPage] = useState(1)
   const [createOpen, setCreateOpen] = useState(false)
   const [editOffer, setEditOffer] = useState(null)
   const [detailOffer, setDetailOffer] = useState(null)
-  const deferredSearch = useMemo(() => search, [search])
 
   const offersQuery = useQuery({
-    queryKey: ['ofertas', status],
-    queryFn: () => apiClient.get('/ofertas', { estado: toApiStatus(status) }),
+    queryKey: ['ofertas', status, deferredSearch, currentPage],
+    queryFn: () =>
+      apiClient.get('/ofertas', {
+        estado: toApiStatus(status),
+        q: deferredSearch,
+        page: currentPage,
+        limit: PAGE_SIZE,
+      }),
+    placeholderData: (previousData) => previousData,
   })
 
-  const clientsQuery = useQuery({ queryKey: ['ofertas-clientes'], queryFn: () => apiClient.get('/clientes') })
-  const productsQuery = useQuery({ queryKey: ['ofertas-productos'], queryFn: () => apiClient.get('/productos') })
-  const productTypesQuery = useQuery({ queryKey: ['ofertas-tipos'], queryFn: () => apiClient.get('/tipos-producto') })
-  const tagsQuery = useQuery({ queryKey: ['ofertas-etiquetas'], queryFn: () => apiClient.get('/etiquetas') })
+  const lookupEnabled = createOpen || Boolean(editOffer)
+  const clientsQuery = useQuery({ queryKey: ['ofertas-clientes'], queryFn: () => apiClient.getAllPages('/clientes'), enabled: lookupEnabled })
+  const productsQuery = useQuery({ queryKey: ['ofertas-productos'], queryFn: () => apiClient.getAllPages('/productos'), enabled: lookupEnabled })
+  const productTypesQuery = useQuery({ queryKey: ['ofertas-tipos'], queryFn: () => apiClient.getAllPages('/tipos-producto'), enabled: lookupEnabled })
+  const tagsQuery = useQuery({ queryKey: ['ofertas-etiquetas'], queryFn: () => apiClient.getAllPages('/etiquetas'), enabled: lookupEnabled })
 
   const createMutation = useMutation({
     mutationFn: (payload) => apiClient.post('/ofertas', payload),
@@ -439,10 +451,8 @@ export function OffersPage() {
 
   if (
     offersQuery.isLoading ||
-    clientsQuery.isLoading ||
-    productsQuery.isLoading ||
-    productTypesQuery.isLoading ||
-    tagsQuery.isLoading
+    (lookupEnabled &&
+      (clientsQuery.isLoading || productsQuery.isLoading || productTypesQuery.isLoading || tagsQuery.isLoading))
   ) {
     return <OffersSkeleton />
   }
@@ -455,18 +465,11 @@ export function OffersPage() {
     )
   }
 
-  const offers = offersQuery.data ?? []
-  const visibleOffers = offers.filter((offer) =>
-    matchesSearch(offer, deferredSearch, (record) => [
-      record.name,
-      record.description,
-      record.discountType,
-      ...record.clients.map((item) => `${item.firstName} ${item.lastName}`),
-      ...record.products.map((item) => item.name),
-      ...record.productTypes.map((item) => item.name),
-      ...record.tags.map((item) => item.name),
-    ]),
-  )
+  const offers = offersQuery.data?.data ?? []
+  const totalItems = Number(offersQuery.data?.total ?? 0)
+  const totalPages = Math.max(1, Number(offersQuery.data?.totalPages ?? 1))
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
+  const endItem = Math.min(startItem + offers.length - 1, totalItems)
 
   const lookups = {
     clients: (clientsQuery.data ?? []).map((item) => ({
@@ -586,12 +589,21 @@ export function OffersPage() {
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  setCurrentPage(1)
+                }}
                 placeholder="Buscar por nombre o target..."
                 className="pl-9"
               />
             </div>
-            <Select value={status} onValueChange={setStatus}>
+            <Select
+              value={status}
+                onValueChange={(value) => {
+                  setStatus(value)
+                  setCurrentPage(1)
+                }}
+            >
               <SelectTrigger className="w-full md:w-[170px]">
                 <SelectValue placeholder="Estado" />
               </SelectTrigger>
@@ -615,8 +627,8 @@ export function OffersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visibleOffers.length ? (
-                visibleOffers.map((offer) => (
+              {offers.length ? (
+                offers.map((offer) => (
                   <TableRow key={offer.id} className="cursor-pointer" onClick={() => setDetailOffer(offer)}>
                     <TableCell>
                       <div>
@@ -655,6 +667,17 @@ export function OffersPage() {
               )}
             </TableBody>
           </Table>
+
+          <LocalPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            startItem={startItem}
+            endItem={endItem}
+            singularLabel="oferta"
+            pluralLabel="ofertas"
+            onPageChange={setCurrentPage}
+          />
         </CardContent>
       </Card>
 

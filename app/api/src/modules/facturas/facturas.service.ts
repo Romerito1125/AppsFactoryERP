@@ -6,19 +6,42 @@ import {
 } from '@nestjs/common';
 import { InvoiceSource } from '@prisma/client';
 import { InvoiceStatus } from '../../common/enums/invoice-status.enum';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
+import { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
+import { ListInvoicesQueryDto } from './dto/list-invoices-query.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 
 @Injectable()
 export class FacturasService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificacionesService: NotificacionesService,
+  ) {}
 
-  findAll() {
-    return this.prisma.invoice.findMany({
-      include: this.invoiceInclude,
-      orderBy: { id: 'desc' },
-    });
+  async findAll(query: ListInvoicesQueryDto) {
+    const where = {
+      ...this.getStatusWhere(query.status),
+      ...this.getSearchWhere(query.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.invoice.count({ where }),
+      this.prisma.invoice.findMany({
+        where,
+        include: this.invoiceInclude,
+        orderBy: { id: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findOne(id: number) {
@@ -36,7 +59,7 @@ export class FacturasService {
     return invoice;
   }
 
-  async create(createInvoiceDto: CreateInvoiceDto) {
+  async create(createInvoiceDto: CreateInvoiceDto, authUser: AuthUser) {
     // La venta no descuenta stock por bodega; el inventario se maneja en /inventario.
     return this.prisma.$transaction(async (tx) => {
       const client = await tx.client.findUnique({
@@ -119,10 +142,28 @@ export class FacturasService {
       const taxes = invoiceItems.reduce((sum, item) => sum + item.taxAmount, 0);
       const total = invoiceItems.reduce((sum, item) => sum + item.total, 0);
 
-      return tx.invoice.create({
+      let creatorId = authUser.sub;
+      let creatorRole = authUser.role;
+      let creatorUsername = authUser.username;
+
+      if (createInvoiceDto.createdByUserId) {
+        const creatorUser = await tx.user.findUnique({
+          where: { id: createInvoiceDto.createdByUserId, isActive: true },
+        });
+        if (creatorUser) {
+          creatorId = creatorUser.id;
+          creatorRole = creatorUser.role as any;
+          creatorUsername = creatorUser.username;
+        }
+      }
+
+      const invoice = await tx.invoice.create({
         data: {
           consecutive: this.generateConsecutive(),
           clientId: createInvoiceDto.clientId,
+          createdByUserId: creatorId,
+          createdByRole: creatorRole,
+          createdByUsername: creatorUsername,
           source: createInvoiceDto.source ?? InvoiceSource.ADMIN,
           subtotal,
           taxes,
@@ -131,6 +172,10 @@ export class FacturasService {
         },
         include: this.invoiceInclude,
       });
+
+      await this.notificacionesService.createInvoiceNotification(tx, invoice);
+
+      return invoice;
     });
   }
 
@@ -183,6 +228,19 @@ export class FacturasService {
 
   private readonly invoiceInclude = {
     client: true,
+    createdByUser: {
+      select: {
+        id: true,
+        username: true,
+        role: true,
+        employee: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    },
     items: {
       include: {
         product: { include: { productType: true } },
@@ -220,5 +278,26 @@ export class FacturasService {
     if (id <= 0) {
       throw new BadRequestException('El id debe ser un número positivo');
     }
+  }
+
+  private getStatusWhere(status?: ListInvoicesQueryDto['status']) {
+    if (!status) return undefined;
+    return { status };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { consecutive: { contains: q, mode: 'insensitive' as const } },
+        { client: { firstName: { contains: q, mode: 'insensitive' as const } } },
+        { client: { lastName: { contains: q, mode: 'insensitive' as const } } },
+        { client: { identification: { contains: q, mode: 'insensitive' as const } } },
+        { createdByUsername: { contains: q, mode: 'insensitive' as const } },
+      ],
+    };
   }
 }

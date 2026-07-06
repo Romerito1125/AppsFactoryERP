@@ -111,7 +111,7 @@ function App() {
             <Route
               path="/pos"
               element={
-                <ProtectedRoute allowedRoles={['ADMIN', 'VENDEDOR', 'BODEGA', 'CONTADOR']}>
+                <ProtectedRoute allowedRoles={['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR']}>
                   <div className="min-h-screen bg-[radial-gradient(circle_at_top,#eff7ff,transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.98),rgba(245,247,250,1))] px-4 py-6 dark:bg-[radial-gradient(circle_at_top,#132235,transparent_35%),linear-gradient(180deg,rgba(12,18,28,0.96),rgba(8,12,20,1))] md:px-6 md:py-8">
                     <PosPage />
                   </div>

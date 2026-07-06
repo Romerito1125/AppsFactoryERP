@@ -1,5 +1,5 @@
-import { Role } from '@prisma/client';
-import { IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { Role } from '../../../common/enums/role.enum';
 
 export class CreateEmployeeDto {
   @IsString()
@@ -30,6 +30,6 @@ export class CreateEmployeeDto {
   @MinLength(6)
   password: string;
 
-  @IsIn([Role.ADMIN, Role.VENDEDOR, Role.BODEGA, Role.CONTADOR])
+  @IsEnum(Role)
   role: Role;
 }

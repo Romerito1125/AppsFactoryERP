@@ -11,10 +11,11 @@ import {
 import { Role } from '../../../common/enums/role.enum';
 
 export class CreateUserDto {
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @IsPositive()
-  clientId: number;
+  clientId?: number;
 
   @IsString()
   @MinLength(3)

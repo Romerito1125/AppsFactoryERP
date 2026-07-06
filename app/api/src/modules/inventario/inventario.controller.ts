@@ -5,6 +5,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
+  Query,
 } from '@nestjs/common';
 import {
   InventoryAdjustmentDto,
@@ -12,6 +13,7 @@ import {
   InventoryExitDto,
   InventoryTransferDto,
 } from './dto/inventory-movement.dto';
+import { ListInventoryQueryDto } from './dto/list-inventory-query.dto';
 import { InventarioService } from './inventario.service';
 
 @Controller('inventario')
@@ -19,8 +21,8 @@ export class InventarioController {
   constructor(private readonly inventarioService: InventarioService) {}
 
   @Get()
-  findAll() {
-    return this.inventarioService.findAll();
+  findAll(@Query() query: ListInventoryQueryDto) {
+    return this.inventarioService.findAll(query);
   }
 
   @Get('productos/:productId')
@@ -54,8 +56,8 @@ export class InventarioController {
   }
 
   @Get('movimientos')
-  findMovements() {
-    return this.inventarioService.findMovements();
+  findMovements(@Query() query: ListInventoryQueryDto) {
+    return this.inventarioService.findMovements(query);
   }
 
   @Get('movimientos/:id')

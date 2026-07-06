@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { CreateStoreOrderDto } from './dto/create-store-order.dto';
+import { ListStoreOrdersQueryDto } from './dto/list-store-orders-query.dto';
 import { StorefrontProductsQueryDto } from './dto/storefront-products-query.dto';
 import { TiendaService } from './tienda.service';
 
@@ -38,7 +39,7 @@ export class TiendaController {
   }
 
   @Get('pedidos')
-  findOrders() {
-    return this.tiendaService.findOrders();
+  findOrders(@Query() query: ListStoreOrdersQueryDto) {
+    return this.tiendaService.findOrders(query);
   }
 }

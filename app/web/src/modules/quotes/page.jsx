@@ -49,8 +49,11 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { apiClient } from '@/lib/api-client'
-import { formatCurrency, formatDate, formatNumber, matchesSearch } from '@/lib/format'
+import { formatCurrency, formatDate, formatNumber } from '@/lib/format'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { LocalPagination } from '@/modules/shared/local-pagination'
+
+const PAGE_SIZE = 20
 
 const quoteStatusOptions = [
   { value: 'PENDIENTE', label: 'Pendiente' },
@@ -431,10 +434,29 @@ export function QuotesPage() {
   const [detailQuote, setDetailQuote] = useState(null)
   const [editQuote, setEditQuote] = useState(null)
   const [statusQuote, setStatusQuote] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
 
-  const quotesQuery = useQuery({ queryKey: ['cotizaciones'], queryFn: () => apiClient.get('/cotizaciones') })
-  const clientsQuery = useQuery({ queryKey: ['cotizaciones-clientes'], queryFn: () => apiClient.get('/clientes') })
-  const productsQuery = useQuery({ queryKey: ['cotizaciones-productos'], queryFn: () => apiClient.get('/productos') })
+  const quotesQuery = useQuery({
+    queryKey: ['cotizaciones', statusTab, search, currentPage],
+    queryFn: () =>
+      apiClient.get('/cotizaciones', {
+        status: statusTab === 'TODAS' ? undefined : statusTab,
+        q: search,
+        page: currentPage,
+        limit: PAGE_SIZE,
+      }),
+    placeholderData: (previousData) => previousData,
+  })
+  const clientsQuery = useQuery({
+    queryKey: ['cotizaciones-clientes'],
+    queryFn: () => apiClient.getAllPages('/clientes'),
+    enabled: createOpen,
+  })
+  const productsQuery = useQuery({
+    queryKey: ['cotizaciones-productos'],
+    queryFn: () => apiClient.getAllPages('/productos'),
+    enabled: createOpen,
+  })
 
   const createMutation = useMutation({
     mutationFn: (payload) => apiClient.post('/cotizaciones', payload),
@@ -476,7 +498,7 @@ export function QuotesPage() {
     },
   })
 
-  if (quotesQuery.isLoading || clientsQuery.isLoading || productsQuery.isLoading) {
+  if (quotesQuery.isLoading || (createOpen && (clientsQuery.isLoading || productsQuery.isLoading))) {
     return <QuoteSkeleton />
   }
 
@@ -488,21 +510,13 @@ export function QuotesPage() {
     )
   }
 
-  const quotes = quotesQuery.data ?? []
+  const quotes = quotesQuery.data?.data ?? []
+  const totalItems = Number(quotesQuery.data?.total ?? 0)
+  const totalPages = Math.max(1, Number(quotesQuery.data?.totalPages ?? 1))
   const clients = clientsQuery.data ?? []
   const products = productsQuery.data ?? []
-
-  const filteredQuotes = quotes.filter((quote) => {
-    const statusMatch = statusTab === 'TODAS' ? true : quote.status === statusTab
-
-    return (
-      statusMatch &&
-      matchesSearch(quote, deferredSearch, (record) => [
-        record.consecutive,
-        `${record.client.firstName} ${record.client.lastName}`,
-      ])
-    )
-  })
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
+  const endItem = Math.min(startItem + quotes.length - 1, totalItems)
 
   const summaryCards = [
     {
@@ -616,12 +630,21 @@ export function QuotesPage() {
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  setCurrentPage(1)
+                }}
                 placeholder="Buscar por consecutivo o cliente..."
                 className="pl-9"
               />
             </div>
-            <Tabs value={statusTab} onValueChange={setStatusTab}>
+            <Tabs
+              value={statusTab}
+              onValueChange={(value) => {
+                setStatusTab(value)
+                setCurrentPage(1)
+              }}
+            >
               <TabsList>
                 <TabsTrigger value="PENDIENTE">Pendientes</TabsTrigger>
                 <TabsTrigger value="APROBADA">Aprobadas</TabsTrigger>
@@ -645,8 +668,8 @@ export function QuotesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredQuotes.length ? (
-                filteredQuotes.map((quote) => (
+              {quotes.length ? (
+                quotes.map((quote) => (
                   <TableRow key={quote.id}>
                     <TableCell className="font-medium">{quote.consecutive}</TableCell>
                     <TableCell>{`${quote.client.firstName} ${quote.client.lastName}`}</TableCell>
@@ -701,6 +724,17 @@ export function QuotesPage() {
               )}
             </TableBody>
           </Table>
+
+          <LocalPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            startItem={startItem}
+            endItem={endItem}
+            singularLabel="cotizacion"
+            pluralLabel="cotizaciones"
+            onPageChange={setCurrentPage}
+          />
         </CardContent>
       </Card>
 

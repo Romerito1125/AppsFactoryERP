@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -15,6 +16,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { DeliveriesService } from './deliveries.service';
 import { CreateDeliveryDto } from './dto/create-delivery.dto';
+import { ListDeliveriesQueryDto } from './dto/list-deliveries-query.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { UpdateDeliveryDto } from './dto/update-delivery.dto';
 
@@ -25,8 +27,8 @@ export class DeliveriesController {
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
-  findAll() {
-    return this.deliveriesService.findAll();
+  findAll(@Query() query: ListDeliveriesQueryDto) {
+    return this.deliveriesService.findAll(query);
   }
 
   @Get(':id')

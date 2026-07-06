@@ -4,6 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import {
   CreateBankAccountDto,
@@ -14,11 +18,18 @@ import { FilterBankAccountsDto } from './dto/filter-bank-accounts.dto';
 @Injectable()
 export class CuentasBancariasService {
   constructor(private readonly prisma: PrismaService) {}
-  findAll(filter: FilterBankAccountsDto) {
-    return this.prisma.bankAccount.findMany({
-      where: this.getStatusWhere(filter.estado),
-      orderBy: { id: 'asc' },
-    });
+  async findAll(filter: FilterBankAccountsDto) {
+    const where = {
+      ...this.getStatusWhere(filter.estado),
+      ...this.getSearchWhere(filter.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(filter);
+    const [total, data] = await Promise.all([
+      this.prisma.bankAccount.count({ where }),
+      this.prisma.bankAccount.findMany({ where, orderBy: { id: 'asc' }, skip, take }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
   async findOne(id: number) {
     this.ensurePositiveId(id);
@@ -65,5 +76,20 @@ export class CuentasBancariasService {
     }
 
     return { isActive: true };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { name: { contains: q, mode: 'insensitive' as const } },
+        { bankName: { contains: q, mode: 'insensitive' as const } },
+        { accountNumber: { contains: q, mode: 'insensitive' as const } },
+        { accountType: { contains: q, mode: 'insensitive' as const } },
+      ],
+    };
   }
 }

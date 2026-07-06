@@ -122,7 +122,11 @@ export function ModuleFormDialog({
                       control={control}
                       render={({ field: controllerField }) => (
                         <Select
-                          value={controllerField.value ? String(controllerField.value) : undefined}
+                          value={
+                            controllerField.value === undefined || controllerField.value === null
+                              ? undefined
+                              : String(controllerField.value)
+                          }
                           onValueChange={(value) =>
                             controllerField.onChange(field.valueType === 'number' ? Number(value) : value)
                           }

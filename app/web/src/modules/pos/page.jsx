@@ -1,9 +1,12 @@
-import { useDeferredValue, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   LogOut,
   Minus,
+  Pencil,
   Plus,
   ReceiptText,
   Search,
@@ -36,8 +39,16 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { apiClient } from '@/lib/api-client'
-import { formatCurrency, formatDate, formatNumber } from '@/lib/format'
+import { formatCurrency, formatDate, formatInvoiceSource, formatNumber, formatRole } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 function PosSkeleton() {
@@ -57,12 +68,16 @@ function getDefaultPrice(product) {
   return getActivePrices(product).find((price) => price.isDefault) ?? getActivePrices(product)[0] ?? null
 }
 
-function getTotalStock(product) {
-  return (product?.warehouses ?? []).reduce((sum, item) => sum + Number(item.quantity ?? 0), 0)
+function getWarehouseStock(product, warehouseId) {
+  if (!warehouseId) {
+    return (product?.warehouses ?? []).reduce((sum, item) => sum + Number(item.quantity ?? 0), 0)
+  }
+  const entry = (product?.warehouses ?? []).find((w) => w.warehouseId === warehouseId)
+  return entry ? Number(entry.quantity ?? 0) : 0
 }
 
-function getStockTone(product) {
-  const stock = getTotalStock(product)
+function getStockToneForWarehouse(product, warehouseId) {
+  const stock = getWarehouseStock(product, warehouseId)
   const minimumStock = Number(product.minimumStock ?? 0)
 
   if (stock <= minimumStock) {
@@ -80,9 +95,23 @@ function getStockTone(product) {
   }
 
   return {
-    label: 'OK',
-    className: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+    label: 'Disponible',
+    className: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
   }
+}
+
+function getInvoiceActorLabel(invoice) {
+  if (invoice.source === 'APP_MOVIL') {
+    return 'App movil'
+  }
+
+  if (invoice.createdByRole || invoice.createdByUsername) {
+    return [invoice.createdByRole ? formatRole(invoice.createdByRole) : null, invoice.createdByUsername]
+      .filter(Boolean)
+      .join(' · ')
+  }
+
+  return formatInvoiceSource(invoice.source)
 }
 
 function printReceipt(sale) {
@@ -129,6 +158,8 @@ function printReceipt(sale) {
           <p><strong>Factura:</strong> ${sale.consecutive}</p>
           <p><strong>Cliente:</strong> ${sale.client.firstName} ${sale.client.lastName}</p>
           <p><strong>Fecha:</strong> ${formatDate(sale.createdAt)}</p>
+          <p><strong>Origen:</strong> ${formatInvoiceSource(sale.source)}</p>
+          <p><strong>Realizada por:</strong> ${getInvoiceActorLabel(sale)}</p>
           <p><strong>Modo:</strong> ${sale.saleMode === 'credito' ? 'Credito' : 'Contado'}</p>
         </div>
         <div class="section">
@@ -162,10 +193,12 @@ export function PosPage() {
   const { user, logout } = useAuth()
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
-  const [category, setCategory] = useState('TODOS')
+  const [productTypeId, setProductTypeId] = useState(null)
+  const [visibleLimit, setVisibleLimit] = useState(24)
   const [saleMode, setSaleMode] = useState('contado')
-  const [selectedClientId, setSelectedClientId] = useState(null)
+  const [selectedClientId, setSelectedClientId] = useState('NO_CLIENT')
   const [selectedAccountId, setSelectedAccountId] = useState(null)
+  const [selectedUserId, setSelectedUserId] = useState(() => user?.sub ?? null)
   const [creditDueDate, setCreditDueDate] = useState(() => {
     const due = new Date()
     due.setDate(due.getDate() + 15)
@@ -175,31 +208,213 @@ export function PosPage() {
   const [lastSale, setLastSale] = useState(null)
   const [rightTab, setRightTab] = useState('ticket')
 
+  // States for updating/creating price
+  const [editingPrice, setEditingPrice] = useState(null) // holds { productId, priceId, name, price, product }
+  const [newPriceName, setNewPriceName] = useState('')
+  const [newPriceValue, setNewPriceValue] = useState('')
+  const [newPriceUnit, setNewPriceUnit] = useState('UND')
+  const [priceChangeReason, setPriceChangeReason] = useState('')
+  const [priceDialogMode, setPriceDialogMode] = useState('edit') // 'edit' or 'create'
+
+  // Warehouse selection
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState(null)
+
+  const itemsPerPage = 24
+
+  useEffect(() => {
+    setVisibleLimit(24)
+  }, [deferredSearch, productTypeId, selectedWarehouseId])
+
+  useEffect(() => {
+    if (user?.sub && !selectedUserId) {
+      setSelectedUserId(user.sub)
+    }
+  }, [user, selectedUserId])
+
   const posQuery = useQuery({
     queryKey: ['pos-data'],
     queryFn: async () => {
-      const [products, clients, accounts, invoices] = await Promise.all([
-        apiClient.get('/productos'),
-        apiClient.get('/clientes'),
-        apiClient.get('/cuentas-bancarias'),
-        apiClient.get('/facturas'),
+      const [productTypes, clients, accounts, invoices, users, products, warehouses] = await Promise.all([
+        apiClient.getAllPages('/tipos-producto'),
+        apiClient.getAllPages('/clientes'),
+        apiClient.getAllPages('/cuentas-bancarias'),
+        apiClient.getAllPages('/facturas'),
+        apiClient.getAllPages('/usuarios'),
+        apiClient.getAllPages('/productos', { estado: 'activos', stockStatus: 'CON_STOCK' }),
+        apiClient.getAllPages('/bodegas'),
       ])
 
-      return { products, clients, accounts, invoices }
+      return { productTypes, clients, accounts, invoices, users, products, warehouses }
     },
   })
 
-  const products = useMemo(() => posQuery.data?.products ?? [], [posQuery.data?.products])
+  const handleSearchChange = (value) => {
+    setSearch(value)
+    if (value.trim() !== '') {
+      setProductTypeId(null)
+    }
+  }
+
+  const handleCategoryClick = (id) => {
+    setProductTypeId(id)
+    setSearch('')
+  }
+
+  const handleScroll = (e) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget
+    if (scrollHeight - scrollTop - clientHeight < 120) {
+      setVisibleLimit((prev) => Math.min(totalProducts, prev + 24))
+    }
+  }
+
+  const openEditPriceDialog = (product, price) => {
+    setEditingPrice({
+      productId: product.id,
+      priceId: price.id,
+      name: price.name,
+      price: price.price,
+      product,
+    })
+    setPriceDialogMode('edit')
+    setNewPriceName(price.name)
+    setNewPriceValue(String(price.price))
+    setNewPriceUnit(price.unit ?? 'UND')
+    setPriceChangeReason('')
+  }
+
+  const updatePriceMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingPrice) return
+
+      if (priceDialogMode === 'edit') {
+        const updated = await apiClient.patch(`/precios-producto/${editingPrice.priceId}`, {
+          price: Number(newPriceValue),
+          reason: priceChangeReason || 'Ajuste desde el POS',
+        })
+        return { mode: 'edit', data: updated }
+      } else {
+        const created = await apiClient.post(`/productos/${editingPrice.productId}/precios`, {
+          name: newPriceName,
+          price: Number(newPriceValue),
+          unit: newPriceUnit,
+          quantity: 1,
+          isActive: true,
+          isDefault: false,
+        })
+        return { mode: 'create', data: created }
+      }
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['pos-data'] })
+
+      if (result.mode === 'edit') {
+        setCart((current) =>
+          current.map((item) => {
+            if (item.productId === editingPrice.productId) {
+              const updatedPrices = item.product.prices.map((p) =>
+                p.id === editingPrice.priceId ? { ...p, price: Number(newPriceValue) } : p,
+              )
+              return {
+                ...item,
+                product: { ...item.product, prices: updatedPrices },
+              }
+            }
+            return item
+          }),
+        )
+        toast.success('Precio registrado actualizado correctamente')
+      } else {
+        const newPriceRecord = result.data
+        setCart((current) =>
+          current.map((item) => {
+            if (item.productId === editingPrice.productId) {
+              const updatedPrices = [...item.product.prices, newPriceRecord]
+              return {
+                ...item,
+                product: { ...item.product, prices: updatedPrices },
+              }
+            }
+            return item
+          }),
+        )
+        toast.success('Nuevo precio registrado creado correctamente')
+      }
+      setEditingPrice(null)
+    },
+    onError: (err) => {
+      toast.error('Error al guardar precio: ' + err.message)
+    },
+  })
+
+  const productTypes = useMemo(() => posQuery.data?.productTypes ?? [], [posQuery.data?.productTypes])
   const clients = useMemo(() => posQuery.data?.clients ?? [], [posQuery.data?.clients])
   const accounts = useMemo(() => (posQuery.data?.accounts ?? []).filter((account) => account.isActive !== false), [posQuery.data?.accounts])
   const recentInvoices = useMemo(() => (posQuery.data?.invoices ?? []).slice(0, 6), [posQuery.data?.invoices])
+  const users = useMemo(() => {
+    const rawUsers = posQuery.data?.users ?? []
+    return rawUsers.filter((u) => u.isActive && ['ADMIN', 'CAJERO', 'VENDEDOR'].includes(u.role))
+  }, [posQuery.data?.users])
 
-  const activeClientId = selectedClientId ?? clients[0]?.id ?? null
+  const warehouses = useMemo(() => (posQuery.data?.warehouses ?? []).filter((w) => w.isActive !== false), [posQuery.data?.warehouses])
+
+  const products = useMemo(() => {
+    const raw = posQuery.data?.products ?? []
+    return raw.filter((p) => getDefaultPrice(p) !== null)
+  }, [posQuery.data?.products])
+
+  const visibleProducts = useMemo(() => {
+    return products.filter((product) => {
+      // Filter out products with no stock in the selected warehouse (or total stock if none selected)
+      const stock = getWarehouseStock(product, selectedWarehouseId)
+      if (stock <= 0) {
+        return false
+      }
+
+      const matchesCategory = !productTypeId ? true : product.productTypeId === productTypeId
+
+      const haystack = [product.name, product.brand, product.description, product.productType?.name]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+
+      const matchesSearch = haystack.includes(deferredSearch.toLowerCase())
+
+      return matchesCategory && matchesSearch
+    })
+  }, [products, productTypeId, deferredSearch, selectedWarehouseId])
+
+  const totalProducts = visibleProducts.length
+
+  const productsData = useMemo(() => {
+    return visibleProducts.slice(0, visibleLimit)
+  }, [visibleProducts, visibleLimit])
+
+  const activeClientId = selectedClientId ?? 'NO_CLIENT'
   const activeAccountId = selectedAccountId ?? accounts.find((account) => account.isActive !== false)?.id ?? null
 
   const checkoutMutation = useMutation({
     mutationFn: async () => {
-      if (!activeClientId) {
+      let targetClientId = activeClientId
+
+      if (activeClientId === 'NO_CLIENT') {
+        let consumerFinal = clients.find((c) => c.identification === 'CONSUMIDOR_FINAL')
+        if (!consumerFinal) {
+          try {
+            consumerFinal = await apiClient.post('/clientes', {
+              identification: 'CONSUMIDOR_FINAL',
+              firstName: 'Consumidor',
+              lastName: 'Final',
+              clientType: 'MINORISTA',
+            })
+            queryClient.invalidateQueries({ queryKey: ['pos-data'] })
+          } catch (err) {
+            throw new Error('No se pudo crear el cliente Consumidor Final: ' + err.message)
+          }
+        }
+        targetClientId = consumerFinal.id
+      }
+
+      if (!targetClientId) {
         throw new Error('Selecciona un cliente para continuar')
       }
 
@@ -216,7 +431,8 @@ export function PosPage() {
       }
 
       const invoicePayload = {
-        clientId: activeClientId,
+        clientId: targetClientId,
+        createdByUserId: selectedUserId ?? undefined,
         source: 'POS',
         items: cart.map((item) => ({
           productId: item.productId,
@@ -259,30 +475,14 @@ export function PosPage() {
     },
   })
 
-  const categories = useMemo(
-    () => ['TODOS', ...new Set(products.map((product) => product.productType?.name).filter(Boolean))],
-    [products],
-  )
-
-  const visibleProducts = useMemo(
-    () =>
-      products.filter((product) => {
-        const matchesCategory = category === 'TODOS' ? true : product.productType?.name === category
-        const haystack = [product.name, product.brand, product.description, product.productType?.name]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-
-        return matchesCategory && haystack.includes(deferredSearch.toLowerCase())
-      }),
-    [category, deferredSearch, products],
-  )
-
   const cartItems = useMemo(
     () =>
       cart
         .map((item) => {
-          const product = products.find((entry) => entry.id === item.productId)
+          const product = item.product
+          if (!product) {
+            return null
+          }
           const price = getActivePrices(product).find((entry) => entry.id === item.productPriceId) ?? getDefaultPrice(product)
 
           if (!product || !price) {
@@ -303,7 +503,7 @@ export function PosPage() {
           }
         })
         .filter(Boolean),
-    [cart, products],
+    [cart],
   )
 
   const totals = cartItems.reduce(
@@ -336,7 +536,7 @@ export function PosPage() {
         )
       }
 
-      return [...current, { productId: product.id, productPriceId: defaultPrice.id, quantity: 1 }]
+      return [...current, { productId: product.id, productPriceId: defaultPrice.id, quantity: 1, product }]
     })
   }
 
@@ -426,26 +626,53 @@ export function PosPage() {
               </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-[1fr_auto]">
-              <div className="relative">
+            <div className="grid gap-4 md:grid-cols-[1.5fr_1fr]">
+              <div className="relative w-full">
                 <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Buscar por producto, marca o categoria..."
-                  className="h-11 rounded-xl pl-9"
+                  onChange={(event) => handleSearchChange(event.target.value)}
+                  placeholder="Buscar por producto, marca..."
+                  className="h-11 rounded-xl pl-9 w-full text-sm md:text-base"
                 />
               </div>
-              <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden pb-1 max-w-full shrink-0">
-                {categories.map((item) => (
+              <Select
+                value={selectedWarehouseId ? String(selectedWarehouseId) : 'ALL_WAREHOUSES'}
+                onValueChange={(value) => {
+                  setSelectedWarehouseId(value === 'ALL_WAREHOUSES' ? null : Number(value))
+                  setVisibleLimit(24)
+                }}
+              >
+                <SelectTrigger className="h-11 rounded-xl bg-background/50 text-sm font-medium cursor-pointer">
+                  <SelectValue placeholder="Todas las Bodegas (Stock Global)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL_WAREHOUSES" className="text-sm">Todas las Bodegas (Stock Global)</SelectItem>
+                  {warehouses.map((w) => (
+                    <SelectItem key={w.id} value={String(w.id)} className="text-sm">
+                      {w.location}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <div className="flex gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden pb-1 w-full shrink-0">
+                <Button
+                  type="button"
+                  variant={!productTypeId ? 'default' : 'outline'}
+                  onClick={() => handleCategoryClick(null)}
+                  className="rounded-full shrink-0 h-9"
+                >
+                  Todos
+                </Button>
+                {productTypes.map((pt) => (
                   <Button
-                    key={item}
+                    key={pt.id}
                     type="button"
-                    variant={category === item ? 'default' : 'outline'}
-                    onClick={() => setCategory(item)}
+                    variant={productTypeId === pt.id ? 'default' : 'outline'}
+                    onClick={() => handleCategoryClick(pt.id)}
                     className="rounded-full shrink-0 h-9"
                   >
-                    {item === 'TODOS' ? 'Todos' : item}
+                    {pt.name}
                   </Button>
                 ))}
               </div>
@@ -454,54 +681,89 @@ export function PosPage() {
         </Card>
 
         {/* Scrollable Catalog Grid */}
-        <div className="flex-1 overflow-y-auto min-h-0 pr-1 pb-4 select-none">
-          <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
-            {visibleProducts.map((product) => {
-              const defaultPrice = getDefaultPrice(product)
-              const stockTone = getStockTone(product)
-              const totalStock = getTotalStock(product)
+        <div className="flex-1 overflow-y-auto min-h-0 pr-1 pb-4 select-none flex flex-col justify-between" onScroll={handleScroll}>
+          {posQuery.isLoading ? (
+            <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <Skeleton key={index} className="h-64 rounded-[1.5rem]" />
+              ))}
+            </div>
+          ) : posQuery.isError ? (
+            <div className="rounded-2xl border border-destructive/25 bg-destructive/5 p-6 text-sm text-destructive">
+              {posQuery.error.message}
+            </div>
+          ) : productsData.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
+              <Search className="size-8 mb-2 opacity-50" />
+              <p className="font-semibold text-sm">No se encontraron productos</p>
+              <p className="text-xs">Prueba con otra búsqueda o categoría.</p>
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+              {productsData.map((product) => {
+                const defaultPrice = getDefaultPrice(product)
+                const totalStock = getWarehouseStock(product, selectedWarehouseId)
+                const stockTone = getStockToneForWarehouse(product, selectedWarehouseId)
 
-              return (
-                <button
-                  key={product.id}
-                  type="button"
-                  onClick={() => addProduct(product)}
-                  disabled={!defaultPrice || totalStock <= 0}
-                  className={cn(
-                    'rounded-[1.5rem] border border-border/70 bg-card p-4 text-left shadow-sm shadow-primary/5 transition hover:border-primary/35 hover:bg-primary/5 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-55',
-                  )}
-                >
-                  <ProductImage
-                    src={product.imageUrl}
-                    alt={product.name}
-                    className="aspect-[4/3] w-full rounded-[1.25rem]"
-                    iconClassName="size-7"
-                  />
-                  <div className="mt-4 flex items-start justify-between gap-3">
-                    <div>
-                      <p className="line-clamp-1 font-medium text-foreground">{product.name}</p>
-                      <p className="line-clamp-1 text-xs text-muted-foreground">
-                        {product.brand} · {product.productType?.name ?? 'Sin tipo'}
-                      </p>
+                return (
+                  <button
+                    key={product.id}
+                    type="button"
+                    onClick={() => addProduct(product)}
+                    disabled={!defaultPrice || totalStock <= 0}
+                    className={cn(
+                      'rounded-[1.5rem] border border-border/70 bg-card p-4 text-left shadow-sm shadow-primary/5 transition hover:border-primary/35 hover:bg-primary/5 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-55 flex flex-col justify-between h-72 md:h-80 cursor-pointer',
+                    )}
+                  >
+                    <ProductImage
+                      src={product.imageUrl}
+                      alt={product.name}
+                      className="aspect-[4/3] w-full rounded-[1.25rem] object-cover"
+                      iconClassName="size-7"
+                    />
+                    <div className="mt-4 flex items-start justify-between gap-3 w-full">
+                      <div className="min-w-0 flex-1">
+                        <p className="line-clamp-1 font-semibold text-sm md:text-base tracking-tight text-foreground">{product.name}</p>
+                        <p className="line-clamp-1 text-xs text-muted-foreground mt-0.5">
+                          {product.brand} · {product.productType?.name ?? 'Sin tipo'}
+                        </p>
+                      </div>
+                      <Badge variant="outline" className={cn("text-[10px] md:text-xs shrink-0 px-2 py-0.5", stockTone.className)}>
+                        {stockTone.label}
+                      </Badge>
                     </div>
-                    <Badge variant="outline" className={stockTone.className}>
-                      {stockTone.label}
-                    </Badge>
-                  </div>
-                  <div className="mt-3 flex items-end justify-between gap-3">
-                    <div>
-                      <p className="text-lg font-semibold text-foreground">
-                        {defaultPrice ? formatCurrency(defaultPrice.price) : 'Sin precio'}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Stock {formatNumber(totalStock)}</p>
+                    <div className="mt-3 flex items-end justify-between gap-3 w-full">
+                      <div>
+                        <p className="text-base md:text-lg font-bold text-foreground">
+                          {defaultPrice ? formatCurrency(defaultPrice.price) : 'Sin precio'}
+                        </p>
+                        <p className="text-[11px] md:text-xs text-muted-foreground mt-0.5">Stock: {formatNumber(totalStock)}</p>
+                      </div>
+                      <div className="rounded-xl bg-primary px-3.5 py-2 text-xs md:text-sm font-semibold text-primary-foreground shadow-sm shadow-primary/10 hover:bg-primary/90 transition-colors">
+                        Agregar
+                      </div>
                     </div>
-                    <div className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-                      Agregar
-                    </div>
-                  </div>
-                </button>
-              )
-            })}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Status indicators and Lazy load button */}
+          <div className="flex flex-col sm:flex-row items-center justify-between border-t border-border/40 pt-4 mt-6 gap-4 shrink-0">
+            <p className="text-xs md:text-sm font-medium text-muted-foreground">
+              Mostrando <span className="font-semibold text-foreground">{productsData.length}</span> de <span className="font-semibold text-foreground">{totalProducts}</span> productos
+            </p>
+            {totalProducts > visibleLimit && (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 px-5 rounded-xl cursor-pointer hover:bg-primary/5 hover:text-primary border-primary/20 text-xs md:text-sm font-semibold transition-all duration-200"
+                onClick={() => setVisibleLimit((prev) => Math.min(totalProducts, prev + 24))}
+              >
+                Cargar más productos
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -540,18 +802,43 @@ export function PosPage() {
                 <div className="grid gap-1.5">
                   <Label className="text-xs font-semibold text-muted-foreground">Cliente</Label>
                   <Select
-                    value={activeClientId ? String(activeClientId) : undefined}
-                    onValueChange={(value) => setSelectedClientId(Number(value))}
+                    value={selectedClientId ? String(selectedClientId) : 'NO_CLIENT'}
+                    onValueChange={(value) => setSelectedClientId(value === 'NO_CLIENT' ? 'NO_CLIENT' : Number(value))}
                   >
                     <SelectTrigger className="h-10 rounded-xl bg-background/50">
                       <SelectValue placeholder="Selecciona un cliente" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="NO_CLIENT">Sin cliente (Consumidor Final)</SelectItem>
                       {clients.map((client) => (
                         <SelectItem key={client.id} value={String(client.id)}>
                           {`${client.firstName} ${client.lastName} · ${client.identification}`}
                         </SelectItem>
                       ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid gap-1.5">
+                  <Label className="text-xs font-semibold text-muted-foreground">Vendedor / Cajero de la caja</Label>
+                  <Select
+                    value={selectedUserId ? String(selectedUserId) : undefined}
+                    onValueChange={(value) => setSelectedUserId(Number(value))}
+                  >
+                    <SelectTrigger className="h-10 rounded-xl bg-background/50">
+                      <SelectValue placeholder="Selecciona el vendedor/cajero" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {users.map((u) => {
+                        const displayName = u.employee
+                          ? `${u.employee.firstName} ${u.employee.lastName}`
+                          : u.username
+                        return (
+                          <SelectItem key={u.id} value={String(u.id)}>
+                            {`${displayName} (${formatRole(u.role)})`}
+                          </SelectItem>
+                        )
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
@@ -607,69 +894,81 @@ export function PosPage() {
                     const activePrices = getActivePrices(item.product)
 
                     return (
-                      <div key={`${item.productId}:${item.productPriceId}`} className="rounded-2xl border border-border/50 bg-muted/15 p-3 hover:bg-muted/25 transition-colors">
-                        <div className="flex items-start gap-3">
-                          <ProductImage src={item.product.imageUrl} alt={item.product.name} className="size-16 rounded-xl shrink-0" iconClassName="size-4" />
+                      <div key={`${item.productId}:${item.productPriceId}`} className="rounded-2xl border border-border/50 bg-muted/15 p-4 hover:bg-muted/25 transition-colors">
+                        <div className="flex items-start gap-4">
+                          <ProductImage src={item.product.imageUrl} alt={item.product.name} className="size-20 rounded-xl shrink-0" iconClassName="size-6" />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
-                                <p className="line-clamp-1 font-semibold text-sm text-foreground">{item.product.name}</p>
-                                <p className="line-clamp-1 text-[11px] text-muted-foreground">{item.product.brand}</p>
+                                <p className="line-clamp-1 font-semibold text-sm md:text-base text-foreground">{item.product.name}</p>
+                                <p className="line-clamp-1 text-xs text-muted-foreground mt-0.5">{item.product.brand}</p>
                               </div>
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="size-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md shrink-0"
+                                className="size-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl shrink-0 cursor-pointer"
                                 onClick={() => updateQuantity(item.productId, item.productPriceId, 0)}
                               >
-                                <Trash2 className="size-3.5" />
+                                <Trash2 className="size-4" />
                               </Button>
                             </div>
 
-                            <div className="mt-3 grid gap-2">
-                              <Select
-                                value={String(item.price.id)}
-                                onValueChange={(value) => updatePrice(item.productId, item.productPriceId, value)}
-                              >
-                                <SelectTrigger className="h-8 text-xs rounded-lg">
-                                  <SelectValue placeholder="Precio" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {activePrices.map((price) => (
-                                    <SelectItem key={price.id} value={String(price.id)} className="text-xs">
-                                      {`${price.name} · ${formatCurrency(price.price)}`}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                            <div className="mt-4 grid gap-2.5">
+                              <div className="flex items-center gap-2">
+                                <Select
+                                  value={String(item.price.id)}
+                                  onValueChange={(value) => updatePrice(item.productId, item.productPriceId, value)}
+                                >
+                                  <SelectTrigger className="h-10 text-xs md:text-sm rounded-xl flex-1 bg-background/50 cursor-pointer">
+                                    <SelectValue placeholder="Precio" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {activePrices.map((price) => (
+                                      <SelectItem key={price.id} value={String(price.id)} className="text-xs md:text-sm">
+                                        {`${price.name} · ${formatCurrency(price.price)}`}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="size-10 shrink-0 hover:bg-primary/5 hover:text-primary rounded-xl border-border/70 cursor-pointer"
+                                  onClick={() => openEditPriceDialog(item.product, item.price)}
+                                  title="Editar precio registrado"
+                                >
+                                  <Pencil className="size-4" />
+                                </Button>
+                              </div>
 
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-1.5 bg-background border border-border/70 rounded-lg p-0.5 shadow-sm">
+                              <div className="flex items-center justify-between gap-2 mt-1">
+                                <div className="flex items-center gap-1.5 bg-background border border-border/70 rounded-xl p-1 shadow-sm">
                                   <Button
                                     type="button"
                                     variant="ghost"
-                                    className="size-7 p-0 hover:bg-muted rounded-md shrink-0"
+                                    className="size-8 p-0 hover:bg-muted rounded-lg shrink-0 cursor-pointer"
                                     onClick={() => updateQuantity(item.productId, item.productPriceId, item.quantity - 1)}
                                   >
-                                    <Minus className="size-3" />
+                                    <Minus className="size-3.5" />
                                   </Button>
-                                  <div className="min-w-8 text-center text-xs font-semibold text-foreground">
+                                  <div className="min-w-8 text-center text-xs md:text-sm font-bold text-foreground">
                                     {formatNumber(item.quantity)}
                                   </div>
                                   <Button
                                     type="button"
                                     variant="ghost"
-                                    className="size-7 p-0 hover:bg-muted rounded-md shrink-0"
+                                    className="size-8 p-0 hover:bg-muted rounded-lg shrink-0 cursor-pointer"
                                     onClick={() => updateQuantity(item.productId, item.productPriceId, item.quantity + 1)}
                                   >
-                                    <Plus className="size-3" />
+                                    <Plus className="size-3.5" />
                                   </Button>
                                 </div>
 
                                 <div className="text-right">
-                                  <p className="text-[10px] text-muted-foreground leading-none mb-0.5">Total</p>
-                                  <p className="font-semibold text-xs text-foreground">{formatCurrency(item.total)}</p>
+                                  <p className="text-[10px] text-muted-foreground leading-none mb-1">Subtotal</p>
+                                  <p className="font-bold text-xs md:text-sm text-foreground">{formatCurrency(item.total)}</p>
                                 </div>
                               </div>
                             </div>
@@ -733,11 +1032,13 @@ export function PosPage() {
                           {lastSale.consecutive}
                         </Badge>
                       </div>
-                      <div className="text-muted-foreground space-y-1">
-                        <p>Fecha: {formatDate(lastSale.createdAt)}</p>
-                        <p>Modo: {lastSale.saleMode === 'credito' ? 'Venta a crédito registrada' : 'Venta de contado'}</p>
-                        <p className="font-semibold text-foreground text-sm pt-1">Total: {formatCurrency(lastSale.total)}</p>
-                      </div>
+                        <div className="text-muted-foreground space-y-1">
+                          <p>Fecha: {formatDate(lastSale.createdAt)}</p>
+                          <p>Origen: {formatInvoiceSource(lastSale.source)}</p>
+                          <p>Realizada por: {getInvoiceActorLabel(lastSale)}</p>
+                          <p>Modo: {lastSale.saleMode === 'credito' ? 'Venta a crédito registrada' : 'Venta de contado'}</p>
+                          <p className="font-semibold text-foreground text-sm pt-1">Total: {formatCurrency(lastSale.total)}</p>
+                        </div>
                       <Button
                         variant="outline"
                         size="sm"
@@ -763,10 +1064,13 @@ export function PosPage() {
                     recentInvoices.map((invoice) => (
                       <div key={invoice.id} className="rounded-2xl border border-border/50 bg-muted/15 p-4 text-xs hover:bg-muted/25 transition-colors">
                         <div className="flex items-center justify-between gap-3">
-                          <div>
+                         <div>
                             <p className="font-semibold text-sm text-foreground">{invoice.consecutive}</p>
                             <p className="text-[11px] text-muted-foreground">
                               {invoice.client.firstName} {invoice.client.lastName}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {formatInvoiceSource(invoice.source)} · {getInvoiceActorLabel(invoice)}
                             </p>
                           </div>
                           <Badge variant={invoice.status === 'ACTIVA' ? 'default' : 'secondary'} className="text-[10px]">
@@ -788,6 +1092,121 @@ export function PosPage() {
           )}
         </Card>
       </div>
+
+      <Dialog open={editingPrice !== null} onOpenChange={(open) => !open && setEditingPrice(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Administrar precios del producto</DialogTitle>
+            <DialogDescription>
+              Configura los precios para <strong>{editingPrice?.product?.name}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Tabs
+            value={priceDialogMode}
+            onValueChange={(val) => {
+              setPriceDialogMode(val)
+              if (val === 'create') {
+                setNewPriceName('')
+                setNewPriceValue('')
+                setNewPriceUnit('UND')
+              } else {
+                setNewPriceName(editingPrice?.name ?? '')
+                setNewPriceValue(String(editingPrice?.price ?? ''))
+                setNewPriceUnit(editingPrice?.unit ?? 'UND')
+              }
+            }}
+            className="w-full mt-2"
+          >
+            <TabsList className="grid w-full grid-cols-2 mb-4 h-9">
+              <TabsTrigger value="edit" className="text-xs cursor-pointer">Modificar actual</TabsTrigger>
+              <TabsTrigger value="create" className="text-xs cursor-pointer">Crear nuevo precio</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-1.5">
+              <Label htmlFor="price-name" className="text-xs font-semibold text-muted-foreground">
+                Nombre del precio
+              </Label>
+              <Input
+                id="price-name"
+                value={priceDialogMode === 'edit' ? (editingPrice?.name ?? '') : newPriceName}
+                onChange={(e) => priceDialogMode === 'create' && setNewPriceName(e.target.value)}
+                disabled={priceDialogMode === 'edit'}
+                placeholder="Ej. Distribuidor, Oferta Fin de Semana"
+                className={cn("h-10 rounded-xl", priceDialogMode === 'edit' && "bg-muted text-muted-foreground")}
+              />
+            </div>
+
+            <div className="grid gap-1.5">
+              <Label htmlFor="price-value" className="text-xs font-semibold text-muted-foreground">
+                Valor del precio ($)
+              </Label>
+              <Input
+                id="price-value"
+                type="number"
+                value={newPriceValue}
+                onChange={(e) => setNewPriceValue(e.target.value)}
+                placeholder="Ej. 15000"
+                className="h-10 rounded-xl"
+              />
+            </div>
+
+            {priceDialogMode === 'edit' ? (
+              <div className="grid gap-1.5">
+                <Label htmlFor="price-reason" className="text-xs font-semibold text-muted-foreground">
+                  Motivo del cambio
+                </Label>
+                <Input
+                  id="price-reason"
+                  value={priceChangeReason}
+                  onChange={(e) => setPriceChangeReason(e.target.value)}
+                  placeholder="Ej. Ajuste de lista, alza de proveedor..."
+                  className="h-10 rounded-xl"
+                />
+              </div>
+            ) : (
+              <div className="grid gap-1.5">
+                <Label htmlFor="price-unit" className="text-xs font-semibold text-muted-foreground">
+                  Unidad
+                </Label>
+                <Select value={newPriceUnit} onValueChange={setNewPriceUnit}>
+                  <SelectTrigger id="price-unit" className="h-10 rounded-xl bg-background/50">
+                    <SelectValue placeholder="Selecciona la unidad" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="UND">Unidad (UND)</SelectItem>
+                    <SelectItem value="KG">Kilogramo (KG)</SelectItem>
+                    <SelectItem value="LT">Litro (LT)</SelectItem>
+                    <SelectItem value="GR">Gramo (GR)</SelectItem>
+                    <SelectItem value="ML">Mililitro (ML)</SelectItem>
+                    <SelectItem value="MTS">Metro (MTS)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="flex items-center gap-2 mt-4">
+            <Button variant="outline" onClick={() => setEditingPrice(null)} className="rounded-xl h-10">
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => updatePriceMutation.mutate()}
+              disabled={
+                updatePriceMutation.isPending ||
+                !newPriceValue ||
+                Number(newPriceValue) <= 0 ||
+                (priceDialogMode === 'create' && !newPriceName.trim())
+              }
+              className="rounded-xl h-10 bg-primary text-primary-foreground font-semibold cursor-pointer"
+            >
+              {updatePriceMutation.isPending ? 'Guardando...' : 'Guardar precio'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

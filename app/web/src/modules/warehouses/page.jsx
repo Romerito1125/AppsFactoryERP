@@ -49,7 +49,8 @@ const warehousesConfig = {
   getDefaultValues: (_, record) => ({
     location: record?.location ?? '',
   }),
-  fetchRecords: (status) => apiClient.get('/bodegas', { estado: toApiStatus(status) }),
+  fetchRecords: ({ status, search, page, limit }) =>
+    apiClient.get('/bodegas', { estado: toApiStatus(status), q: search, page, limit }),
   createRecord: (payload) => apiClient.post('/bodegas', payload),
   updateRecord: (id, payload) => apiClient.patch(`/bodegas/${id}`, payload),
   archiveRecord: (id) => apiClient.delete(`/bodegas/${id}`),

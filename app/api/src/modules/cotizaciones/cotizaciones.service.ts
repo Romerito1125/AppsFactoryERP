@@ -4,7 +4,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InvoiceStatus, QuoteStatus } from '@prisma/client';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { ListQuotesQueryDto } from './dto/list-quotes-query.dto';
 import {
   CreateQuoteDto,
   UpdateQuoteDto,
@@ -14,11 +19,24 @@ import {
 @Injectable()
 export class CotizacionesService {
   constructor(private readonly prisma: PrismaService) {}
-  findAll() {
-    return this.prisma.quote.findMany({
-      include: this.include,
-      orderBy: { id: 'desc' },
-    });
+  async findAll(query: ListQuotesQueryDto) {
+    const where = {
+      ...this.getStatusWhere(query.status),
+      ...this.getSearchWhere(query.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.quote.count({ where }),
+      this.prisma.quote.findMany({
+        where,
+        include: this.include,
+        orderBy: { id: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
   async findOne(id: number) {
     const quote = await this.prisma.quote.findUnique({
@@ -167,5 +185,25 @@ export class CotizacionesService {
   }
   private generateConsecutive(prefix: string) {
     return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  }
+
+  private getStatusWhere(status?: ListQuotesQueryDto['status']) {
+    if (!status) return undefined;
+    return { status };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { consecutive: { contains: q, mode: 'insensitive' as const } },
+        { client: { firstName: { contains: q, mode: 'insensitive' as const } } },
+        { client: { lastName: { contains: q, mode: 'insensitive' as const } } },
+        { client: { identification: { contains: q, mode: 'insensitive' as const } } },
+      ],
+    };
   }
 }

@@ -21,12 +21,14 @@ import { ReferralsModule } from './modules/referrals/referrals.module';
 import { TagsModule } from './modules/tags/tags.module';
 import { UsuariosModule } from './modules/usuarios/usuarios.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { NotificacionesModule } from './modules/notificaciones/notificaciones.module';
 import { TiendaModule } from './modules/tienda/tienda.module';
 
 @Module({
   imports: [
     PrismaModule,
     AuthModule,
+    NotificacionesModule,
     UsuariosModule,
     ClientesModule,
     ProductosModule,

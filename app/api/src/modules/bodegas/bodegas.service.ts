@@ -4,6 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateWarehouseDto } from './dto/create-warehouse.dto';
 import { FilterWarehousesDto } from './dto/filter-warehouses.dto';
@@ -13,11 +17,18 @@ import { UpdateWarehouseDto } from './dto/update-warehouse.dto';
 export class BodegasService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll(filter: FilterWarehousesDto) {
-    return this.prisma.warehouse.findMany({
-      where: this.getStatusWhere(filter.estado),
-      orderBy: { id: 'asc' },
-    });
+  async findAll(filter: FilterWarehousesDto) {
+    const where = {
+      ...this.getStatusWhere(filter.estado),
+      ...this.getSearchWhere(filter.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(filter);
+    const [total, data] = await Promise.all([
+      this.prisma.warehouse.count({ where }),
+      this.prisma.warehouse.findMany({ where, orderBy: { id: 'asc' }, skip, take }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findOne(id: number) {
@@ -73,6 +84,14 @@ export class BodegasService {
     if (status === RecordStatusQuery.TODOS) return undefined;
     if (status === RecordStatusQuery.INACTIVOS) return { isActive: false };
     return { isActive: true };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return { location: { contains: q, mode: 'insensitive' as const } };
   }
 
   private ensurePositiveId(id: number) {

@@ -9,29 +9,31 @@ import {
   formatRole,
   getRecordStatus,
   getRecordStatusVariant,
+  toApiStatus,
 } from '@/lib/format'
 import { CrudModulePage } from '@/modules/shared/crud-module-page'
 
 const roleOptions = [
   { value: 'ADMIN', label: 'Administrador' },
+  { value: 'CAJERO', label: 'Cajero' },
   { value: 'VENDEDOR', label: 'Vendedor' },
   { value: 'BODEGA', label: 'Bodega' },
   { value: 'CONTADOR', label: 'Contador' },
 ]
 
 const createSchema = z.object({
-  clientId: z.number({ message: 'Selecciona un cliente' }).int().positive('Selecciona un cliente'),
+  clientId: z.number().int().nonnegative('Selecciona un cliente valido').optional(),
   username: z.string().min(3, 'Minimo 3 caracteres'),
   password: z.string().min(6, 'Minimo 6 caracteres'),
-  role: z.enum(['ADMIN', 'VENDEDOR', 'BODEGA', 'CONTADOR']),
+  role: z.enum(['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR']),
   isActive: z.boolean(),
 })
 
 const updateSchema = z.object({
-  clientId: z.number({ message: 'Selecciona un cliente' }).int().positive('Selecciona un cliente'),
+  clientId: z.number().int().nonnegative('Selecciona un cliente valido').optional(),
   username: z.string().min(3, 'Minimo 3 caracteres'),
   password: z.string().optional(),
-  role: z.enum(['ADMIN', 'VENDEDOR', 'BODEGA', 'CONTADOR']),
+  role: z.enum(['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR']),
   isActive: z.boolean(),
 })
 
@@ -44,7 +46,7 @@ function createUsersConfig(clients) {
     key: 'usuarios',
     title: 'Usuarios del sistema',
     description:
-      'Gestiona los accesos internos vinculando cada usuario con un cliente activo del sistema.',
+      'Gestiona accesos internos por categoria operativa y, si aplica, vinculalos con clientes existentes.',
     singularLabel: 'Usuario',
     badgeLabel: 'Seguridad · Roles',
     createButtonLabel: 'Nuevo usuario',
@@ -55,7 +57,7 @@ function createUsersConfig(clients) {
     submitCreateLabel: 'Crear usuario',
     submitEditLabel: 'Guardar cambios',
     tableTitle: 'Directorio de accesos',
-    tableDescription: 'Vista centralizada de usuarios, clientes relacionados y disponibilidad.',
+    tableDescription: 'Vista centralizada de usuarios, categorias, cliente relacionado y disponibilidad.',
     searchPlaceholder: 'Buscar por username, rol o cliente...',
     emptyTitle: 'No hay usuarios para mostrar',
     emptyDescription: 'Crea el primer usuario para empezar a operar el sistema.',
@@ -67,18 +69,21 @@ function createUsersConfig(clients) {
     reactivateSuccessLabel: 'Usuario reactivado',
     reactivateConfirmationLabel:
       'El usuario volvera a quedar disponible para operar en el administrador.',
-    statusFilter: 'local',
+    statusFilter: 'api',
     fields: [
       {
         name: 'clientId',
         label: 'Cliente asociado',
         type: 'select',
         valueType: 'number',
-        placeholder: 'Selecciona un cliente activo',
-        options: clients.map((client) => ({
-          value: client.id,
-          label: `${client.firstName} ${client.lastName} · ${client.identification}`,
-        })),
+        placeholder: 'Interno sin cliente o selecciona uno',
+        options: [
+          { value: 0, label: 'Sin cliente · Usuario interno' },
+          ...clients.map((client) => ({
+            value: client.id,
+            label: `${client.firstName} ${client.lastName} · ${client.identification}`,
+          })),
+        ],
       },
       {
         name: 'username',
@@ -111,14 +116,18 @@ function createUsersConfig(clients) {
     createSchema,
     updateSchema,
     getDefaultValues: (_, record) => ({
-      clientId: record?.clientId ?? undefined,
+      clientId: record?.clientId ?? 0,
       username: record?.username ?? '',
       password: '',
-      role: record?.role ?? 'VENDEDOR',
+      role: record?.role ?? 'CAJERO',
       isActive: record?.isActive ?? true,
     }),
     prepareValues: (mode, values) => {
       const payload = { ...values }
+
+      if (!payload.clientId) {
+        payload.clientId = null
+      }
 
       if (mode === 'edit' && !payload.password) {
         delete payload.password
@@ -126,7 +135,8 @@ function createUsersConfig(clients) {
 
       return payload
     },
-    fetchRecords: () => apiClient.get('/usuarios'),
+    fetchRecords: ({ status, search, page, limit }) =>
+      apiClient.get('/usuarios', { estado: toApiStatus(status), q: search, page, limit }),
     createRecord: (payload) => apiClient.post('/usuarios', payload),
     updateRecord: (id, payload) => apiClient.patch(`/usuarios/${id}`, payload),
     archiveRecord: (id) => apiClient.delete(`/usuarios/${id}`),
@@ -135,11 +145,13 @@ function createUsersConfig(clients) {
       record.username,
       formatRole(record.role),
       clientsMap.get(record.clientId),
+      record.clientId ? null : 'interno sin cliente',
       String(record.clientId),
     ],
     getSummaryCards: ({ rawRecords }) => {
       const activeCount = rawRecords.filter((record) => record.isActive).length
       const adminCount = rawRecords.filter((record) => record.role === 'ADMIN').length
+      const cashierCount = rawRecords.filter((record) => record.role === 'CAJERO').length
 
       return [
         {
@@ -158,9 +170,9 @@ function createUsersConfig(clients) {
           help: 'Usuarios con mayor capacidad de administracion.',
         },
         {
-          label: 'Usuarios inactivos',
-          value: formatNumber(rawRecords.length - activeCount),
-          help: 'Accesos desactivados pero conservados en historial.',
+          label: 'Cajeros',
+          value: formatNumber(cashierCount),
+          help: 'Usuarios habilitados para operar el POS y ventas de mostrador.',
         },
       ]
     },
@@ -178,7 +190,7 @@ function createUsersConfig(clients) {
       {
         key: 'client',
         label: 'Cliente asociado',
-        render: (record) => clientsMap.get(record.clientId) ?? `Cliente #${record.clientId}`,
+        render: (record) => clientsMap.get(record.clientId) ?? (record.clientId ? `Cliente #${record.clientId}` : 'Interno sin cliente'),
       },
       {
         key: 'role',
@@ -205,7 +217,10 @@ function createUsersConfig(clients) {
         label: 'Informacion general',
         items: [
           { label: 'Username', value: record.username },
-          { label: 'Cliente', value: clientsMap.get(record.clientId) ?? `Cliente #${record.clientId}` },
+          {
+            label: 'Cliente',
+            value: clientsMap.get(record.clientId) ?? (record.clientId ? `Cliente #${record.clientId}` : 'Interno sin cliente'),
+          },
           { label: 'Rol', value: formatRole(record.role) },
           { label: 'Estado', value: getRecordStatus(record) },
         ],
@@ -225,7 +240,7 @@ function createUsersConfig(clients) {
 export function UsersPage() {
   const clientsQuery = useQuery({
     queryKey: ['usuarios-clientes-lookup'],
-    queryFn: () => apiClient.get('/clientes'),
+    queryFn: () => apiClient.getAllPages('/clientes'),
   })
 
   return (

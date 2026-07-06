@@ -58,7 +58,8 @@ const providersConfig = {
     name: record?.name ?? '',
     description: record?.description ?? '',
   }),
-  fetchRecords: (status) => apiClient.get('/proveedores', { estado: toApiStatus(status) }),
+  fetchRecords: ({ status, search, page, limit }) =>
+    apiClient.get('/proveedores', { estado: toApiStatus(status), q: search, page, limit }),
   createRecord: (payload) => apiClient.post('/proveedores', payload),
   updateRecord: (id, payload) => apiClient.patch(`/proveedores/${id}`, payload),
   archiveRecord: (id) => apiClient.delete(`/proveedores/${id}`),

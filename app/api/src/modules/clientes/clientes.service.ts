@@ -5,6 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { FilterClientsDto } from './dto/filter-clients.dto';
@@ -14,11 +18,18 @@ import { UpdateClientDto } from './dto/update-client.dto';
 export class ClientesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll(filter: FilterClientsDto) {
-    return this.prisma.client.findMany({
-      where: this.getStatusWhere(filter.estado),
-      orderBy: { id: 'asc' },
-    });
+  async findAll(filter: FilterClientsDto) {
+    const where = {
+      ...this.getStatusWhere(filter.estado),
+      ...this.getSearchWhere(filter.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(filter);
+    const [total, data] = await Promise.all([
+      this.prisma.client.count({ where }),
+      this.prisma.client.findMany({ where, orderBy: { id: 'asc' }, skip, take }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findOne(id: number) {
@@ -158,6 +169,23 @@ export class ClientesService {
     }
 
     return { isActive: true };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { identification: { contains: q, mode: 'insensitive' as const } },
+        { firstName: { contains: q, mode: 'insensitive' as const } },
+        { lastName: { contains: q, mode: 'insensitive' as const } },
+        { phone: { contains: q, mode: 'insensitive' as const } },
+        { address: { contains: q, mode: 'insensitive' as const } },
+        { referralCode: { contains: q, mode: 'insensitive' as const } },
+      ],
+    };
   }
 
   private ensurePositiveId(id: number) {

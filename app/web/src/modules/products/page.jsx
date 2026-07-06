@@ -3,6 +3,15 @@ import { z } from 'zod'
 
 import { ProductImage } from '@/components/product-image'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { apiClient } from '@/lib/api-client'
 import {
   formatCurrency,
@@ -147,6 +156,15 @@ function getStockSignal(product) {
   }
 }
 
+const productStockFilterOptions = [
+  { value: 'TODOS', label: 'Todo el stock' },
+  { value: 'CON_STOCK', label: 'Con stock' },
+  { value: 'SIN_STOCK', label: 'Sin stock' },
+  { value: 'BAJO_MINIMO', label: 'Bajo minimo' },
+  { value: 'EN_RANGO', label: 'En rango' },
+  { value: 'SOBRE_MAXIMO', label: 'Sobre maximo' },
+]
+
 function createProductsConfig(lookups) {
   return {
     key: 'productos',
@@ -176,6 +194,106 @@ function createProductsConfig(lookups) {
     reactivateConfirmationLabel:
       'El producto volvera a quedar disponible para facturar y operar.',
     statusFilter: 'api',
+    getInitialFilters: () => ({
+      productTypeId: 'TODOS',
+      providerId: 'TODOS',
+      warehouseId: 'TODOS',
+      stockStatus: 'TODOS',
+      brand: '',
+    }),
+    renderTableFilters: ({ filters, updateFilters }) => (
+      <>
+        <Select
+          value={filters.productTypeId}
+          onValueChange={(value) => updateFilters((current) => ({ ...current, productTypeId: value }))}
+        >
+          <SelectTrigger className="w-full md:w-[180px]">
+            <SelectValue placeholder="Tipo" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="TODOS">Todos los tipos</SelectItem>
+            {lookups.productTypes.map((item) => (
+              <SelectItem key={item.id} value={String(item.id)}>
+                {item.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={filters.providerId}
+          onValueChange={(value) => updateFilters((current) => ({ ...current, providerId: value }))}
+        >
+          <SelectTrigger className="w-full md:w-[180px]">
+            <SelectValue placeholder="Proveedor" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="TODOS">Todos los proveedores</SelectItem>
+            {lookups.providers.map((item) => (
+              <SelectItem key={item.id} value={String(item.id)}>
+                {item.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={filters.warehouseId}
+          onValueChange={(value) => updateFilters((current) => ({ ...current, warehouseId: value }))}
+        >
+          <SelectTrigger className="w-full md:w-[180px]">
+            <SelectValue placeholder="Bodega" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="TODOS">Todas las bodegas</SelectItem>
+            {lookups.warehouses.map((item) => (
+              <SelectItem key={item.id} value={String(item.id)}>
+                {item.location}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={filters.stockStatus}
+          onValueChange={(value) => updateFilters((current) => ({ ...current, stockStatus: value }))}
+        >
+          <SelectTrigger className="w-full md:w-[180px]">
+            <SelectValue placeholder="Stock" />
+          </SelectTrigger>
+          <SelectContent>
+            {productStockFilterOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Input
+          value={filters.brand}
+          onChange={(event) => updateFilters((current) => ({ ...current, brand: event.target.value }))}
+          placeholder="Filtrar marca..."
+          className="w-full md:w-[180px]"
+        />
+
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() =>
+            updateFilters({
+              productTypeId: 'TODOS',
+              providerId: 'TODOS',
+              warehouseId: 'TODOS',
+              stockStatus: 'TODOS',
+              brand: '',
+            })
+          }
+        >
+          Limpiar filtros
+        </Button>
+      </>
+    ),
     fields: [
       {
         name: 'productTypeId',
@@ -296,7 +414,18 @@ function createProductsConfig(lookups) {
         ],
       })
     },
-    fetchRecords: (status) => apiClient.get('/productos', { estado: toApiStatus(status) }),
+    fetchRecords: ({ status, search, page, limit, filters }) =>
+      apiClient.get('/productos', {
+        estado: toApiStatus(status),
+        q: search,
+        page,
+        limit,
+        productTypeId: filters.productTypeId === 'TODOS' ? undefined : Number(filters.productTypeId),
+        providerId: filters.providerId === 'TODOS' ? undefined : Number(filters.providerId),
+        warehouseId: filters.warehouseId === 'TODOS' ? undefined : Number(filters.warehouseId),
+        stockStatus: filters.stockStatus === 'TODOS' ? undefined : filters.stockStatus,
+        brand: filters.brand?.trim() || undefined,
+      }),
     createRecord: (payload) => apiClient.post('/productos', payload),
     updateRecord: (id, payload) => apiClient.patch(`/productos/${id}`, payload),
     archiveRecord: (id) => apiClient.delete(`/productos/${id}`),
@@ -472,17 +601,17 @@ function createProductsConfig(lookups) {
 export function ProductsPage() {
   const productTypesQuery = useQuery({
     queryKey: ['productos-tipos-lookup'],
-    queryFn: () => apiClient.get('/tipos-producto'),
+    queryFn: () => apiClient.getAllPages('/tipos-producto'),
   })
 
   const providersQuery = useQuery({
     queryKey: ['productos-proveedores-lookup'],
-    queryFn: () => apiClient.get('/proveedores'),
+    queryFn: () => apiClient.getAllPages('/proveedores'),
   })
 
   const warehousesQuery = useQuery({
     queryKey: ['productos-bodegas-lookup'],
-    queryFn: () => apiClient.get('/bodegas'),
+    queryFn: () => apiClient.getAllPages('/bodegas'),
   })
 
   const lookups = {

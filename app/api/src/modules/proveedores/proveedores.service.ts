@@ -5,6 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateProviderDto } from './dto/create-provider.dto';
 import { FilterProvidersDto } from './dto/filter-providers.dto';
@@ -14,12 +18,24 @@ import { UpdateProviderDto } from './dto/update-provider.dto';
 export class ProveedoresService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll(filter: FilterProvidersDto) {
-    return this.prisma.provider.findMany({
-      where: this.getStatusWhere(filter.estado),
-      include: { products: true },
-      orderBy: { id: 'asc' },
-    });
+  async findAll(filter: FilterProvidersDto) {
+    const where = {
+      ...this.getStatusWhere(filter.estado),
+      ...this.getSearchWhere(filter.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(filter);
+    const [total, data] = await Promise.all([
+      this.prisma.provider.count({ where }),
+      this.prisma.provider.findMany({
+        where,
+        include: { products: true },
+        orderBy: { id: 'asc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findOne(id: number) {
@@ -80,6 +96,19 @@ export class ProveedoresService {
     if (status === RecordStatusQuery.TODOS) return undefined;
     if (status === RecordStatusQuery.INACTIVOS) return { isActive: false };
     return { isActive: true };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { name: { contains: q, mode: 'insensitive' as const } },
+        { description: { contains: q, mode: 'insensitive' as const } },
+      ],
+    };
   }
 
   private ensurePositiveId(id: number) {

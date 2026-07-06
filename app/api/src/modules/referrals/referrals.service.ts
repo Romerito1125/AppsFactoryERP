@@ -4,19 +4,34 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateReferralDto } from './dto/create-referral.dto';
+import { ListReferralsQueryDto } from './dto/list-referrals-query.dto';
 import { ValidateReferralDto } from './dto/validate-referral.dto';
 
 @Injectable()
 export class ReferralsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
-    return this.prisma.referral.findMany({
-      include: this.referralInclude,
-      orderBy: { id: 'desc' },
-    });
+  async findAll(query: ListReferralsQueryDto) {
+    const where = this.getSearchWhere(query.q);
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.referral.count({ where }),
+      this.prisma.referral.findMany({
+        where,
+        include: this.referralInclude,
+        orderBy: { id: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findOne(id: number) {
@@ -129,5 +144,21 @@ export class ReferralsService {
     if (id <= 0) {
       throw new BadRequestException('El id debe ser un número positivo');
     }
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { codeUsed: { contains: q, mode: 'insensitive' as const } },
+        { referrerClient: { firstName: { contains: q, mode: 'insensitive' as const } } },
+        { referrerClient: { lastName: { contains: q, mode: 'insensitive' as const } } },
+        { referredClient: { firstName: { contains: q, mode: 'insensitive' as const } } },
+        { referredClient: { lastName: { contains: q, mode: 'insensitive' as const } } },
+      ],
+    };
   }
 }

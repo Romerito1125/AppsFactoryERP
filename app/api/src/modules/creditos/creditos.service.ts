@@ -4,12 +4,17 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { BankMovementType, CreditStatus, InvoiceStatus } from '@prisma/client';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import {
   CreateCreditPaymentDto,
   CreateInvoiceCreditDto,
   UpdateCreditStatusDto,
 } from './dto/credit.dto';
+import { ListCreditsQueryDto } from './dto/list-credits-query.dto';
 
 @Injectable()
 export class CreditosService {
@@ -37,10 +42,29 @@ export class CreditosService {
     });
   }
 
-  findAll() {
-    return this.prisma.invoiceCredit
-      .findMany({ include: this.include, orderBy: { id: 'desc' } })
-      .then((items) => items.map((item) => this.withDueStatus(item)));
+  async findAll(query: ListCreditsQueryDto) {
+    const where = {
+      ...this.getStatusWhere(query.status),
+      ...this.getSearchWhere(query.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, items] = await Promise.all([
+      this.prisma.invoiceCredit.count({ where }),
+      this.prisma.invoiceCredit.findMany({
+        where,
+        include: this.include,
+        orderBy: { id: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(
+      items.map((item) => this.withDueStatus(item)),
+      total,
+      page,
+      limit,
+    );
   }
   async findOne(id: number) {
     const credit = await this.prisma.invoiceCredit.findUnique({
@@ -129,5 +153,25 @@ export class CreditosService {
     return Number(credit.balance) > 0 && credit.dueDate < new Date()
       ? { ...credit, reportedStatus: CreditStatus.VENCIDA }
       : credit;
+  }
+
+  private getStatusWhere(status?: ListCreditsQueryDto['status']) {
+    if (!status) return undefined;
+    return { status };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { invoice: { consecutive: { contains: q, mode: 'insensitive' as const } } },
+        { invoice: { client: { firstName: { contains: q, mode: 'insensitive' as const } } } },
+        { invoice: { client: { lastName: { contains: q, mode: 'insensitive' as const } } } },
+        { invoice: { client: { identification: { contains: q, mode: 'insensitive' as const } } } },
+      ],
+    };
   }
 }

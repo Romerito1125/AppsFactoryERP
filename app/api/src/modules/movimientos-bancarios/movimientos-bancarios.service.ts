@@ -4,21 +4,39 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { BankMovementType } from '@prisma/client';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import {
   BankAdjustmentDto,
   BankAmountDto,
   BankTransferDto,
 } from '../cuentas-bancarias/dto/bank-account.dto';
+import { ListBankMovementsQueryDto } from './dto/list-bank-movements-query.dto';
 
 @Injectable()
 export class MovimientosBancariosService {
   constructor(private readonly prisma: PrismaService) {}
-  findAll() {
-    return this.prisma.bankAccountMovement.findMany({
-      include: { bankAccount: true, invoice: true },
-      orderBy: { id: 'desc' },
-    });
+  async findAll(query: ListBankMovementsQueryDto) {
+    const where = {
+      ...this.getTypeWhere(query.movementType),
+      ...this.getSearchWhere(query.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.bankAccountMovement.count({ where }),
+      this.prisma.bankAccountMovement.findMany({
+        where,
+        include: { bankAccount: true, invoice: true },
+        orderBy: { id: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
   async findOne(id: number) {
     const movement = await this.prisma.bankAccountMovement.findUnique({
@@ -128,5 +146,26 @@ export class MovimientosBancariosService {
     if (!account.isActive)
       throw new BadRequestException('La cuenta bancaria está inactiva');
     return account;
+  }
+
+  private getTypeWhere(
+    movementType?: ListBankMovementsQueryDto['movementType'],
+  ) {
+    if (!movementType) return undefined;
+    return { movementType };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { bankAccount: { name: { contains: q, mode: 'insensitive' as const } } },
+        { description: { contains: q, mode: 'insensitive' as const } },
+        { invoice: { consecutive: { contains: q, mode: 'insensitive' as const } } },
+      ],
+    };
   }
 }

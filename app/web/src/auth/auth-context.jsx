@@ -6,6 +6,7 @@ const AuthContext = createContext(null)
 
 export const demoCredentials = {
   'santiago.admin': 'Admin123*',
+  'laura.cajero': 'Cajero123*',
   'valentina.ventas': 'Ventas123*',
   'diego.bodega': 'Bodega123*',
   'camila.conta': 'Conta123*',

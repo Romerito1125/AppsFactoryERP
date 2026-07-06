@@ -17,7 +17,7 @@ const createBankAccountSchema = z.object({
   bankName: z.string().min(2, 'Minimo 2 caracteres'),
   accountNumber: z.string().optional(),
   accountType: z.string().optional(),
-  currentBalance: z.number({ message: 'Saldo inicial obligatorio' }).min(0, 'No puede ser negativo'),
+  currentBalance: z.coerce.number({ message: 'Saldo inicial obligatorio' }).min(0, 'No puede ser negativo'),
 })
 
 const updateBankAccountSchema = z.object({
@@ -74,7 +74,8 @@ const bankAccountsConfig = {
     accountType: record?.accountType ?? '',
     currentBalance: Number(record?.currentBalance ?? 0),
   }),
-  fetchRecords: (status) => apiClient.get('/cuentas-bancarias', { estado: toApiStatus(status) }),
+  fetchRecords: ({ status, search, page, limit }) =>
+    apiClient.get('/cuentas-bancarias', { estado: toApiStatus(status), q: search, page, limit }),
   createRecord: (payload) => apiClient.post('/cuentas-bancarias', payload),
   updateRecord: (id, payload) => apiClient.patch(`/cuentas-bancarias/${id}`, payload),
   archiveRecord: (id) => apiClient.delete(`/cuentas-bancarias/${id}`),

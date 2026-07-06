@@ -3,12 +3,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InventoryMovementType, UnitType } from '@prisma/client';
+import { InventoryMovementType, Prisma, UnitType } from '@prisma/client';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { R2StorageService } from '../../shared/storage/r2-storage.service';
 import { CreateProductDto } from './dto/create-product.dto';
-import { FilterProductsDto } from './dto/filter-products.dto';
+import {
+  FilterProductsDto,
+  ProductStockFilter,
+} from './dto/filter-products.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 
 @Injectable()
@@ -18,16 +25,34 @@ export class ProductosService {
     private readonly storage: R2StorageService,
   ) {}
 
-  findAll(filter: FilterProductsDto) {
-    return this.prisma.product
-      .findMany({
-        where: this.getStatusWhere(filter.estado),
-        include: this.productInclude,
-        orderBy: { id: 'asc' },
-      })
-      .then((products) =>
-        products.map((product) => this.formatProduct(product)),
-      );
+  async findAll(filter: FilterProductsDto) {
+    const { page, limit, skip, take } = resolvePagination(filter);
+    const [total, productIds] = await Promise.all([
+      this.countFilteredProducts(filter),
+      this.findFilteredProductIds(filter, skip, take),
+    ]);
+
+    if (!productIds.length) {
+      return buildPaginatedResponse([], total, page, limit);
+    }
+
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } },
+      include: this.productInclude,
+    });
+    const positionById = new Map(productIds.map((id, index) => [id, index]));
+    const orderedProducts = products.sort(
+      (left, right) =>
+        (positionById.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+        (positionById.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+    );
+
+    return buildPaginatedResponse(
+      orderedProducts.map((product) => this.formatProduct(product)),
+      total,
+      page,
+      limit,
+    );
   }
 
   async findOne(id: number) {
@@ -384,10 +409,142 @@ export class ProductosService {
     }
   }
 
-  private getStatusWhere(status?: RecordStatusQuery) {
-    if (status === RecordStatusQuery.TODOS) return undefined;
-    if (status === RecordStatusQuery.INACTIVOS) return { isActive: false };
-    return { isActive: true };
+  private async countFilteredProducts(filter: FilterProductsDto) {
+    const [row] = await this.prisma.$queryRaw<Array<{ total: bigint | number }>>(
+      Prisma.sql`
+        SELECT COUNT(*)::bigint AS total
+        FROM "Product" p
+        INNER JOIN "ProductType" pt ON pt."id" = p."productTypeId"
+        INNER JOIN "Provider" pr ON pr."id" = p."providerId"
+        LEFT JOIN (
+          SELECT "productId", COALESCE(SUM("quantity"), 0)::int AS "totalStock"
+          FROM "ProductWarehouse"
+          GROUP BY "productId"
+        ) stock ON stock."productId" = p."id"
+        ${this.buildFilteredProductsWhereSql(filter)}
+      `,
+    );
+
+    return Number(row?.total ?? 0);
+  }
+
+  private async findFilteredProductIds(
+    filter: FilterProductsDto,
+    skip: number,
+    take: number,
+  ) {
+    const rows = await this.prisma.$queryRaw<Array<{ id: number }>>(
+      Prisma.sql`
+        SELECT p."id" AS id
+        FROM "Product" p
+        INNER JOIN "ProductType" pt ON pt."id" = p."productTypeId"
+        INNER JOIN "Provider" pr ON pr."id" = p."providerId"
+        LEFT JOIN (
+          SELECT "productId", COALESCE(SUM("quantity"), 0)::int AS "totalStock"
+          FROM "ProductWarehouse"
+          GROUP BY "productId"
+        ) stock ON stock."productId" = p."id"
+        ${this.buildFilteredProductsWhereSql(filter)}
+        ORDER BY p."id" ASC
+        OFFSET ${skip}
+        LIMIT ${take}
+      `,
+    );
+
+    return rows.map((row) => row.id);
+  }
+
+  private buildFilteredProductsWhereSql(filter: FilterProductsDto) {
+    const conditions: Prisma.Sql[] = [];
+    const search = filter.q?.trim();
+    const brand = filter.brand?.trim();
+
+    if (filter.estado !== RecordStatusQuery.TODOS) {
+      conditions.push(
+        Prisma.sql`p."isActive" = ${filter.estado === RecordStatusQuery.INACTIVOS ? false : true}`,
+      );
+    }
+
+    if (search) {
+      const likeSearch = `%${search}%`;
+
+      conditions.push(Prisma.sql`
+        (
+          p."name" ILIKE ${likeSearch}
+          OR p."brand" ILIKE ${likeSearch}
+          OR COALESCE(p."description", '') ILIKE ${likeSearch}
+          OR pt."name" ILIKE ${likeSearch}
+          OR pr."name" ILIKE ${likeSearch}
+          OR EXISTS (
+            SELECT 1
+            FROM "ProductWarehouse" pw_search
+            INNER JOIN "Warehouse" w_search ON w_search."id" = pw_search."warehouseId"
+            WHERE pw_search."productId" = p."id"
+              AND w_search."location" ILIKE ${likeSearch}
+          )
+        )
+      `);
+    }
+
+    if (filter.productTypeId) {
+      conditions.push(Prisma.sql`p."productTypeId" = ${filter.productTypeId}`);
+    }
+
+    if (filter.providerId) {
+      conditions.push(Prisma.sql`p."providerId" = ${filter.providerId}`);
+    }
+
+    if (filter.warehouseId) {
+      conditions.push(Prisma.sql`
+        EXISTS (
+          SELECT 1
+          FROM "ProductWarehouse" pw_filter
+          WHERE pw_filter."productId" = p."id"
+            AND pw_filter."warehouseId" = ${filter.warehouseId}
+        )
+      `);
+    }
+
+    if (brand) {
+      conditions.push(Prisma.sql`p."brand" ILIKE ${`%${brand}%`}`);
+    }
+
+    if (filter.stockStatus === ProductStockFilter.CON_STOCK) {
+      conditions.push(Prisma.sql`COALESCE(stock."totalStock", 0) > 0`);
+    }
+
+    if (filter.stockStatus === ProductStockFilter.SIN_STOCK) {
+      conditions.push(Prisma.sql`COALESCE(stock."totalStock", 0) <= 0`);
+    }
+
+    if (filter.stockStatus === ProductStockFilter.BAJO_MINIMO) {
+      conditions.push(
+        Prisma.sql`COALESCE(stock."totalStock", 0) <= COALESCE(p."minimumStock", 0)`,
+      );
+    }
+
+    if (filter.stockStatus === ProductStockFilter.EN_RANGO) {
+      conditions.push(Prisma.sql`
+        COALESCE(stock."totalStock", 0) > COALESCE(p."minimumStock", 0)
+        AND (
+          p."maximumStock" IS NULL
+          OR COALESCE(stock."totalStock", 0) < p."maximumStock"
+        )
+      `);
+    }
+
+    if (filter.stockStatus === ProductStockFilter.SOBRE_MAXIMO) {
+      conditions.push(Prisma.sql`
+        p."maximumStock" IS NOT NULL
+        AND COALESCE(stock."totalStock", 0) >= p."maximumStock"
+      `);
+    }
+
+    if (!conditions.length) {
+      return Prisma.empty;
+    }
+
+    return Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
   }
 
   private ensurePositiveId(id: number) {

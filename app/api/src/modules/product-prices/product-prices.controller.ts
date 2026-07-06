@@ -7,8 +7,10 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CreateProductPriceDto } from './dto/create-product-price.dto';
+import { FilterProductPricesDto } from './dto/filter-product-prices.dto';
 import { UpdateProductPriceDto } from './dto/update-product-price.dto';
 import { ProductPricesService } from './product-prices.service';
 
@@ -17,8 +19,8 @@ export class ProductPricesController {
   constructor(private readonly productPricesService: ProductPricesService) {}
 
   @Get('precios-producto')
-  findAll() {
-    return this.productPricesService.findAll();
+  findAll(@Query() query: FilterProductPricesDto) {
+    return this.productPricesService.findAll(query);
   }
 
   @Get('precios-producto/:id')

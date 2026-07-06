@@ -12,6 +12,7 @@ const dateFormatter = new Intl.DateTimeFormat('es-CO', {
 
 const roleLabels = {
   ADMIN: 'Administrador',
+  CAJERO: 'Cajero',
   VENDEDOR: 'Vendedor',
   BODEGA: 'Bodega',
   CONTADOR: 'Contador',
@@ -25,6 +26,12 @@ const clientTypeLabels = {
 const invoiceStatusLabels = {
   ACTIVA: 'Activa',
   ANULADA: 'Anulada',
+}
+
+const invoiceSourceLabels = {
+  ADMIN: 'Administrador',
+  POS: 'POS',
+  APP_MOVIL: 'App movil',
 }
 
 export const statusOptions = [
@@ -61,6 +68,10 @@ export function formatInvoiceStatus(value) {
   return invoiceStatusLabels[value] ?? value ?? 'Sin estado'
 }
 
+export function formatInvoiceSource(value) {
+  return invoiceSourceLabels[value] ?? value ?? 'Sin origen'
+}
+
 export function getRecordStatus(record) {
   return record?.isActive === false ? 'Inactivo' : 'Activo'
 }
@@ -87,12 +98,20 @@ export function matchesSearch(record, search, resolver) {
     return true
   }
 
-  const haystack = resolver(record)
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase()
+  const haystack = normalizeSearchText(
+    resolver(record)
+      .filter(Boolean)
+      .join(' '),
+  )
 
-  return haystack.includes(search.toLowerCase())
+  return haystack.includes(normalizeSearchText(search))
+}
+
+export function normalizeSearchText(value) {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
 }
 
 export function monthLabel(value) {

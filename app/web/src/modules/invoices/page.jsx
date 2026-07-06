@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { FilePlus2, MoreHorizontal, Plus, Search, Star, Trash2 } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -64,12 +65,16 @@ import { apiClient } from '@/lib/api-client'
 import {
   formatCurrency,
   formatDate,
+  formatInvoiceSource,
   formatInvoiceStatus,
   formatNumber,
-  matchesSearch,
+  formatRole,
 } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { LocalPagination } from '@/modules/shared/local-pagination'
+
+const PAGE_SIZE = 20
 
 const invoiceSchema = z.object({
   clientId: z.number({ message: 'Selecciona un cliente' }).int().positive('Selecciona un cliente'),
@@ -104,6 +109,20 @@ function getDefaultActivePrice(product) {
 
 function getProductSearchText(product) {
   return [product.name, product.brand, product.description, product.productType?.name].filter(Boolean).join(' ')
+}
+
+function getInvoiceActorLabel(invoice) {
+  if (invoice.source === 'APP_MOVIL') {
+    return 'App movil'
+  }
+
+  if (invoice.createdByRole || invoice.createdByUsername) {
+    return [invoice.createdByRole ? formatRole(invoice.createdByRole) : null, invoice.createdByUsername]
+      .filter(Boolean)
+      .join(' · ')
+  }
+
+  return formatInvoiceSource(invoice.source)
 }
 
 function InvoiceSkeleton() {
@@ -653,16 +672,37 @@ function UpdateConsecutiveDialog({ open, onOpenChange, invoice, onSubmit, isSubm
 export function InvoicesPage() {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
-  const deferredSearch = useDeferredValue(search)
   const [statusTab, setStatusTab] = useState('ACTIVA')
   const [createOpen, setCreateOpen] = useState(false)
   const [detailInvoice, setDetailInvoice] = useState(null)
   const [editInvoice, setEditInvoice] = useState(null)
   const [cancelInvoice, setCancelInvoice] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
 
-  const invoicesQuery = useQuery({ queryKey: ['facturas'], queryFn: () => apiClient.get('/facturas') })
-  const clientsQuery = useQuery({ queryKey: ['facturas-clientes'], queryFn: () => apiClient.get('/clientes') })
-  const productsQuery = useQuery({ queryKey: ['facturas-productos'], queryFn: () => apiClient.get('/productos') })
+  const [searchParams, setSearchParams] = useSearchParams()
+  const invoiceIdParam = searchParams.get('invoiceId')
+
+  const invoicesQuery = useQuery({
+    queryKey: ['facturas', statusTab, search, currentPage],
+    queryFn: () =>
+      apiClient.get('/facturas', {
+        status: statusTab === 'TODAS' ? undefined : statusTab,
+        q: search,
+        page: currentPage,
+        limit: PAGE_SIZE,
+      }),
+    placeholderData: (previousData) => previousData,
+  })
+  const clientsQuery = useQuery({
+    queryKey: ['facturas-clientes'],
+    queryFn: () => apiClient.getAllPages('/clientes'),
+    enabled: createOpen,
+  })
+  const productsQuery = useQuery({
+    queryKey: ['facturas-productos'],
+    queryFn: () => apiClient.getAllPages('/productos'),
+    enabled: createOpen,
+  })
 
   const createMutation = useMutation({
     mutationFn: (payload) => apiClient.post('/facturas', payload),
@@ -693,7 +733,7 @@ export function InvoicesPage() {
     },
   })
 
-  if (invoicesQuery.isLoading || clientsQuery.isLoading || productsQuery.isLoading) {
+  if (invoicesQuery.isLoading || (createOpen && (clientsQuery.isLoading || productsQuery.isLoading))) {
     return <InvoiceSkeleton />
   }
 
@@ -705,21 +745,27 @@ export function InvoicesPage() {
     )
   }
 
-  const invoices = invoicesQuery.data ?? []
+  const invoices = invoicesQuery.data?.data ?? []
+
+  useEffect(() => {
+    if (invoiceIdParam && invoices.length) {
+      const targetInvoice = invoices.find((inv) => inv.id === Number(invoiceIdParam))
+      if (targetInvoice) {
+        setDetailInvoice(targetInvoice)
+        setSearchParams((params) => {
+          params.delete('invoiceId')
+          return params
+        }, { replace: true })
+      }
+    }
+  }, [invoiceIdParam, invoices, setSearchParams])
+
+  const totalItems = Number(invoicesQuery.data?.total ?? 0)
+  const totalPages = Math.max(1, Number(invoicesQuery.data?.totalPages ?? 1))
   const clients = clientsQuery.data ?? []
   const products = productsQuery.data ?? []
-
-  const filteredInvoices = invoices.filter((invoice) => {
-    const statusMatch = statusTab === 'TODAS' ? true : invoice.status === statusTab
-
-    return (
-      statusMatch &&
-      matchesSearch(invoice, deferredSearch, (record) => [
-        record.consecutive,
-        `${record.client.firstName} ${record.client.lastName}`,
-      ])
-    )
-  })
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
+  const endItem = Math.min(startItem + invoices.length - 1, totalItems)
 
   const activeInvoices = invoices.filter((invoice) => invoice.status === 'ACTIVA')
   const summaryCards = [
@@ -823,12 +869,21 @@ export function InvoicesPage() {
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  setCurrentPage(1)
+                }}
                 placeholder="Buscar por consecutivo o cliente..."
                 className="pl-9"
               />
             </div>
-            <Tabs value={statusTab} onValueChange={setStatusTab}>
+            <Tabs
+              value={statusTab}
+                onValueChange={(value) => {
+                  setStatusTab(value)
+                  setCurrentPage(1)
+                }}
+            >
               <TabsList>
                 <TabsTrigger value="ACTIVA">Activas</TabsTrigger>
                 <TabsTrigger value="ANULADA">Anuladas</TabsTrigger>
@@ -840,28 +895,35 @@ export function InvoicesPage() {
         <CardContent>
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>Consecutivo</TableHead>
-                <TableHead>Cliente</TableHead>
-                <TableHead>Items</TableHead>
-                <TableHead>Total</TableHead>
-                <TableHead>Estado</TableHead>
+                <TableRow>
+                  <TableHead>Consecutivo</TableHead>
+                  <TableHead>Cliente</TableHead>
+                  <TableHead>Origen / autor</TableHead>
+                  <TableHead>Items</TableHead>
+                  <TableHead>Total</TableHead>
+                  <TableHead>Estado</TableHead>
                 <TableHead>Fecha</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredInvoices.length ? (
-                filteredInvoices.map((invoice) => (
+              {invoices.length ? (
+                invoices.map((invoice) => (
                   <TableRow
                     key={invoice.id}
                     className="cursor-pointer transition hover:bg-muted/20"
                     onClick={() => setDetailInvoice(invoice)}
-                  >
-                    <TableCell className="font-medium text-primary">{invoice.consecutive}</TableCell>
-                    <TableCell>{`${invoice.client.firstName} ${invoice.client.lastName}`}</TableCell>
-                    <TableCell>{formatNumber(invoice.items.length)}</TableCell>
-                    <TableCell>{formatCurrency(invoice.total)}</TableCell>
+                    >
+                      <TableCell className="font-medium text-primary">{invoice.consecutive}</TableCell>
+                      <TableCell>{`${invoice.client.firstName} ${invoice.client.lastName}`}</TableCell>
+                      <TableCell>
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{formatInvoiceSource(invoice.source)}</p>
+                          <p className="text-xs text-muted-foreground">{getInvoiceActorLabel(invoice)}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell>{formatNumber(invoice.items.length)}</TableCell>
+                      <TableCell>{formatCurrency(invoice.total)}</TableCell>
                     <TableCell>
                       <Badge variant={invoice.status === 'ACTIVA' ? 'default' : 'secondary'}>
                         {formatInvoiceStatus(invoice.status)}
@@ -897,7 +959,7 @@ export function InvoicesPage() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={7} className="py-12 text-center">
+                    <TableCell colSpan={8} className="py-12 text-center">
                     <div className="mx-auto max-w-md rounded-2xl border border-dashed border-border/70 bg-muted/20 p-6">
                       <p className="font-medium text-foreground">No hay facturas para esta vista</p>
                       <p className="mt-1 text-sm text-muted-foreground">
@@ -909,6 +971,17 @@ export function InvoicesPage() {
               )}
             </TableBody>
           </Table>
+
+          <LocalPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            startItem={startItem}
+            endItem={endItem}
+            singularLabel="factura"
+            pluralLabel="facturas"
+            onPageChange={setCurrentPage}
+          />
         </CardContent>
       </Card>
 
@@ -964,6 +1037,18 @@ export function InvoicesPage() {
                   <p className="text-xs text-muted-foreground">Fecha</p>
                   <p className="mt-1 text-sm font-medium text-foreground">
                     {formatDate(detailInvoice.createdAt)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Origen</p>
+                  <p className="mt-1 text-sm font-medium text-foreground">
+                    {formatInvoiceSource(detailInvoice.source)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Realizada por</p>
+                  <p className="mt-1 text-sm font-medium text-foreground">
+                    {getInvoiceActorLabel(detailInvoice)}
                   </p>
                 </div>
                 <div>

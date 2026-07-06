@@ -58,7 +58,8 @@ const tagsConfig = {
     name: record?.name ?? '',
     description: record?.description ?? '',
   }),
-  fetchRecords: (status) => apiClient.get('/etiquetas', { estado: toApiStatus(status) }),
+  fetchRecords: ({ status, search, page, limit }) =>
+    apiClient.get('/etiquetas', { estado: toApiStatus(status), q: search, page, limit }),
   createRecord: (payload) => apiClient.post('/etiquetas', payload),
   updateRecord: (id, payload) => apiClient.patch(`/etiquetas/${id}`, payload),
   archiveRecord: (id) => apiClient.delete(`/etiquetas/${id}`),

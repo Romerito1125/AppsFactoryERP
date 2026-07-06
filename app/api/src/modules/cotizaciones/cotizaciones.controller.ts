@@ -7,8 +7,10 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CotizacionesService } from './cotizaciones.service';
+import { ListQuotesQueryDto } from './dto/list-quotes-query.dto';
 import {
   CreateQuoteDto,
   UpdateQuoteDto,
@@ -18,8 +20,8 @@ import {
 @Controller('cotizaciones')
 export class CotizacionesController {
   constructor(private readonly service: CotizacionesService) {}
-  @Get() findAll() {
-    return this.service.findAll();
+  @Get() findAll(@Query() query: ListQuotesQueryDto) {
+    return this.service.findAll(query);
   }
   @Get(':id') findOne(@Param('id', ParseIntPipe) id: number) {
     return this.service.findOne(id);

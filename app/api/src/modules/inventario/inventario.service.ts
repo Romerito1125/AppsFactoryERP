@@ -4,6 +4,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InventoryMovementType } from '@prisma/client';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import {
   InventoryAdjustmentDto,
@@ -11,24 +15,37 @@ import {
   InventoryExitDto,
   InventoryTransferDto,
 } from './dto/inventory-movement.dto';
+import { ListInventoryQueryDto } from './dto/list-inventory-query.dto';
 
 @Injectable()
 export class InventarioService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
-    return this.prisma.product.findMany({
-      where: { isActive: true },
-      include: {
-        productType: true,
-        provider: true,
-        warehouses: {
-          include: { warehouse: true },
-          orderBy: { warehouseId: 'asc' },
+  async findAll(query: ListInventoryQueryDto) {
+    const where = {
+      isActive: true,
+      ...this.getProductSearchWhere(query.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.product.count({ where }),
+      this.prisma.product.findMany({
+        where,
+        include: {
+          productType: true,
+          provider: true,
+          warehouses: {
+            include: { warehouse: true },
+            orderBy: { warehouseId: 'asc' },
+          },
         },
-      },
-      orderBy: { id: 'asc' },
-    });
+        orderBy: { id: 'asc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findByProduct(productId: number) {
@@ -195,11 +212,21 @@ export class InventarioService {
     });
   }
 
-  findMovements() {
-    return this.prisma.inventoryMovement.findMany({
-      include: this.movementInclude,
-      orderBy: { id: 'desc' },
-    });
+  async findMovements(query: ListInventoryQueryDto) {
+    const where = this.getMovementSearchWhere(query.q);
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.inventoryMovement.count({ where }),
+      this.prisma.inventoryMovement.findMany({
+        where,
+        include: this.movementInclude,
+        orderBy: { id: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findMovement(id: number) {
@@ -250,5 +277,36 @@ export class InventarioService {
   private ensurePositiveId(id: number) {
     if (id <= 0)
       throw new BadRequestException('El id debe ser un número positivo');
+  }
+
+  private getProductSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { name: { contains: q, mode: 'insensitive' as const } },
+        { brand: { contains: q, mode: 'insensitive' as const } },
+        { productType: { name: { contains: q, mode: 'insensitive' as const } } },
+        { provider: { name: { contains: q, mode: 'insensitive' as const } } },
+        { warehouses: { some: { warehouse: { location: { contains: q, mode: 'insensitive' as const } } } } },
+      ],
+    };
+  }
+
+  private getMovementSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { product: { name: { contains: q, mode: 'insensitive' as const } } },
+        { fromWarehouse: { location: { contains: q, mode: 'insensitive' as const } } },
+        { toWarehouse: { location: { contains: q, mode: 'insensitive' as const } } },
+        { reason: { contains: q, mode: 'insensitive' as const } },
+      ],
+    };
   }
 }

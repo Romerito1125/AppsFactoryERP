@@ -61,11 +61,11 @@ export function DashboardPage() {
     queryKey: ['dashboard-overview'],
     queryFn: async () => {
       const [users, clients, products, warehouses, invoices] = await Promise.all([
-        apiClient.get('/usuarios'),
-        apiClient.get('/clientes', { estado: 'todos' }),
-        apiClient.get('/productos', { estado: 'todos' }),
-        apiClient.get('/bodegas', { estado: 'todos' }),
-        apiClient.get('/facturas'),
+        apiClient.getAllPages('/usuarios'),
+        apiClient.getAllPages('/clientes', { estado: 'todos' }),
+        apiClient.getAllPages('/productos', { estado: 'todos' }),
+        apiClient.getAllPages('/bodegas', { estado: 'todos' }),
+        apiClient.getAllPages('/facturas'),
       ])
 
       return { users, clients, products, warehouses, invoices }
@@ -315,7 +315,7 @@ export function DashboardPage() {
                 <span className="text-sm font-medium">Roles activos</span>
               </div>
               <div className="mt-3 grid gap-2 text-sm">
-                {['ADMIN', 'VENDEDOR', 'BODEGA', 'CONTADOR'].map((role) => (
+                {['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR'].map((role) => (
                   <div key={role} className="flex items-center justify-between">
                     <span>{formatRole(role)}</span>
                     <span className="font-medium">

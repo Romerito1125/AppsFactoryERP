@@ -64,8 +64,8 @@ export function LoginPage() {
     queryKey: ['login-access-data'],
     queryFn: async () => {
       const [users, clients] = await Promise.all([
-        apiClient.get('/usuarios'),
-        apiClient.get('/clientes', { estado: 'todos' }),
+        apiClient.getAllPages('/usuarios'),
+        apiClient.getAllPages('/clientes', { estado: 'todos' }),
       ])
 
       return { users, clients }
@@ -88,8 +88,11 @@ export function LoginPage() {
           username: user.username,
           password: demoCredentials[user.username],
           role: user.role,
-          label: `${client?.firstName ?? ''} ${client?.lastName ?? ''}`.trim() || user.username,
-          subtitle: client?.identification ?? `Usuario #${user.id}`,
+          label:
+            `${client?.firstName ?? ''} ${client?.lastName ?? ''}`.trim() ||
+            `${user.employee?.firstName ?? ''} ${user.employee?.lastName ?? ''}`.trim() ||
+            user.username,
+          subtitle: client?.identification ?? user.employee?.identification ?? `Usuario #${user.id}`,
           route: defaultRouteForRole(user.role),
         }
       })
@@ -107,7 +110,9 @@ export function LoginPage() {
         password,
       })
 
-      const displayName = `${authResponse.client?.firstName ?? ''} ${authResponse.client?.lastName ?? ''}`.trim()
+      const displayName =
+        `${authResponse.client?.firstName ?? ''} ${authResponse.client?.lastName ?? ''}`.trim() ||
+        `${authResponse.employee?.firstName ?? ''} ${authResponse.employee?.lastName ?? ''}`.trim()
       const sessionUser = authResponse.user ?? {}
 
       login({

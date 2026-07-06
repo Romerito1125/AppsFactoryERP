@@ -6,20 +6,39 @@ import {
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { randomBytes, scryptSync } from 'crypto';
+import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { CreateUserDto } from './dto/create-user.dto';
+import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
 export class UsuariosService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll() {
-    return this.prisma.user.findMany({
-      orderBy: { id: 'asc' },
-      select: this.userSelect(),
-    });
+  async findAll(query: ListUsersQueryDto) {
+    const where = {
+      ...this.getStatusWhere(query.estado),
+      ...this.getSearchWhere(query.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.user.count({ where }),
+      this.prisma.user.findMany({
+        where,
+        orderBy: { id: 'asc' },
+        select: this.userSelect(),
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findOne(id: number) {
@@ -38,7 +57,9 @@ export class UsuariosService {
   }
 
   async create(createUserDto: CreateUserDto) {
-    await this.ensureClientExists(createUserDto.clientId);
+    if (createUserDto.clientId) {
+      await this.ensureClientExists(createUserDto.clientId);
+    }
 
     const existingUser = await this.prisma.user.findUnique({
       where: { username: createUserDto.username },
@@ -194,6 +215,34 @@ export class UsuariosService {
       deletedAt: true,
       createdAt: true,
       updatedAt: true,
+      employee: {
+        select: {
+          id: true,
+          identification: true,
+          firstName: true,
+          lastName: true,
+          isActive: true,
+        },
+      },
+    };
+  }
+
+  private getStatusWhere(status?: RecordStatusQuery) {
+    if (status === RecordStatusQuery.TODOS) return undefined;
+    if (status === RecordStatusQuery.INACTIVOS) return { isActive: false };
+    return { isActive: true };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { username: { contains: q, mode: 'insensitive' as const } },
+        { role: { equals: q.toUpperCase() as Role } },
+      ],
     };
   }
 }

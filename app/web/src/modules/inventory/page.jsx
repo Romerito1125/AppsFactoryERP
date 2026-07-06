@@ -46,12 +46,22 @@ import { Textarea } from '@/components/ui/textarea'
 import { apiClient } from '@/lib/api-client'
 import { formatDate, formatNumber, matchesSearch } from '@/lib/format'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { LocalPagination, useLocalPagination } from '@/modules/shared/local-pagination'
 
 const movementTypeOptions = [
   { value: 'entrada', label: 'Entrada' },
   { value: 'salida', label: 'Salida' },
   { value: 'traslado', label: 'Traslado' },
   { value: 'ajuste', label: 'Ajuste' },
+]
+
+const stockFilterOptions = [
+  { value: 'TODOS', label: 'Todo el stock' },
+  { value: 'CON_STOCK', label: 'Con stock' },
+  { value: 'SIN_STOCK', label: 'Sin stock' },
+  { value: 'BAJO_MINIMO', label: 'Bajo minimo' },
+  { value: 'EN_RANGO', label: 'En rango' },
+  { value: 'SOBRE_MAXIMO', label: 'Sobre maximo' },
 ]
 
 const movementTypeLabels = {
@@ -155,6 +165,37 @@ function getStockSignal(product) {
   }
 
   return { label: 'Operativo', variant: 'default' }
+}
+
+function matchesStockFilter(product, stockFilter) {
+  const totalStock = getTotalStock(product)
+  const minimumStock = Number(product.minimumStock ?? 0)
+  const maximumStock =
+    product.maximumStock === null || product.maximumStock === undefined
+      ? null
+      : Number(product.maximumStock)
+
+  if (stockFilter === 'CON_STOCK') {
+    return totalStock > 0
+  }
+
+  if (stockFilter === 'SIN_STOCK') {
+    return totalStock <= 0
+  }
+
+  if (stockFilter === 'BAJO_MINIMO') {
+    return totalStock <= minimumStock
+  }
+
+  if (stockFilter === 'EN_RANGO') {
+    return totalStock > minimumStock && (maximumStock === null || totalStock < maximumStock)
+  }
+
+  if (stockFilter === 'SOBRE_MAXIMO') {
+    return maximumStock !== null && totalStock >= maximumStock
+  }
+
+  return true
 }
 
 function buildMovementPayload(values) {
@@ -430,23 +471,33 @@ export function InventoryPage() {
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [view, setView] = useState('stock')
+  const [stockFilters, setStockFilters] = useState({
+    productTypeId: 'TODOS',
+    providerId: 'TODOS',
+    warehouseId: 'TODOS',
+    stockStatus: 'TODOS',
+  })
+  const [movementFilters, setMovementFilters] = useState({
+    movementType: 'TODOS',
+    warehouseId: 'TODOS',
+  })
   const [createOpen, setCreateOpen] = useState(false)
   const [detailProduct, setDetailProduct] = useState(null)
   const [detailMovement, setDetailMovement] = useState(null)
 
   const inventoryQuery = useQuery({
     queryKey: ['inventario'],
-    queryFn: () => apiClient.get('/inventario'),
+    queryFn: () => apiClient.getAllPages('/inventario'),
   })
 
   const movementsQuery = useQuery({
     queryKey: ['inventario-movimientos'],
-    queryFn: () => apiClient.get('/inventario/movimientos'),
+    queryFn: () => apiClient.getAllPages('/inventario/movimientos'),
   })
 
   const warehousesQuery = useQuery({
     queryKey: ['inventario-bodegas'],
-    queryFn: () => apiClient.get('/bodegas'),
+    queryFn: () => apiClient.getAllPages('/bodegas'),
   })
 
   const movementMutation = useMutation({
@@ -476,9 +527,14 @@ export function InventoryPage() {
           record.productType?.name,
           record.provider?.name,
           ...(record.warehouses ?? []).map((item) => item.warehouse?.location),
-        ]),
+        ]) &&
+        (stockFilters.productTypeId === 'TODOS' || product.productType?.id === Number(stockFilters.productTypeId)) &&
+        (stockFilters.providerId === 'TODOS' || product.provider?.id === Number(stockFilters.providerId)) &&
+        (stockFilters.warehouseId === 'TODOS' ||
+          (product.warehouses ?? []).some((item) => item.warehouseId === Number(stockFilters.warehouseId))) &&
+        matchesStockFilter(product, stockFilters.stockStatus),
       ),
-    [deferredSearch, inventory],
+    [deferredSearch, inventory, stockFilters],
   )
 
   const filteredMovements = useMemo(
@@ -490,10 +546,26 @@ export function InventoryPage() {
           record.fromWarehouse?.location,
           record.toWarehouse?.location,
           record.reason,
-        ]),
+        ]) &&
+        (movementFilters.movementType === 'TODOS' || movement.movementType === movementFilters.movementType) &&
+        (movementFilters.warehouseId === 'TODOS' ||
+          movement.fromWarehouse?.id === Number(movementFilters.warehouseId) ||
+          movement.toWarehouse?.id === Number(movementFilters.warehouseId)),
       ),
-    [deferredSearch, movements],
+    [deferredSearch, movementFilters, movements],
   )
+
+  const activeRecords = view === 'stock' ? filteredInventory : filteredMovements
+  const {
+    currentPage,
+    setCurrentPage,
+    paginatedItems: paginatedRecords,
+    totalItems,
+    totalPages,
+    startItem,
+    endItem,
+    resetPage,
+  } = useLocalPagination(activeRecords)
 
   const summaryCards = [
     {
@@ -596,12 +668,149 @@ export function InventoryPage() {
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  resetPage()
+                }}
                 placeholder="Buscar por producto, bodega o movimiento..."
                 className="pl-9"
               />
             </div>
-            <Tabs value={view} onValueChange={setView}>
+            {view === 'stock' ? (
+              <>
+                <Select
+                  value={stockFilters.productTypeId}
+                  onValueChange={(value) => {
+                    setStockFilters((current) => ({ ...current, productTypeId: value }))
+                    resetPage()
+                  }}
+                >
+                  <SelectTrigger className="w-full md:w-[180px]">
+                    <SelectValue placeholder="Tipo" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="TODOS">Todos los tipos</SelectItem>
+                    {Array.from(new Map(inventory.map((item) => [item.productType?.id, item.productType])).values())
+                      .filter(Boolean)
+                      .map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={stockFilters.providerId}
+                  onValueChange={(value) => {
+                    setStockFilters((current) => ({ ...current, providerId: value }))
+                    resetPage()
+                  }}
+                >
+                  <SelectTrigger className="w-full md:w-[180px]">
+                    <SelectValue placeholder="Proveedor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="TODOS">Todos los proveedores</SelectItem>
+                    {Array.from(new Map(inventory.map((item) => [item.provider?.id, item.provider])).values())
+                      .filter(Boolean)
+                      .map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {item.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={stockFilters.warehouseId}
+                  onValueChange={(value) => {
+                    setStockFilters((current) => ({ ...current, warehouseId: value }))
+                    resetPage()
+                  }}
+                >
+                  <SelectTrigger className="w-full md:w-[180px]">
+                    <SelectValue placeholder="Bodega" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="TODOS">Todas las bodegas</SelectItem>
+                    {warehouses.map((warehouse) => (
+                      <SelectItem key={warehouse.id} value={String(warehouse.id)}>
+                        {warehouse.location}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={stockFilters.stockStatus}
+                  onValueChange={(value) => {
+                    setStockFilters((current) => ({ ...current, stockStatus: value }))
+                    resetPage()
+                  }}
+                >
+                  <SelectTrigger className="w-full md:w-[180px]">
+                    <SelectValue placeholder="Stock" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {stockFilterOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            ) : (
+              <>
+                <Select
+                  value={movementFilters.movementType}
+                  onValueChange={(value) => {
+                    setMovementFilters((current) => ({ ...current, movementType: value }))
+                    resetPage()
+                  }}
+                >
+                  <SelectTrigger className="w-full md:w-[180px]">
+                    <SelectValue placeholder="Movimiento" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="TODOS">Todos los movimientos</SelectItem>
+                    {Object.entries(movementTypeLabels).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Select
+                  value={movementFilters.warehouseId}
+                  onValueChange={(value) => {
+                    setMovementFilters((current) => ({ ...current, warehouseId: value }))
+                    resetPage()
+                  }}
+                >
+                  <SelectTrigger className="w-full md:w-[180px]">
+                    <SelectValue placeholder="Bodega" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="TODOS">Todas las bodegas</SelectItem>
+                    {warehouses.map((warehouse) => (
+                      <SelectItem key={warehouse.id} value={String(warehouse.id)}>
+                        {warehouse.location}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+            <Tabs
+              value={view}
+              onValueChange={(value) => {
+                setView(value)
+                resetPage()
+              }}
+            >
               <TabsList>
                 <TabsTrigger value="stock">Stock</TabsTrigger>
                 <TabsTrigger value="movements">Movimientos</TabsTrigger>
@@ -623,7 +832,7 @@ export function InventoryPage() {
               </TableHeader>
               <TableBody>
                 {filteredInventory.length ? (
-                  filteredInventory.map((product) => {
+                  paginatedRecords.map((product) => {
                     const signal = getStockSignal(product)
 
                     return (
@@ -686,7 +895,7 @@ export function InventoryPage() {
               </TableHeader>
               <TableBody>
                 {filteredMovements.length ? (
-                  filteredMovements.map((movement) => (
+                  paginatedRecords.map((movement) => (
                     <TableRow key={movement.id} className="cursor-pointer" onClick={() => setDetailMovement(movement)}>
                       <TableCell>
                         <Badge variant={getMovementBadgeVariant(movement.movementType)}>
@@ -711,10 +920,21 @@ export function InventoryPage() {
                       No hay movimientos que coincidan con la busqueda actual.
                     </TableCell>
                   </TableRow>
-                )}
-              </TableBody>
-            </Table>
+              )}
+            </TableBody>
+          </Table>
           )}
+
+          <LocalPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            startItem={startItem}
+            endItem={endItem}
+            singularLabel={view === 'stock' ? 'producto' : 'movimiento'}
+            pluralLabel={view === 'stock' ? 'productos' : 'movimientos'}
+            onPageChange={setCurrentPage}
+          />
         </CardContent>
       </Card>
 

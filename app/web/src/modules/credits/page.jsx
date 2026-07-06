@@ -49,8 +49,11 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { apiClient } from '@/lib/api-client'
-import { formatCurrency, formatDate, formatNumber, matchesSearch } from '@/lib/format'
+import { formatCurrency, formatDate, formatNumber } from '@/lib/format'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { DEFAULT_ITEMS_PER_PAGE, LocalPagination } from '@/modules/shared/local-pagination'
+
+const PAGE_SIZE = DEFAULT_ITEMS_PER_PAGE
 
 const createCreditSchema = z.object({
   invoiceId: z.number({ message: 'Selecciona una factura' }).int().positive('Selecciona una factura'),
@@ -291,14 +294,38 @@ export function CreditsPage() {
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [statusTab, setStatusTab] = useState('PENDIENTE')
+  const [currentPage, setCurrentPage] = useState(1)
   const [createOpen, setCreateOpen] = useState(false)
   const [detailCredit, setDetailCredit] = useState(null)
   const [paymentCredit, setPaymentCredit] = useState(null)
   const [statusCredit, setStatusCredit] = useState(null)
 
-  const creditsQuery = useQuery({ queryKey: ['creditos'], queryFn: () => apiClient.get('/creditos') })
-  const invoicesQuery = useQuery({ queryKey: ['creditos-facturas'], queryFn: () => apiClient.get('/facturas') })
-  const accountsQuery = useQuery({ queryKey: ['creditos-cuentas'], queryFn: () => apiClient.get('/cuentas-bancarias') })
+  const creditsQuery = useQuery({
+    queryKey: ['creditos', deferredSearch, statusTab, currentPage],
+    queryFn: () =>
+      apiClient.get('/creditos', {
+        page: currentPage,
+        limit: PAGE_SIZE,
+        q: deferredSearch,
+        status: statusTab === 'TODOS' ? undefined : statusTab,
+      }),
+    placeholderData: (previousData) => previousData,
+  })
+  const invoicesQuery = useQuery({
+    queryKey: ['creditos-facturas'],
+    queryFn: () => apiClient.getAllPages('/facturas'),
+    enabled: createOpen,
+  })
+  const creditedInvoicesQuery = useQuery({
+    queryKey: ['creditos-lookup'],
+    queryFn: () => apiClient.getAllPages('/creditos'),
+    enabled: createOpen,
+  })
+  const accountsQuery = useQuery({
+    queryKey: ['creditos-cuentas'],
+    queryFn: () => apiClient.getAllPages('/cuentas-bancarias'),
+    enabled: Boolean(paymentCredit),
+  })
 
   const createMutation = useMutation({
     mutationFn: ({ invoiceId, dueDate }) => apiClient.post(`/facturas/${invoiceId}/credito`, { dueDate }),
@@ -326,7 +353,11 @@ export function CreditsPage() {
     },
   })
 
-  if (creditsQuery.isLoading || invoicesQuery.isLoading || accountsQuery.isLoading) {
+  if (
+    creditsQuery.isLoading ||
+    (createOpen && (invoicesQuery.isLoading || creditedInvoicesQuery.isLoading)) ||
+    (paymentCredit && accountsQuery.isLoading)
+  ) {
     return <CreditsSkeleton />
   }
 
@@ -338,28 +369,18 @@ export function CreditsPage() {
     )
   }
 
-  const credits = creditsQuery.data ?? []
+  const credits = creditsQuery.data?.data ?? []
+  const totalItems = Number(creditsQuery.data?.total ?? 0)
+  const totalPages = Math.max(1, Number(creditsQuery.data?.totalPages ?? 1))
   const invoices = invoicesQuery.data ?? []
   const accounts = accountsQuery.data ?? []
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
+  const endItem = Math.min(startItem + credits.length - 1, totalItems)
 
-  const creditedInvoiceIds = new Set(credits.map((credit) => credit.invoiceId))
+  const creditedInvoiceIds = new Set((creditedInvoicesQuery.data ?? []).map((credit) => credit.invoiceId))
   const availableInvoices = invoices.filter(
     (invoice) => invoice.status === 'ACTIVA' && !creditedInvoiceIds.has(invoice.id),
   )
-
-  const visibleCredits = credits.filter((credit) => {
-    const displayedStatus = getDisplayedCreditStatus(credit)
-    const matchesStatus = statusTab === 'TODOS' ? true : displayedStatus === statusTab
-
-    return (
-      matchesStatus &&
-      matchesSearch(credit, deferredSearch, (record) => [
-        record.invoice?.consecutive,
-        `${record.invoice?.client?.firstName ?? ''} ${record.invoice?.client?.lastName ?? ''}`,
-        formatCreditStatus(getDisplayedCreditStatus(record)),
-      ])
-    )
-  })
 
   const summaryCards = [
     {
@@ -472,12 +493,21 @@ export function CreditsPage() {
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  setCurrentPage(1)
+                }}
                 placeholder="Buscar por factura, cliente o estado..."
                 className="pl-9"
               />
             </div>
-            <Tabs value={statusTab} onValueChange={setStatusTab}>
+            <Tabs
+              value={statusTab}
+                onValueChange={(value) => {
+                  setStatusTab(value)
+                  setCurrentPage(1)
+                }}
+            >
               <TabsList>
                 <TabsTrigger value="PENDIENTE">Pendientes</TabsTrigger>
                 <TabsTrigger value="PARCIAL">Parciales</TabsTrigger>
@@ -501,8 +531,8 @@ export function CreditsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visibleCredits.length ? (
-                visibleCredits.map((credit) => {
+              {credits.length ? (
+                credits.map((credit) => {
                   const displayedStatus = getDisplayedCreditStatus(credit)
 
                   return (
@@ -545,6 +575,17 @@ export function CreditsPage() {
               )}
             </TableBody>
           </Table>
+
+          <LocalPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            startItem={startItem}
+            endItem={endItem}
+            singularLabel="credito"
+            pluralLabel="creditos"
+            onPageChange={setCurrentPage}
+          />
         </CardContent>
       </Card>
 

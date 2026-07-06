@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Bell, CalendarDays, ChevronDown, LogOut, Search, Store, X } from 'lucide-react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
+import { toast } from 'sonner'
 
 import { useAuth } from '@/auth/auth-context'
 import { getNavigationGroupsForRole, getNavigationItem } from '@/app/navigation'
@@ -17,6 +19,15 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Sidebar,
   SidebarContent,
@@ -35,7 +46,99 @@ import {
   SidebarTrigger,
   useSidebar,
 } from '@/components/ui/sidebar'
+import { formatDate, formatRole } from '@/lib/format'
+import { apiClient } from '@/lib/api-client'
 import { cn } from '@/lib/utils'
+
+const NOTIFICATIONS_STORAGE_KEY = 'mmm-last-notification-seen-at'
+
+function getStoredNotificationLastSeenAt() {
+  try {
+    return localStorage.getItem(NOTIFICATIONS_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function storeNotificationLastSeenAt(value) {
+  try {
+    if (!value) {
+      localStorage.removeItem(NOTIFICATIONS_STORAGE_KEY)
+      return
+    }
+
+    localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, value)
+  } catch {
+    return
+  }
+}
+
+function playNotificationTone() {
+  try {
+    const playSound = () => {
+      const audio = new Audio('/sound.mp3')
+      audio.volume = 1.0
+      audio.play().catch((err) => console.warn('Delayed play failed:', err))
+    }
+
+    const audio = new Audio('/sound.mp3')
+    audio.volume = 1.0
+    audio.play().catch((error) => {
+      console.warn('Audio playback prevented by browser, waiting for user interaction:', error)
+      const playOnInteraction = () => {
+        playSound()
+        document.removeEventListener('click', playOnInteraction)
+        document.removeEventListener('keydown', playOnInteraction)
+      }
+      document.addEventListener('click', playOnInteraction)
+      document.addEventListener('keydown', playOnInteraction)
+    })
+  } catch (err) {
+    console.error('Error al reproducir sound.mp3:', err)
+  }
+}
+
+function getNotificationRoute(notification) {
+  if (notification.type === 'PEDIDO_APP') {
+    return '/pedidos-app'
+  }
+
+  if (notification.invoiceId) {
+    return `/facturas?invoiceId=${notification.invoiceId}`
+  }
+
+  return '/facturas'
+}
+
+function getNotificationTypeLabel(notification) {
+  if (notification.type === 'PEDIDO_APP') {
+    return 'Pedido app'
+  }
+
+  if (notification.type === 'VENTA_POS') {
+    return 'Venta POS'
+  }
+
+  return 'Factura'
+}
+
+function getNotificationActorLabel(invoice) {
+  if (!invoice) {
+    return 'Sin origen'
+  }
+
+  if (invoice.source === 'APP_MOVIL') {
+    return 'App movil'
+  }
+
+  if (invoice.createdByRole || invoice.createdByUsername) {
+    return [invoice.createdByRole ? formatRole(invoice.createdByRole) : null, invoice.createdByUsername]
+      .filter(Boolean)
+      .join(' · ')
+  }
+
+  return 'Usuario interno'
+}
 
 function AppSidebar() {
   const { user } = useAuth()
@@ -304,6 +407,9 @@ export function AdminLayout() {
   const location = useLocation()
   const currentItem = getNavigationItem(location.pathname)
   const { user, logout } = useAuth()
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [lastSeenAt, setLastSeenAt] = useState(() => getStoredNotificationLastSeenAt())
+  const latestNotificationIdRef = useRef(null)
   const initials = user?.displayName
     ?.split(' ')
     .filter(Boolean)
@@ -311,6 +417,68 @@ export function AdminLayout() {
     .map((part) => part[0])
     .join('')
     .toUpperCase() ?? 'MM'
+
+  const notificationsQuery = useQuery({
+    queryKey: ['notificaciones'],
+    queryFn: () => apiClient.get('/notificaciones', { limit: 12 }),
+    refetchInterval: 3000,
+    staleTime: 1000,
+  })
+
+  const notifications = notificationsQuery.data ?? []
+  const unreadNotifications = useMemo(() => {
+    if (!lastSeenAt) {
+      return []
+    }
+
+    const lastSeenTime = new Date(lastSeenAt).getTime()
+    return notifications.filter((notification) => new Date(notification.createdAt).getTime() > lastSeenTime)
+  }, [lastSeenAt, notifications])
+
+  useEffect(() => {
+    if (lastSeenAt || !notifications.length) {
+      return
+    }
+
+    setLastSeenAt(notifications[0].createdAt)
+    storeNotificationLastSeenAt(notifications[0].createdAt)
+  }, [lastSeenAt, notifications])
+
+  useEffect(() => {
+    if (!notifications.length) {
+      return
+    }
+
+    const newestId = notifications[0].id
+
+    if (latestNotificationIdRef.current === null) {
+      latestNotificationIdRef.current = newestId
+      if (unreadNotifications.length > 0) {
+        playNotificationTone()
+      }
+      return
+    }
+
+    if (newestId <= latestNotificationIdRef.current) {
+      return
+    }
+
+    const newestNotification = notifications[0]
+    latestNotificationIdRef.current = newestId
+    playNotificationTone()
+    toast.info(newestNotification.title, {
+      description: newestNotification.message,
+    })
+  }, [notifications, unreadNotifications])
+
+  function markNotificationsAsSeen() {
+    if (!notifications.length) {
+      return
+    }
+
+    setLastSeenAt(notifications[0].createdAt)
+    storeNotificationLastSeenAt(notifications[0].createdAt)
+  }
 
   return (
     <SidebarProvider
@@ -354,11 +522,101 @@ export function AdminLayout() {
                   POS
                 </Link>
               </Button>
-              <Button variant="outline" size="icon-sm" className="rounded-full border-border/80 bg-background/50 backdrop-blur shadow-xs hover:bg-accent hover:text-accent-foreground hover:scale-105 active:scale-95 transition-all duration-300 relative">
-                <Bell className="size-4" />
-                <span className="absolute top-1 right-1 flex size-2 rounded-full bg-primary animate-pulse" />
-                <span className="sr-only">Notificaciones</span>
-              </Button>
+              <DropdownMenu
+                open={notificationsOpen}
+                onOpenChange={(open) => {
+                  setNotificationsOpen(open)
+
+                  if (open) {
+                    markNotificationsAsSeen()
+                  }
+                }}
+              >
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon-sm" className="rounded-full border-border/80 bg-background/50 backdrop-blur shadow-xs hover:bg-accent hover:text-accent-foreground hover:scale-105 active:scale-95 transition-all duration-300 relative">
+                    <Bell className="size-4" />
+                    {unreadNotifications.length ? (
+                      <span className="absolute -top-1 -right-1 flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground shadow-sm">
+                        {unreadNotifications.length > 9 ? '9+' : unreadNotifications.length}
+                      </span>
+                    ) : (
+                      <span className="absolute top-1 right-1 flex size-2 rounded-full bg-primary/70" />
+                    )}
+                    <span className="sr-only">Notificaciones</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-[360px] p-0">
+                  <div className="border-b border-border/70 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <DropdownMenuLabel className="p-0 text-sm font-semibold text-foreground">
+                          Notificaciones operativas
+                        </DropdownMenuLabel>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Pedidos, ventas POS y facturas recientes.
+                        </p>
+                      </div>
+                      <Badge variant="outline">{unreadNotifications.length} nuevas</Badge>
+                    </div>
+                  </div>
+
+                  <ScrollArea className="max-h-[26rem]">
+                    {notificationsQuery.isError ? (
+                      <div className="px-4 py-6 text-sm text-destructive">
+                        {notificationsQuery.error.message}
+                      </div>
+                    ) : notifications.length ? (
+                      notifications.map((notification, index) => {
+                        const isUnread = unreadNotifications.some((item) => item.id === notification.id)
+
+                        return (
+                          <div key={notification.id}>
+                            <DropdownMenuItem asChild className="cursor-pointer p-0 focus:bg-transparent">
+                              <Link
+                                to={getNotificationRoute(notification)}
+                                className={cn(
+                                  'block px-4 py-3 transition-colors hover:bg-muted/40',
+                                  isUnread && 'bg-primary/5',
+                                )}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <p className="truncate text-sm font-medium text-foreground">
+                                        {notification.title}
+                                      </p>
+                                      <Badge variant="outline" className="shrink-0 text-[10px]">
+                                        {getNotificationTypeLabel(notification)}
+                                      </Badge>
+                                    </div>
+                                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                                      {notification.message}
+                                    </p>
+                                    <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                                      <span>{formatDate(notification.createdAt)}</span>
+                                      {notification.invoice ? (
+                                        <span>{getNotificationActorLabel(notification.invoice)}</span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                  {isUnread ? (
+                                    <span className="mt-1 flex size-2.5 shrink-0 rounded-full bg-primary" />
+                                  ) : null}
+                                </div>
+                              </Link>
+                            </DropdownMenuItem>
+                            {index < notifications.length - 1 ? <DropdownMenuSeparator className="m-0" /> : null}
+                          </div>
+                        )
+                      })
+                    ) : (
+                      <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                        Aun no hay notificaciones operativas.
+                      </div>
+                    )}
+                  </ScrollArea>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <ThemeToggle />
               <div className="hidden text-right sm:block">
                 <p className="text-sm font-medium text-foreground">{user?.displayName ?? 'Administrador'}</p>

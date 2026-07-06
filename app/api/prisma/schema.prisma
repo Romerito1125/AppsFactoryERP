@@ -7,17 +7,18 @@ datasource db {
 }
 
 model User {
-  id        Int       @id @default(autoincrement())
-  clientId  Int?      @unique
-  username  String    @unique
-  password  String
-  role      Role      @default(CLIENTE)
-  isActive  Boolean   @default(true)
-  deletedAt DateTime?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @default(now()) @updatedAt
-  client    Client?   @relation(fields: [clientId], references: [id])
-  employee  Employee?
+  id              Int            @id @default(autoincrement())
+  clientId        Int?           @unique
+  username        String         @unique
+  password        String
+  role            Role           @default(CLIENTE)
+  isActive        Boolean        @default(true)
+  deletedAt       DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @default(now()) @updatedAt
+  client          Client?        @relation(fields: [clientId], references: [id])
+  employee        Employee?
+  createdInvoices Invoice[]      @relation("InvoiceCreatedBy")
 
   @@index([isActive])
 }
@@ -271,27 +272,51 @@ model ProductTag {
 }
 
 model Invoice {
-  id          Int           @id @default(autoincrement())
-  consecutive String        @unique
-  quoteId     Int?          @unique
-  clientId    Int
-  source      InvoiceSource @default(ADMIN)
-  subtotal    Decimal       @db.Decimal(12, 2)
-  taxes       Decimal       @db.Decimal(12, 2)
-  total       Decimal       @db.Decimal(12, 2)
-  status      InvoiceStatus @default(ACTIVA)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @default(now()) @updatedAt
-  client      Client        @relation(fields: [clientId], references: [id])
+  id                Int                  @id @default(autoincrement())
+  consecutive       String               @unique
+  quoteId           Int?                 @unique
+  clientId          Int
+  createdByUserId   Int?
+  createdByRole     Role?
+  createdByUsername String?
+  source            InvoiceSource        @default(ADMIN)
+  subtotal          Decimal              @db.Decimal(12, 2)
+  taxes             Decimal              @db.Decimal(12, 2)
+  total             Decimal              @db.Decimal(12, 2)
+  status            InvoiceStatus        @default(ACTIVA)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @default(now()) @updatedAt
+  client            Client               @relation(fields: [clientId], references: [id])
+  createdByUser     User?                @relation("InvoiceCreatedBy", fields: [createdByUserId], references: [id])
 
-  items        InvoiceItem[]
-  quote        Quote?                @relation(fields: [quoteId], references: [id])
-  delivery     Delivery?
-  bankMovement BankAccountMovement[]
-  credit       InvoiceCredit?
+  items         InvoiceItem[]
+  quote         Quote?                @relation(fields: [quoteId], references: [id])
+  delivery      Delivery?
+  bankMovement  BankAccountMovement[]
+  credit        InvoiceCredit?
+  notifications Notification[]
 
   @@index([clientId])
+  @@index([createdByUserId])
+  @@index([createdByRole])
   @@index([status])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  type      NotificationType
+  title     String
+  message   String
+  source    InvoiceSource?
+  invoiceId Int?
+  createdAt DateTime         @default(now())
+
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+
+  @@index([type])
+  @@index([source])
+  @@index([invoiceId])
   @@index([createdAt])
 }
 
@@ -530,9 +555,16 @@ enum QuoteStatus {
 enum Role {
   CLIENTE
   ADMIN
+  CAJERO
   VENDEDOR
   BODEGA
   CONTADOR
+}
+
+enum NotificationType {
+  FACTURA
+  VENTA_POS
+  PEDIDO_APP
 }
 
 enum ClientType {

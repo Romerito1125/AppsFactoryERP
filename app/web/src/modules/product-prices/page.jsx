@@ -51,6 +51,9 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { apiClient } from '@/lib/api-client'
 import { formatCurrency, formatDate, formatNumber, matchesSearch } from '@/lib/format'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { LocalPagination } from '@/modules/shared/local-pagination'
+
+const PAGE_SIZE = 20
 
 const priceSchemaBase = z.object({
   name: z.string().min(2, 'Minimo 2 caracteres'),
@@ -294,15 +297,24 @@ export function ProductPricesPage() {
   const [editPrice, setEditPrice] = useState(null)
   const [detailPrice, setDetailPrice] = useState(null)
   const [historyPrice, setHistoryPrice] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
 
   const pricesQuery = useQuery({
-    queryKey: ['precios-producto'],
-    queryFn: () => apiClient.get('/precios-producto'),
+    queryKey: ['precios-producto', statusTab, deferredSearch, currentPage],
+    queryFn: () =>
+      apiClient.get('/precios-producto', {
+        estado: statusTab,
+        q: deferredSearch,
+        page: currentPage,
+        limit: PAGE_SIZE,
+      }),
+    placeholderData: (previousData) => previousData,
   })
 
   const productsQuery = useQuery({
     queryKey: ['precios-producto-productos'],
-    queryFn: () => apiClient.get('/productos'),
+    queryFn: () => apiClient.getAllPages('/productos'),
+    enabled: createOpen || Boolean(editPrice),
   })
 
   const historyQuery = useQuery({
@@ -361,31 +373,17 @@ export function ProductPricesPage() {
     },
   })
 
-  const prices = pricesQuery.data ?? []
+  const prices = pricesQuery.data?.data ?? []
+  const totalItems = Number(pricesQuery.data?.total ?? 0)
+  const totalPages = Math.max(1, Number(pricesQuery.data?.totalPages ?? 1))
   const products = productsQuery.data ?? []
-
-  const visiblePrices = useMemo(() => {
-    const filteredByStatus = prices.filter((price) => {
-      if (statusTab === 'TODOS') return true
-      if (statusTab === 'ACTIVOS') return price.isActive
-      if (statusTab === 'INACTIVOS') return !price.isActive
-      return price.isDefault
-    })
-
-    return filteredByStatus.filter((price) =>
-      matchesSearch(price, deferredSearch, (record) => [
-        record.name,
-        record.product?.name,
-        record.product?.brand,
-        String(record.price),
-      ]),
-    )
-  }, [deferredSearch, prices, statusTab])
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
+  const endItem = Math.min(startItem + prices.length - 1, totalItems)
 
   const summaryCards = [
     {
       label: 'Precios registrados',
-      value: formatNumber(prices.length),
+      value: formatNumber(totalItems),
       help: 'Total de precios disponibles en la base actual.',
       icon: TagIcon,
     },
@@ -404,11 +402,11 @@ export function ProductPricesPage() {
     {
       label: 'Productos con multiples precios',
       value: formatNumber(
-        Array.from(
-          prices.reduce((groups, price) => {
-            groups.set(price.productId, (groups.get(price.productId) ?? 0) + 1)
-            return groups
-          }, new Map()),
+          Array.from(
+            prices.reduce((groups, price) => {
+              groups.set(price.productId, (groups.get(price.productId) ?? 0) + 1)
+              return groups
+            }, new Map()),
         ).filter(([, count]) => count > 1).length,
       ),
       help: 'Productos con al menos un precio operativo registrado.',
@@ -458,7 +456,7 @@ export function ProductPricesPage() {
     })
   }
 
-  if (pricesQuery.isLoading || productsQuery.isLoading) {
+  if (pricesQuery.isLoading || ((createOpen || Boolean(editPrice)) && productsQuery.isLoading)) {
     return <ProductPricesSkeleton />
   }
 
@@ -524,12 +522,21 @@ export function ProductPricesPage() {
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                   setSearch(event.target.value)
+                   setCurrentPage(1)
+                }}
                 placeholder="Buscar por producto o nombre del precio..."
                 className="pl-9"
               />
             </div>
-            <Tabs value={statusTab} onValueChange={setStatusTab}>
+            <Tabs
+              value={statusTab}
+              onValueChange={(value) => {
+                 setStatusTab(value)
+                 setCurrentPage(1)
+              }}
+            >
               <TabsList>
                 <TabsTrigger value="ACTIVOS">Activos</TabsTrigger>
                 <TabsTrigger value="INACTIVOS">Inactivos</TabsTrigger>
@@ -552,8 +559,8 @@ export function ProductPricesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visiblePrices.length ? (
-                visiblePrices.map((price) => (
+               {prices.length ? (
+                 prices.map((price) => (
                   <TableRow key={price.id}>
                     <TableCell>
                       <div>
@@ -627,6 +634,17 @@ export function ProductPricesPage() {
               )}
             </TableBody>
           </Table>
+
+          <LocalPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            startItem={startItem}
+            endItem={endItem}
+            singularLabel="precio"
+            pluralLabel="precios"
+            onPageChange={setCurrentPage}
+          />
         </CardContent>
       </Card>
 

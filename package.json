@@ -8,9 +8,13 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "lint": "turbo run lint",
+    "prisma:generate": "turbo run db:generate --filter=api",
     "db:generate": "turbo run db:generate --filter=api",
     "db:migrate": "turbo run db:migrate --filter=api",
     "db:deploy": "turbo run db:deploy --filter=api"
+  },
+  "prisma": {
+    "schema": "app/api/prisma/schema.prisma"
   },
   "dependencies": {
     "turbo": "^2.9.17"

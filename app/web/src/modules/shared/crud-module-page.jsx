@@ -58,6 +58,7 @@ import {
 import { cn } from '@/lib/utils'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
 import { ModuleFormDialog } from '@/modules/shared/module-form-dialog'
+import { LocalPagination } from '@/modules/shared/local-pagination'
 
 const EMPTY_RECORDS = []
 
@@ -78,17 +79,36 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('activos')
+  const [filters, setFilters] = useState(() => config.getInitialFilters?.() ?? {})
+  const [currentPage, setCurrentPage] = useState(1)
   const [formState, setFormState] = useState({ open: false, mode: 'create', record: null })
   const [detailRecord, setDetailRecord] = useState(null)
   const [actionState, setActionState] = useState(null)
   const deferredSearch = useDeferredValue(search)
+  const ITEMS_PER_PAGE = config.itemsPerPage ?? 20
 
-  const queryKey = [config.key, config.statusFilter === 'api' ? status : 'all']
+  const queryKey = [config.key, status, deferredSearch, currentPage, ITEMS_PER_PAGE, filters]
 
   const recordsQuery = useQuery({
     queryKey,
-    queryFn: () => config.fetchRecords(status),
+    queryFn: () =>
+        config.fetchRecords({
+          status,
+          search: deferredSearch,
+          page: currentPage,
+          limit: ITEMS_PER_PAGE,
+          filters,
+        }),
+    placeholderData: (previousData) => previousData,
   })
+
+  function updateFilters(nextFilters) {
+    setFilters((current) => {
+      const resolved = typeof nextFilters === 'function' ? nextFilters(current) : nextFilters
+      return resolved
+    })
+    setCurrentPage(1)
+  }
 
   const createMutation = useMutation({
     mutationFn: config.createRecord,
@@ -122,7 +142,9 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
     },
   })
 
-  const records = recordsQuery.data ?? EMPTY_RECORDS
+  const payload = recordsQuery.data
+  const isPaginatedResponse = !Array.isArray(payload) && Array.isArray(payload?.data)
+  const records = isPaginatedResponse ? payload.data : payload ?? EMPTY_RECORDS
 
   const visibleRecords = useMemo(() => {
     const locallyFiltered =
@@ -136,26 +158,38 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
           })
         : records
 
-    return locallyFiltered.filter((record) =>
-      matchesSearch(record, deferredSearch, config.searchResolver),
-    )
-  }, [config.searchResolver, config.statusFilter, deferredSearch, records, status])
+    if (isPaginatedResponse) {
+      return locallyFiltered
+    }
 
-  const ITEMS_PER_PAGE = 10
-  const [currentPage, setCurrentPage] = useState(1)
+    return locallyFiltered.filter((record) => matchesSearch(record, deferredSearch, config.searchResolver))
+  }, [config.searchResolver, config.statusFilter, deferredSearch, isPaginatedResponse, records, status])
 
-  const totalItems = visibleRecords.length
-  const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
+  const totalItems = isPaginatedResponse ? Number(payload.total ?? 0) : visibleRecords.length
+  const totalPages = isPaginatedResponse
+    ? Math.max(1, Number(payload.totalPages ?? 1))
+    : Math.max(1, Math.ceil(visibleRecords.length / ITEMS_PER_PAGE))
 
   const paginatedRecords = useMemo(() => {
+    if (isPaginatedResponse) {
+      return visibleRecords
+    }
+
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
     return visibleRecords.slice(startIndex, startIndex + ITEMS_PER_PAGE)
-  }, [visibleRecords, currentPage])
+  }, [ITEMS_PER_PAGE, currentPage, isPaginatedResponse, visibleRecords])
 
   const startIndex = totalItems === 0 ? 0 : (currentPage - 1) * ITEMS_PER_PAGE + 1
-  const endIndex = Math.min(currentPage * ITEMS_PER_PAGE, totalItems)
+  const endIndex = isPaginatedResponse
+    ? Math.min(startIndex + paginatedRecords.length - 1, totalItems)
+    : Math.min(currentPage * ITEMS_PER_PAGE, totalItems)
 
-  const summaryCards = config.getSummaryCards({ records: visibleRecords, rawRecords: records })
+  const summaryCards = config.getSummaryCards({
+    records: paginatedRecords,
+    rawRecords: records,
+    totalRecords: totalItems,
+    currentPage,
+  })
 
   async function handleSave(payload) {
     if (formState.mode === 'create') {
@@ -265,6 +299,12 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
                 className="pl-9"
               />
             </div>
+            {config.renderTableFilters?.({
+              filters,
+              updateFilters,
+              lookups,
+              records,
+            })}
             {config.statusFilter ? (
               <Select
                 value={status}
@@ -375,81 +415,18 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
                 </TableBody>
               </Table>
 
-              {/* Pagination Controls */}
-              {totalPages > 1 && (
-                <div className="flex flex-col items-center justify-between gap-4 border-t border-border/60 px-2 py-4 sm:flex-row mt-4">
-                  <div className="text-xs text-muted-foreground">
-                    Mostrando <span className="font-semibold text-foreground">{startIndex}</span> a{' '}
-                    <span className="font-semibold text-foreground">{endIndex}</span> de{' '}
-                    <span className="font-semibold text-foreground">{totalItems}</span>{' '}
-                    {totalItems === 1 ? config.singularLabel.toLowerCase() : config.title.toLowerCase()}
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-                      disabled={currentPage === 1}
-                      className="h-8 rounded-lg px-3 text-xs"
-                    >
-                      Anterior
-                    </Button>
-
-                    {Array.from({ length: totalPages }).map((_, index) => {
-                      const pageNumber = index + 1
-                      if (
-                        totalPages > 5 &&
-                        pageNumber !== 1 &&
-                        pageNumber !== totalPages &&
-                        Math.abs(pageNumber - currentPage) > 1
-                      ) {
-                        if (pageNumber === 2 && currentPage > 3) {
-                          return (
-                            <span key="left-ellipsis" className="px-1.5 text-xs text-muted-foreground">
-                              ...
-                            </span>
-                          )
-                        }
-                        if (pageNumber === totalPages - 1 && currentPage < totalPages - 2) {
-                          return (
-                            <span key="right-ellipsis" className="px-1.5 text-xs text-muted-foreground">
-                              ...
-                            </span>
-                          )
-                        }
-                        return null
-                      }
-
-                      return (
-                        <Button
-                          key={pageNumber}
-                          variant={currentPage === pageNumber ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => setCurrentPage(pageNumber)}
-                          className={cn(
-                            'size-8 rounded-lg p-0 text-xs font-medium transition-all duration-250',
-                            currentPage === pageNumber && 'shadow-xs shadow-primary/20 bg-primary text-primary-foreground'
-                          )}
-                        >
-                          {pageNumber}
-                        </Button>
-                      )
-                    })}
-
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-                      disabled={currentPage === totalPages}
-                      className="h-8 rounded-lg px-3 text-xs"
-                    >
-                      Siguiente
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </>
-          ) : null}
+               <LocalPagination
+                 currentPage={currentPage}
+                 totalPages={totalPages}
+                 totalItems={totalItems}
+                 startItem={startIndex}
+                 endItem={endIndex}
+                 singularLabel={config.singularLabel.toLowerCase()}
+                 pluralLabel={config.title.toLowerCase()}
+                 onPageChange={setCurrentPage}
+               />
+             </>
+           ) : null}
         </CardContent>
       </Card>
 

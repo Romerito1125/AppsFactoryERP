@@ -5,8 +5,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DeliveryStatus, InvoiceStatus } from '@prisma/client';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateDeliveryDto } from './dto/create-delivery.dto';
+import { ListDeliveriesQueryDto } from './dto/list-deliveries-query.dto';
 import { UpdateDeliveryStatusDto } from './dto/update-delivery-status.dto';
 import { UpdateDeliveryDto } from './dto/update-delivery.dto';
 
@@ -14,11 +19,24 @@ import { UpdateDeliveryDto } from './dto/update-delivery.dto';
 export class DeliveriesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll() {
-    return this.prisma.delivery.findMany({
-      include: this.deliveryInclude,
-      orderBy: { id: 'desc' },
-    });
+  async findAll(query: ListDeliveriesQueryDto) {
+    const where = {
+      ...this.getStatusWhere(query.status),
+      ...this.getSearchWhere(query.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.delivery.count({ where }),
+      this.prisma.delivery.findMany({
+        where,
+        include: this.deliveryInclude,
+        orderBy: { id: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findOne(id: number) {
@@ -121,5 +139,25 @@ export class DeliveriesService {
     if (id <= 0) {
       throw new BadRequestException('El id debe ser un número positivo');
     }
+  }
+
+  private getStatusWhere(status?: ListDeliveriesQueryDto['status']) {
+    if (!status) return undefined;
+    return { status };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { address: { contains: q, mode: 'insensitive' as const } },
+        { recipientName: { contains: q, mode: 'insensitive' as const } },
+        { recipientPhone: { contains: q, mode: 'insensitive' as const } },
+        { invoice: { consecutive: { contains: q, mode: 'insensitive' as const } } },
+      ],
+    };
   }
 }

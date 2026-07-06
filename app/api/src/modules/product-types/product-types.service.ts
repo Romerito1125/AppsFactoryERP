@@ -5,6 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateProductTypeDto } from './dto/create-product-type.dto';
 import { FilterProductTypesDto } from './dto/filter-product-types.dto';
@@ -14,11 +18,23 @@ import { UpdateProductTypeDto } from './dto/update-product-type.dto';
 export class ProductTypesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll(filter: FilterProductTypesDto) {
-    return this.prisma.productType.findMany({
-      where: this.getStatusWhere(filter.estado),
-      orderBy: { id: 'asc' },
-    });
+  async findAll(filter: FilterProductTypesDto) {
+    const where = {
+      ...this.getStatusWhere(filter.estado),
+      ...this.getSearchWhere(filter.q),
+    };
+    const { page, limit, skip, take } = resolvePagination(filter);
+    const [total, data] = await Promise.all([
+      this.prisma.productType.count({ where }),
+      this.prisma.productType.findMany({
+        where,
+        orderBy: { id: 'asc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findOne(id: number) {
@@ -99,6 +115,19 @@ export class ProductTypesService {
     if (status === RecordStatusQuery.TODOS) return undefined;
     if (status === RecordStatusQuery.INACTIVOS) return { isActive: false };
     return { isActive: true };
+  }
+
+  private getSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { name: { contains: q, mode: 'insensitive' as const } },
+        { description: { contains: q, mode: 'insensitive' as const } },
+      ],
+    };
   }
 
   private ensurePositiveId(id: number) {

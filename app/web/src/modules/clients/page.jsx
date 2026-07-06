@@ -95,7 +95,8 @@ const clientsConfig = {
 
     return values
   },
-  fetchRecords: (status) => apiClient.get('/clientes', { estado: toApiStatus(status) }),
+  fetchRecords: ({ status, search, page, limit }) =>
+    apiClient.get('/clientes', { estado: toApiStatus(status), q: search, page, limit }),
   createRecord: (payload) => apiClient.post('/clientes', payload),
   updateRecord: (id, payload) => apiClient.patch(`/clientes/${id}`, payload),
   archiveRecord: (id) => apiClient.delete(`/clientes/${id}`),

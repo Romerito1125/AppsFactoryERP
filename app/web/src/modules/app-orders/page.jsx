@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Bike, ReceiptText, Search, Smartphone } from 'lucide-react'
 
@@ -23,8 +23,11 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { apiClient } from '@/lib/api-client'
-import { formatCurrency, formatDate, formatInvoiceStatus, formatNumber, matchesSearch } from '@/lib/format'
+import { formatCurrency, formatDate, formatInvoiceStatus, formatNumber } from '@/lib/format'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { LocalPagination } from '@/modules/shared/local-pagination'
+
+const PAGE_SIZE = 20
 
 const deliveryStatusLabels = {
   PENDIENTE: 'Pendiente',
@@ -61,37 +64,27 @@ function AppOrdersSkeleton() {
 
 export function AppOrdersPage() {
   const [search, setSearch] = useState('')
-  const deferredSearch = useDeferredValue(search)
   const [statusTab, setStatusTab] = useState('TODOS')
   const [selectedOrder, setSelectedOrder] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
 
   const ordersQuery = useQuery({
-    queryKey: ['tienda-pedidos'],
-    queryFn: () => apiClient.get('/tienda/pedidos'),
+    queryKey: ['tienda-pedidos', statusTab, search, currentPage],
+    queryFn: () =>
+      apiClient.get('/tienda/pedidos', {
+        status: statusTab === 'TODOS' ? undefined : statusTab,
+        q: search,
+        page: currentPage,
+        limit: PAGE_SIZE,
+      }),
+    placeholderData: (previousData) => previousData,
   })
 
-  const orders = useMemo(() => ordersQuery.data ?? [], [ordersQuery.data])
-
-  const visibleOrders = useMemo(
-    () =>
-      orders.filter((order) => {
-        const matchesStatus = statusTab === 'TODOS' ? true : order.delivery?.status === statusTab
-
-        return (
-          matchesStatus &&
-          matchesSearch(order, deferredSearch, (record) => [
-            record.consecutive,
-            record.client?.firstName,
-            record.client?.lastName,
-            record.client?.identification,
-            record.delivery?.address,
-            record.delivery?.recipientName,
-            record.delivery?.recipientPhone,
-          ])
-        )
-      }),
-    [deferredSearch, orders, statusTab],
-  )
+  const orders = useMemo(() => ordersQuery.data?.data ?? [], [ordersQuery.data])
+  const totalItems = Number(ordersQuery.data?.total ?? 0)
+  const totalPages = Math.max(1, Number(ordersQuery.data?.totalPages ?? 1))
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
+  const endItem = Math.min(startItem + orders.length - 1, totalItems)
 
   const summaryCards = useMemo(
     () => [
@@ -164,7 +157,10 @@ export function AppOrdersPage() {
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  setCurrentPage(1)
+                }}
                 placeholder="Buscar por cliente, pedido o direccion..."
                 className="pl-9"
               />
@@ -172,7 +168,13 @@ export function AppOrdersPage() {
           </div>
         </CardHeader>
         <CardContent className="grid gap-4">
-          <Tabs value={statusTab} onValueChange={setStatusTab}>
+          <Tabs
+            value={statusTab}
+            onValueChange={(value) => {
+                setStatusTab(value)
+                setCurrentPage(1)
+              }}
+          >
             <TabsList className="grid w-full grid-cols-3 md:grid-cols-6">
               {['TODOS', 'PENDIENTE', 'EN_PREPARACION', 'EN_CAMINO', 'ENTREGADO', 'CANCELADO'].map((status) => (
                 <TabsTrigger key={status} value={status}>
@@ -196,8 +198,8 @@ export function AppOrdersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visibleOrders.length ? (
-                  visibleOrders.map((order) => (
+                {orders.length ? (
+                  orders.map((order) => (
                     <TableRow key={order.id}>
                       <TableCell>
                         <div>
@@ -240,6 +242,17 @@ export function AppOrdersPage() {
                 )}
               </TableBody>
             </Table>
+
+            <LocalPagination
+              currentPage={currentPage}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              startItem={startItem}
+              endItem={endItem}
+              singularLabel="pedido"
+              pluralLabel="pedidos"
+              onPageChange={setCurrentPage}
+            />
           </div>
         </CardContent>
       </Card>

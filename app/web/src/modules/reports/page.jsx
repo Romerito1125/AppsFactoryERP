@@ -197,13 +197,13 @@ export function ReportsPage() {
     queryKey: ['reportes-overview'],
     queryFn: async () => {
       const [invoices, credits, accounts, bankMovements, products, inventoryMovements, clients] = await Promise.all([
-        apiClient.get('/facturas'),
-        apiClient.get('/creditos'),
-        apiClient.get('/cuentas-bancarias', { estado: 'todos' }),
-        apiClient.get('/movimientos-bancarios'),
-        apiClient.get('/productos', { estado: 'todos' }),
-        apiClient.get('/inventario/movimientos'),
-        apiClient.get('/clientes', { estado: 'todos' }),
+        apiClient.getAllPages('/facturas'),
+        apiClient.getAllPages('/creditos'),
+        apiClient.getAllPages('/cuentas-bancarias', { estado: 'todos' }),
+        apiClient.getAllPages('/movimientos-bancarios'),
+        apiClient.getAllPages('/productos', { estado: 'todos' }),
+        apiClient.getAllPages('/inventario/movimientos'),
+        apiClient.getAllPages('/clientes', { estado: 'todos' }),
       ])
 
       return { invoices, credits, accounts, bankMovements, products, inventoryMovements, clients }

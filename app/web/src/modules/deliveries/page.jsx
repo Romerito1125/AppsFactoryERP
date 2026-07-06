@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useForm } from 'react-hook-form'
@@ -50,8 +50,11 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { apiClient } from '@/lib/api-client'
-import { formatCurrency, formatDate, formatNumber, matchesSearch } from '@/lib/format'
+import { formatCurrency, formatDate, formatNumber } from '@/lib/format'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { LocalPagination } from '@/modules/shared/local-pagination'
+
+const PAGE_SIZE = 20
 
 const deliverySchema = z.object({
   invoiceId: z.number({ message: 'Selecciona una factura' }).int().positive('Selecciona una factura'),
@@ -254,15 +257,29 @@ function DeliveryStatusDialog({ open, onOpenChange, delivery, onSubmit, isSubmit
 export function DeliveriesPage() {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
-  const deferredSearch = useDeferredValue(search)
   const [statusTab, setStatusTab] = useState('PENDIENTE')
   const [createOpen, setCreateOpen] = useState(false)
   const [editDelivery, setEditDelivery] = useState(null)
   const [statusDelivery, setStatusDelivery] = useState(null)
   const [detailDelivery, setDetailDelivery] = useState(null)
+  const [currentPage, setCurrentPage] = useState(1)
 
-  const deliveriesQuery = useQuery({ queryKey: ['domicilios'], queryFn: () => apiClient.get('/domicilios') })
-  const invoicesQuery = useQuery({ queryKey: ['domicilios-facturas'], queryFn: () => apiClient.get('/facturas') })
+  const deliveriesQuery = useQuery({
+    queryKey: ['domicilios', statusTab, search, currentPage],
+    queryFn: () =>
+      apiClient.get('/domicilios', {
+        status: statusTab === 'TODOS' ? undefined : statusTab,
+        q: search,
+        page: currentPage,
+        limit: PAGE_SIZE,
+      }),
+    placeholderData: (previousData) => previousData,
+  })
+  const invoicesQuery = useQuery({
+    queryKey: ['domicilios-facturas'],
+    queryFn: () => apiClient.getAllPages('/facturas'),
+    enabled: createOpen,
+  })
 
   const createMutation = useMutation({
     mutationFn: (payload) => apiClient.post('/domicilios', payload),
@@ -295,7 +312,7 @@ export function DeliveriesPage() {
     },
   })
 
-  if (deliveriesQuery.isLoading || invoicesQuery.isLoading) {
+  if (deliveriesQuery.isLoading || (createOpen && invoicesQuery.isLoading)) {
     return <DeliveriesSkeleton />
   }
 
@@ -307,27 +324,16 @@ export function DeliveriesPage() {
     )
   }
 
-  const deliveries = deliveriesQuery.data ?? []
+  const deliveries = deliveriesQuery.data?.data ?? []
+  const totalItems = Number(deliveriesQuery.data?.total ?? 0)
+  const totalPages = Math.max(1, Number(deliveriesQuery.data?.totalPages ?? 1))
   const invoices = invoicesQuery.data ?? []
   const assignedInvoiceIds = new Set(deliveries.map((delivery) => delivery.invoiceId))
   const availableInvoices = invoices.filter(
     (invoice) => invoice.status === 'ACTIVA' && !assignedInvoiceIds.has(invoice.id),
   )
-
-  const visibleDeliveries = deliveries.filter((delivery) => {
-    const matchesStatus = statusTab === 'TODOS' ? true : delivery.status === statusTab
-
-    return (
-      matchesStatus &&
-      matchesSearch(delivery, deferredSearch, (record) => [
-        record.invoice?.consecutive,
-        record.address,
-        record.recipientName,
-        record.recipientPhone,
-        formatDeliveryStatus(record.status),
-      ])
-    )
-  })
+  const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
+  const endItem = Math.min(startItem + deliveries.length - 1, totalItems)
 
   const summaryCards = [
     {
@@ -446,12 +452,21 @@ export function DeliveriesPage() {
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  setCurrentPage(1)
+                }}
                 placeholder="Buscar por factura, destinatario o direccion..."
                 className="pl-9"
               />
             </div>
-            <Tabs value={statusTab} onValueChange={setStatusTab}>
+            <Tabs
+              value={statusTab}
+              onValueChange={(value) => {
+                setStatusTab(value)
+                setCurrentPage(1)
+                }}
+            >
               <TabsList>
                 <TabsTrigger value="PENDIENTE">Pendientes</TabsTrigger>
                 <TabsTrigger value="EN_CAMINO">En camino</TabsTrigger>
@@ -474,8 +489,8 @@ export function DeliveriesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {visibleDeliveries.length ? (
-                visibleDeliveries.map((delivery) => (
+                {deliveries.length ? (
+                  deliveries.map((delivery) => (
                   <TableRow key={delivery.id}>
                     <TableCell className="font-medium">{delivery.invoice?.consecutive ?? `Factura #${delivery.invoiceId}`}</TableCell>
                     <TableCell>
@@ -522,6 +537,17 @@ export function DeliveriesPage() {
               )}
             </TableBody>
           </Table>
+
+          <LocalPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            startItem={startItem}
+            endItem={endItem}
+            singularLabel="domicilio"
+            pluralLabel="domicilios"
+            onPageChange={setCurrentPage}
+          />
         </CardContent>
       </Card>
 
