@@ -37,6 +37,12 @@ Si necesitas migrar:
 bunx prisma migrate dev --name update_erp_features
 ```
 
+Para agregar soporte de múltiples códigos de barras por producto:
+
+```bash
+bunx prisma migrate dev --name add_product_barcodes
+```
+
 Build y formato:
 
 ```bash
@@ -372,6 +378,7 @@ Crear bodega:
 | --- | --- | --- | --- |
 | GET | `/productos` | Lista productos activos con tipo, proveedor, tags, precios y bodegas | No |
 | GET | `/productos/:id` | Consulta producto | No |
+| GET | `/productos/codigo-barras/:code` | Busca producto por código de barras activo para punto de venta, protegido con JWT | No |
 | POST | `/productos` | Crea producto con precios, tags, stock inicial e imagen opcional | Sí, JSON o multipart |
 | PATCH | `/productos/:id` | Actualiza datos, reemplaza tags si envías `tagIds` e imagen opcional | Sí, JSON o multipart |
 | PATCH | `/productos/:id/imagen` | Reemplaza la imagen del producto | Sí, multipart |
@@ -413,6 +420,17 @@ Crear producto:
       "warehouseId": 2,
       "quantity": 15
     }
+  ],
+  "barcodes": [
+    {
+      "code": "7701234567890",
+      "type": "EAN13",
+      "isPrimary": true
+    },
+    {
+      "code": "COCA15L-PROMO",
+      "type": "CODE128"
+    }
   ]
 }
 ```
@@ -453,6 +471,13 @@ formData.append(
     },
   ]),
 );
+formData.append(
+  'barcodes',
+  JSON.stringify([
+    { code: '7701234567890', type: 'EAN13', isPrimary: true },
+    { code: 'COCA15L-PROMO', type: 'CODE128' },
+  ]),
+);
 
 if (imageFile) {
   formData.append('image', imageFile);
@@ -488,9 +513,10 @@ Formato esperado en `multipart/form-data`:
 | `tagIds` | Text | `[1,2]` |
 | `prices` | Text | `[{"name":"Precio normal","price":5000,"unit":"L","quantity":1.5,"isDefault":true}]` |
 | `warehouses` | Text | `[{"warehouseId":1,"quantity":20}]` |
+| `barcodes` | Text | `[{"code":"7701234567890","type":"EAN13","isPrimary":true}]` |
 | `image` | File | Archivo JPG, PNG o WEBP |
 
-Los campos `tagIds`, `prices` y `warehouses` deben enviarse como JSON string en una sola key cada uno. No los envíes como `warehouses[0][warehouseId]`, `warehouseId` separado o varias filas con la misma key.
+Los campos `tagIds`, `prices`, `warehouses` y `barcodes` deben enviarse como JSON string en una sola key cada uno. No los envíes como `warehouses[0][warehouseId]`, `warehouseId` separado o varias filas con la misma key.
 
 Actualizar producto con imagen opcional:
 
@@ -544,8 +570,81 @@ Reglas:
 - `warehouses` crea `ProductWarehouse` y movimientos `ENTRADA` como stock inicial.
 - El stock después de creado se mueve por `/inventario`, no por `PATCH /productos/:id`.
 - Solo puede haber un precio default activo por producto.
+- Un producto puede tener varios códigos de barras. Si se envía un solo código sin `isPrimary`, queda principal automáticamente. Si se envían varios y ninguno es principal, el primero queda principal.
 - `unit` debe ser una de: `UND`, `KG`, `G`, `LB`, `L`, `ML`, `CAJA`, `PAQUETE`.
 - La utilidad no se expone en tienda pública; solo está en endpoints administrativos con JWT.
+
+## Códigos De Barras
+
+| Método | Ruta | Qué hace | Body | Auth |
+| --- | --- | --- | --- | --- |
+| GET | `/codigos-barras` | Lista códigos de barras | No | Bearer JWT |
+| GET | `/codigos-barras/:id` | Consulta un código | No | Bearer JWT |
+| GET | `/productos/:id/codigos-barras` | Lista códigos de un producto | No | Bearer JWT |
+| POST | `/productos/:id/codigos-barras` | Crea código para un producto activo | Sí | Bearer JWT |
+| PATCH | `/codigos-barras/:id` | Actualiza código, tipo o principal | Sí | Bearer JWT |
+| DELETE | `/codigos-barras/:id` | Soft delete: `isActive=false`, `isPrimary=false` | No | Bearer JWT |
+| PATCH | `/codigos-barras/:id/principal` | Marca código activo como principal | No | Bearer JWT |
+
+Roles permitidos: `ADMIN`, `BODEGA`, `VENDEDOR`.
+
+Tipos permitidos por `BarcodeType`:
+
+| Enum | Formato básico | Ejemplo |
+| --- | --- | --- |
+| `EAN13` | 13 dígitos | `7701234567890` |
+| `EAN8` | 8 dígitos | `96385074` |
+| `UPC_A` | 12 dígitos | `042100005264` |
+| `UPC_E` | 6 u 8 dígitos | `042526` |
+| `CODE128` | Alfanumérico | `COCA15L-PROMO` |
+| `QR` | Texto no vacío | `https://example.com/p/1` |
+| `OTHER` | Texto no vacío | `INTERNO-001` |
+
+Crear código de barras:
+
+```json
+{
+  "code": "7701234567890",
+  "type": "EAN13",
+  "isPrimary": true
+}
+```
+
+Buscar producto por código de barras para escáner POS:
+
+```http
+GET /productos/codigo-barras/7701234567890
+Authorization: Bearer <token-vendedor>
+```
+
+La respuesta incluye producto, tipo, proveedor, precios activos, stock por bodega, tags y códigos de barras.
+
+Usar `barcode` en facturación:
+
+```json
+{
+  "clientId": 1,
+  "items": [
+    {
+      "barcode": "7701234567890",
+      "quantity": 2
+    }
+  ]
+}
+```
+
+Usar `barcode` en inventario:
+
+```json
+{
+  "barcode": "7701234567890",
+  "toWarehouseId": 1,
+  "quantity": 10,
+  "reason": "Entrada por compra"
+}
+```
+
+Si se envían `productId` y `barcode`, ambos deben pertenecer al mismo producto. Los códigos inactivos y productos inactivos son rechazados.
 
 Consultar utilidad de un producto:
 

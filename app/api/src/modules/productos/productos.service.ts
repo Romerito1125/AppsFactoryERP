@@ -10,6 +10,7 @@ import {
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { BarcodeFormatService } from '../../shared/products/barcode-format.service';
 import { R2StorageService } from '../../shared/storage/r2-storage.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import {
@@ -23,6 +24,7 @@ export class ProductosService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: R2StorageService,
+    private readonly barcodeFormat: BarcodeFormatService,
   ) {}
 
   async findAll(filter: FilterProductsDto) {
@@ -74,7 +76,8 @@ export class ProductosService {
     createProductDto: CreateProductDto,
     image?: Express.Multer.File,
   ) {
-    const { tagIds, prices, warehouses, ...productData } = createProductDto;
+    const { tagIds, prices, warehouses, barcodes, ...productData } =
+      createProductDto;
     const uploadedImage = image
       ? await this.storage.uploadProductImage(image)
       : undefined;
@@ -91,6 +94,7 @@ export class ProductosService {
         prices,
         productData.unit ?? UnitType.UND,
       );
+      const normalizedBarcodes = await this.normalizeBarcodes(barcodes);
 
       const product = await this.prisma.$transaction(async (tx) => {
         const createdProduct = await tx.product.create({
@@ -102,6 +106,9 @@ export class ProductosService {
               : undefined,
             prices: normalizedPrices.length
               ? { create: normalizedPrices }
+              : undefined,
+            barcodes: normalizedBarcodes.length
+              ? { create: normalizedBarcodes }
               : undefined,
           },
           include: this.productInclude,
@@ -147,7 +154,7 @@ export class ProductosService {
     this.ensurePositiveId(id);
     const currentProduct = await this.getExistingProduct(id);
 
-    const { tagIds, ...productData } = updateProductDto;
+    const { tagIds, barcodes, ...productData } = updateProductDto;
     const uploadedImage = image
       ? await this.storage.uploadProductImage(image, id)
       : undefined;
@@ -162,11 +169,40 @@ export class ProductosService {
       }
 
       await this.ensureTagsExist(tagIds);
+      const normalizedBarcodes = await this.normalizeBarcodes(barcodes, id);
 
       const product = await this.prisma.$transaction(async (tx) => {
         // Si el frontend envía tagIds, se interpreta como reemplazo completo de etiquetas.
         if (tagIds) {
           await tx.productTag.deleteMany({ where: { productId: id } });
+        }
+
+        if (normalizedBarcodes.some((barcode) => barcode.isPrimary)) {
+          await tx.productBarcode.updateMany({
+            where: { productId: id },
+            data: { isPrimary: false },
+          });
+        }
+
+        for (const barcode of normalizedBarcodes) {
+          if (barcode.id) {
+            await tx.productBarcode.update({
+              where: { id: barcode.id },
+              data: {
+                type: barcode.type,
+                isPrimary: barcode.isPrimary,
+              },
+            });
+          } else {
+            await tx.productBarcode.create({
+              data: {
+                productId: id,
+                code: barcode.code,
+                type: barcode.type,
+                isPrimary: barcode.isPrimary,
+              },
+            });
+          }
         }
 
         return tx.product.update({
@@ -263,6 +299,21 @@ export class ProductosService {
     return this.formatProduct(product);
   }
 
+  async findByBarcode(code: string) {
+    const barcode = await this.prisma.productBarcode.findUnique({
+      where: { code: code.trim() },
+      include: { product: { include: this.productBarcodeLookupInclude } },
+    });
+
+    if (!barcode?.isActive || !barcode.product.isActive) {
+      throw new NotFoundException(
+        'Producto no encontrado para el código de barras',
+      );
+    }
+
+    return this.formatProduct(barcode.product);
+  }
+
   private readonly productInclude = {
     productType: true,
     provider: true,
@@ -271,6 +322,15 @@ export class ProductosService {
     warehouses: {
       include: { warehouse: true },
       orderBy: { warehouseId: 'asc' },
+    },
+    barcodes: { orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }] },
+  } as const;
+
+  private readonly productBarcodeLookupInclude = {
+    ...this.productInclude,
+    prices: {
+      where: { isActive: true },
+      orderBy: { id: 'asc' },
     },
   } as const;
 
@@ -344,6 +404,52 @@ export class ProductosService {
         endsAt,
       };
     });
+  }
+
+  private async normalizeBarcodes(
+    barcodes?: CreateProductDto['barcodes'],
+    productId?: number,
+  ) {
+    if (!barcodes?.length) return [];
+
+    const codes = barcodes.map((barcode) =>
+      this.barcodeFormat.validate(barcode.code, barcode.type),
+    );
+    if (new Set(codes).size !== codes.length) {
+      throw new BadRequestException(
+        'No se permiten códigos de barras duplicados',
+      );
+    }
+
+    const primaryCount = barcodes.filter((barcode) => barcode.isPrimary).length;
+    if (primaryCount > 1) {
+      throw new BadRequestException(
+        'Solo puede existir un código de barras principal por producto',
+      );
+    }
+
+    const existingCodes = await this.prisma.productBarcode.findMany({
+      where: { code: { in: codes } },
+    });
+
+    for (const existing of existingCodes) {
+      if (existing.productId !== productId) {
+        throw new BadRequestException(
+          `El código de barras ${existing.code} ya existe en otro producto`,
+        );
+      }
+    }
+
+    const existingForProduct = new Map(
+      existingCodes.map((item) => [item.code, item.id]),
+    );
+
+    return barcodes.map((barcode, index) => ({
+      id: existingForProduct.get(codes[index]),
+      code: codes[index],
+      type: barcode.type,
+      isPrimary: barcode.isPrimary ?? (primaryCount === 0 && index === 0),
+    }));
   }
 
   private async ensureProductTypeExists(id: number) {

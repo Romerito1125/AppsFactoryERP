@@ -1,4 +1,4 @@
-import { UnitType } from '@prisma/client';
+import { BarcodeType, UnitType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   ArrayUnique,
@@ -114,6 +114,26 @@ export class CreateProductDto {
   @ValidateNested({ each: true })
   @Type(() => CreateInitialProductWarehouseDto)
   warehouses?: CreateInitialProductWarehouseDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateProductBarcodeDto)
+  barcodes?: CreateProductBarcodeDto[];
+}
+
+export class CreateProductBarcodeDto {
+  @IsString()
+  @MinLength(1)
+  code: string;
+
+  @IsOptional()
+  @IsEnum(BarcodeType)
+  type?: BarcodeType;
+
+  @IsOptional()
+  @IsBoolean()
+  isPrimary?: boolean;
 }
 
 export class CreateInitialProductWarehouseDto {

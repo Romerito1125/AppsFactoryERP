@@ -1,11 +1,24 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsPositive } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsPositive,
+  IsString,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 
 export class CreateInvoiceItemDto {
+  @ValidateIf((item) => !item.barcode)
   @Type(() => Number)
   @IsInt()
   @IsPositive()
-  productId: number;
+  productId?: number;
+
+  @ValidateIf((item) => !item.productId)
+  @IsString()
+  @MinLength(1)
+  barcode?: string;
 
   @IsOptional()
   @Type(() => Number)

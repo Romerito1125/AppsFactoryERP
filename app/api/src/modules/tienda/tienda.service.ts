@@ -10,6 +10,7 @@ import {
 } from '../../common/utils/pagination.util';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { ProductResolverService } from '../../shared/products/product-resolver.service';
 import { CreateStoreOrderDto } from './dto/create-store-order.dto';
 import { ListStoreOrdersQueryDto } from './dto/list-store-orders-query.dto';
 import { StorefrontProductsQueryDto } from './dto/storefront-products-query.dto';
@@ -19,6 +20,7 @@ export class TiendaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificacionesService: NotificacionesService,
+    private readonly productResolver: ProductResolverService,
   ) {}
 
   async findOrders(query: ListStoreOrdersQueryDto) {
@@ -145,19 +147,33 @@ export class TiendaService {
         );
       }
 
-      const groupedItems = this.groupInvoiceItems(createStoreOrderDto.items);
-      const productIds = [...new Set(groupedItems.map((item) => item.productId))];
-      const products = await tx.product.findMany({
-        where: { id: { in: productIds } },
-        include: { prices: { where: { isActive: true } } },
-      });
+      const resolvedItems: Array<{
+        productId: number;
+        productPriceId?: number;
+        quantity: number;
+        product: any;
+      }> = [];
 
-      if (products.length !== productIds.length) {
-        throw new NotFoundException('Uno o más productos no existen');
+      for (const item of createStoreOrderDto.items) {
+        const product = await this.productResolver.resolve(item, tx, {
+          prices: { where: { isActive: true } },
+        });
+
+        resolvedItems.push({
+          productId: product.id,
+          productPriceId: item.productPriceId,
+          quantity: item.quantity,
+          product,
+        });
       }
 
-      const invoiceItems = this.buildInvoiceItems(groupedItems, products);
-      const subtotal = invoiceItems.reduce((sum, item) => sum + item.subtotal, 0);
+      const groupedItems = this.groupInvoiceItems(resolvedItems);
+
+      const invoiceItems = this.buildInvoiceItems(groupedItems);
+      const subtotal = invoiceItems.reduce(
+        (sum, item) => sum + item.subtotal,
+        0,
+      );
       const taxes = invoiceItems.reduce((sum, item) => sum + item.taxAmount, 0);
       const total = invoiceItems.reduce((sum, item) => sum + item.total, 0);
 
@@ -202,6 +218,10 @@ export class TiendaService {
     },
     warehouses: true,
     offers: { include: { offer: true } },
+    barcodes: {
+      where: { isActive: true, isPrimary: true },
+      take: 1,
+    },
   };
 
   private readonly storeOrderInclude = {
@@ -273,25 +293,22 @@ export class TiendaService {
       tags,
       currentPrice: Number(currentPrice?.price ?? 0),
       stock: product.warehouses.reduce((sum, item) => sum + item.quantity, 0),
+      primaryBarcode: product.barcodes[0]?.code ?? null,
       activeOffer: activeOffer ?? null,
       createdAt: product.createdAt,
     };
   }
 
   private buildInvoiceItems(
-    items: CreateStoreOrderDto['items'],
-    products: Array<
-      Prisma.ProductGetPayload<{
-        include: { prices: true };
-      }>
-    >,
+    items: Array<{
+      productId: number;
+      productPriceId?: number;
+      quantity: number;
+      product: any;
+    }>,
   ) {
     return items.map((item) => {
-      const product = products.find((current) => current.id === item.productId);
-
-      if (!product) {
-        throw new NotFoundException('Producto no encontrado');
-      }
+      const product = item.product;
 
       if (!product.isActive) {
         throw new BadRequestException(
@@ -330,10 +347,22 @@ export class TiendaService {
     });
   }
 
-  private groupInvoiceItems(items: CreateStoreOrderDto['items']) {
+  private groupInvoiceItems(
+    items: Array<{
+      productId: number;
+      productPriceId?: number;
+      quantity: number;
+      product: any;
+    }>,
+  ) {
     const groupedItems = new Map<
       string,
-      { productId: number; productPriceId?: number; quantity: number }
+      {
+        productId: number;
+        productPriceId?: number;
+        quantity: number;
+        product: any;
+      }
     >();
 
     for (const item of items) {
@@ -344,6 +373,7 @@ export class TiendaService {
         productId: item.productId,
         productPriceId: item.productPriceId,
         quantity: (current?.quantity ?? 0) + item.quantity,
+        product: item.product,
       });
     }
 

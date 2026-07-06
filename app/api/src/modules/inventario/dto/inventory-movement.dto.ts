@@ -5,13 +5,20 @@ import {
   IsPositive,
   IsString,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class InventoryEntryDto {
+  @ValidateIf((item) => !item.barcode)
   @Type(() => Number)
   @IsInt()
   @IsPositive()
-  productId: number;
+  productId?: number;
+
+  @ValidateIf((item) => !item.productId)
+  @IsString()
+  @MinLength(1)
+  barcode?: string;
 
   @Type(() => Number)
   @IsInt()
@@ -29,10 +36,16 @@ export class InventoryEntryDto {
 }
 
 export class InventoryExitDto {
+  @ValidateIf((item) => !item.barcode)
   @Type(() => Number)
   @IsInt()
   @IsPositive()
-  productId: number;
+  productId?: number;
+
+  @ValidateIf((item) => !item.productId)
+  @IsString()
+  @MinLength(1)
+  barcode?: string;
 
   @Type(() => Number)
   @IsInt()
@@ -57,10 +70,16 @@ export class InventoryTransferDto extends InventoryExitDto {
 }
 
 export class InventoryAdjustmentDto {
+  @ValidateIf((item) => !item.barcode)
   @Type(() => Number)
   @IsInt()
   @IsPositive()
-  productId: number;
+  productId?: number;
+
+  @ValidateIf((item) => !item.productId)
+  @IsString()
+  @MinLength(1)
+  barcode?: string;
 
   @Type(() => Number)
   @IsInt()

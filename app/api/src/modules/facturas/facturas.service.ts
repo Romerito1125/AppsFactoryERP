@@ -13,6 +13,7 @@ import {
 import { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { ProductResolverService } from '../../shared/products/product-resolver.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { ListInvoicesQueryDto } from './dto/list-invoices-query.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
@@ -22,6 +23,7 @@ export class FacturasService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificacionesService: NotificacionesService,
+    private readonly productResolver: ProductResolverService,
   ) {}
 
   async findAll(query: ListInvoicesQueryDto) {
@@ -76,27 +78,30 @@ export class FacturasService {
         );
       }
 
-      const groupedItems = this.groupItems(createInvoiceDto.items);
-      const productIds = [
-        ...new Set(groupedItems.map((item) => item.productId)),
-      ];
-      const products = await tx.product.findMany({
-        where: { id: { in: productIds } },
-        include: { prices: { where: { isActive: true } } },
-      });
+      const resolvedItems: Array<{
+        productId: number;
+        productPriceId?: number;
+        quantity: number;
+        product: any;
+      }> = [];
 
-      if (products.length !== productIds.length) {
-        throw new NotFoundException('Uno o más productos no existen');
+      for (const item of createInvoiceDto.items) {
+        const product = await this.productResolver.resolve(item, tx, {
+          prices: { where: { isActive: true } },
+        });
+
+        resolvedItems.push({
+          productId: product.id,
+          productPriceId: item.productPriceId,
+          quantity: item.quantity,
+          product,
+        });
       }
 
-      const invoiceItems = groupedItems.map((item) => {
-        const product = products.find(
-          (current) => current.id === item.productId,
-        );
+      const groupedItems = this.groupItems(resolvedItems);
 
-        if (!product) {
-          throw new NotFoundException('Producto no encontrado');
-        }
+      const invoiceItems = groupedItems.map((item) => {
+        const product = item.product;
 
         if (!product.isActive) {
           throw new BadRequestException(
@@ -249,10 +254,22 @@ export class FacturasService {
     },
   } as const;
 
-  private groupItems(items: CreateInvoiceDto['items']) {
+  private groupItems(
+    items: Array<{
+      productId: number;
+      productPriceId?: number;
+      quantity: number;
+      product: any;
+    }>,
+  ) {
     const groupedItems = new Map<
       string,
-      { productId: number; productPriceId?: number; quantity: number }
+      {
+        productId: number;
+        productPriceId?: number;
+        quantity: number;
+        product: any;
+      }
     >();
 
     // Agrupa líneas repetidas solo cuando usan el mismo producto y precio.
@@ -264,6 +281,7 @@ export class FacturasService {
         productId: item.productId,
         productPriceId: item.productPriceId,
         quantity: (current?.quantity ?? 0) + item.quantity,
+        product: item.product,
       });
     }
 

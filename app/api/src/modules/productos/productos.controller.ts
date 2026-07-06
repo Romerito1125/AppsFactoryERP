@@ -55,6 +55,13 @@ export class ProductosController {
     return this.productProfitService.findProductProfit(id);
   }
 
+  @Get('codigo-barras/:code')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.BODEGA, Role.VENDEDOR)
+  findByBarcode(@Param('code') code: string) {
+    return this.productosService.findByBarcode(code);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.productosService.findOne(id);

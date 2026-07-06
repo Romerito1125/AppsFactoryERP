@@ -17,6 +17,7 @@ export class ParseProductMultipartInterceptor implements NestInterceptor {
       this.parseJsonField(request.body, 'tagIds');
       this.parseJsonField(request.body, 'prices');
       this.parseJsonField(request.body, 'warehouses');
+      this.parseJsonField(request.body, 'barcodes');
     }
 
     return next.handle();

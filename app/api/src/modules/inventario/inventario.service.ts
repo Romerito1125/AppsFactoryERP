@@ -9,6 +9,7 @@ import {
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { ProductResolverService } from '../../shared/products/product-resolver.service';
 import {
   InventoryAdjustmentDto,
   InventoryEntryDto,
@@ -19,7 +20,10 @@ import { ListInventoryQueryDto } from './dto/list-inventory-query.dto';
 
 @Injectable()
 export class InventarioService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly productResolver: ProductResolverService,
+  ) {}
 
   async findAll(query: ListInventoryQueryDto) {
     const where = {
@@ -76,25 +80,25 @@ export class InventarioService {
 
   entry(dto: InventoryEntryDto) {
     return this.prisma.$transaction(async (tx) => {
-      await this.ensureActiveProduct(dto.productId, tx);
+      const product = await this.productResolver.resolve(dto, tx);
       await this.ensureActiveWarehouse(dto.toWarehouseId, tx);
       await tx.productWarehouse.upsert({
         where: {
           productId_warehouseId: {
-            productId: dto.productId,
+            productId: product.id,
             warehouseId: dto.toWarehouseId,
           },
         },
         update: { quantity: { increment: dto.quantity } },
         create: {
-          productId: dto.productId,
+          productId: product.id,
           warehouseId: dto.toWarehouseId,
           quantity: dto.quantity,
         },
       });
       return tx.inventoryMovement.create({
         data: {
-          productId: dto.productId,
+          productId: product.id,
           toWarehouseId: dto.toWarehouseId,
           quantity: dto.quantity,
           movementType: InventoryMovementType.ENTRADA,
@@ -107,17 +111,17 @@ export class InventarioService {
 
   exit(dto: InventoryExitDto) {
     return this.prisma.$transaction(async (tx) => {
-      await this.ensureActiveProduct(dto.productId, tx);
+      const product = await this.productResolver.resolve(dto, tx);
       await this.ensureActiveWarehouse(dto.fromWarehouseId, tx);
       await this.decrementStock(
         tx,
-        dto.productId,
+        product.id,
         dto.fromWarehouseId,
         dto.quantity,
       );
       return tx.inventoryMovement.create({
         data: {
-          productId: dto.productId,
+          productId: product.id,
           fromWarehouseId: dto.fromWarehouseId,
           quantity: dto.quantity,
           movementType: InventoryMovementType.SALIDA,
@@ -134,32 +138,32 @@ export class InventarioService {
         'La bodega origen y destino no pueden ser iguales',
       );
     return this.prisma.$transaction(async (tx) => {
-      await this.ensureActiveProduct(dto.productId, tx);
+      const product = await this.productResolver.resolve(dto, tx);
       await this.ensureActiveWarehouse(dto.fromWarehouseId, tx);
       await this.ensureActiveWarehouse(dto.toWarehouseId, tx);
       await this.decrementStock(
         tx,
-        dto.productId,
+        product.id,
         dto.fromWarehouseId,
         dto.quantity,
       );
       await tx.productWarehouse.upsert({
         where: {
           productId_warehouseId: {
-            productId: dto.productId,
+            productId: product.id,
             warehouseId: dto.toWarehouseId,
           },
         },
         update: { quantity: { increment: dto.quantity } },
         create: {
-          productId: dto.productId,
+          productId: product.id,
           warehouseId: dto.toWarehouseId,
           quantity: dto.quantity,
         },
       });
       return tx.inventoryMovement.create({
         data: {
-          productId: dto.productId,
+          productId: product.id,
           fromWarehouseId: dto.fromWarehouseId,
           toWarehouseId: dto.toWarehouseId,
           quantity: dto.quantity,
@@ -173,12 +177,12 @@ export class InventarioService {
 
   adjustment(dto: InventoryAdjustmentDto) {
     return this.prisma.$transaction(async (tx) => {
-      await this.ensureActiveProduct(dto.productId, tx);
+      const product = await this.productResolver.resolve(dto, tx);
       await this.ensureActiveWarehouse(dto.warehouseId, tx);
       const current = await tx.productWarehouse.findUnique({
         where: {
           productId_warehouseId: {
-            productId: dto.productId,
+            productId: product.id,
             warehouseId: dto.warehouseId,
           },
         },
@@ -186,13 +190,13 @@ export class InventarioService {
       await tx.productWarehouse.upsert({
         where: {
           productId_warehouseId: {
-            productId: dto.productId,
+            productId: product.id,
             warehouseId: dto.warehouseId,
           },
         },
         update: { quantity: dto.quantity },
         create: {
-          productId: dto.productId,
+          productId: product.id,
           warehouseId: dto.warehouseId,
           quantity: dto.quantity,
         },
@@ -200,7 +204,7 @@ export class InventarioService {
       const difference = dto.quantity - (current?.quantity ?? 0);
       return tx.inventoryMovement.create({
         data: {
-          productId: dto.productId,
+          productId: product.id,
           fromWarehouseId: difference < 0 ? dto.warehouseId : undefined,
           toWarehouseId: difference >= 0 ? dto.warehouseId : undefined,
           quantity: Math.abs(difference),

@@ -134,11 +134,28 @@ model Product {
   provider           Provider            @relation(fields: [providerId], references: [id])
   warehouses         ProductWarehouse[]
   inventoryMovements InventoryMovement[]
+  barcodes           ProductBarcode[]
 
   tags ProductTag[]
 
   @@index([productTypeId])
   @@index([providerId])
+  @@index([isActive])
+}
+
+model ProductBarcode {
+  id        Int          @id @default(autoincrement())
+  productId Int
+  code      String       @unique
+  type      BarcodeType?
+  isPrimary Boolean      @default(false)
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @default(now()) @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
   @@index([isActive])
 }
 
@@ -621,6 +638,16 @@ enum UnitType {
   ML
   CAJA
   PAQUETE
+}
+
+enum BarcodeType {
+  EAN13
+  EAN8
+  UPC_A
+  UPC_E
+  CODE128
+  QR
+  OTHER
 }
 
 enum CreditStatus {
