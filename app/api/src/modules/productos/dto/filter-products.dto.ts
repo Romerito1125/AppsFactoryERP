@@ -41,4 +41,8 @@ export class FilterProductsDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   brand?: string;
+
+  @IsOptional()
+  @IsString()
+  barcode?: string;
 }

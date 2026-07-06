@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   Select,
   SelectContent,
@@ -257,21 +258,17 @@ function BankMovementDialog({ open, onOpenChange, accounts, invoices, onSubmit, 
                 name="bankAccountId"
                 control={form.control}
                 render={({ field }) => (
-                  <Select
-                    value={field.value ? String(field.value) : undefined}
-                    onValueChange={(value) => field.onChange(Number(value))}
+                  <NativeSelect
+                    value={field.value ? String(field.value) : ''}
+                    onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
                   >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona una cuenta" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {accounts.map((account) => (
-                        <SelectItem key={account.id} value={String(account.id)}>
-                          {`${account.name} · ${account.bankName}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <option value="">Selecciona una cuenta</option>
+                    {accounts.map((account) => (
+                      <option key={account.id} value={String(account.id)}>
+                        {`${account.name} · ${account.bankName}`}
+                      </option>
+                    ))}
+                  </NativeSelect>
                 )}
               />
               {form.formState.errors.bankAccountId ? (
@@ -286,21 +283,17 @@ function BankMovementDialog({ open, onOpenChange, accounts, invoices, onSubmit, 
                   name="toBankAccountId"
                   control={form.control}
                   render={({ field }) => (
-                    <Select
-                      value={field.value ? String(field.value) : undefined}
-                      onValueChange={(value) => field.onChange(Number(value))}
+                    <NativeSelect
+                      value={field.value ? String(field.value) : ''}
+                      onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
                     >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecciona la cuenta destino" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {accounts.map((account) => (
-                          <SelectItem key={account.id} value={String(account.id)}>
-                            {`${account.name} · ${account.bankName}`}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      <option value="">Selecciona la cuenta destino</option>
+                      {accounts.map((account) => (
+                        <option key={account.id} value={String(account.id)}>
+                          {`${account.name} · ${account.bankName}`}
+                        </option>
+                      ))}
+                    </NativeSelect>
                   )}
                 />
                 {form.formState.errors.toBankAccountId ? (
@@ -342,22 +335,17 @@ function BankMovementDialog({ open, onOpenChange, accounts, invoices, onSubmit, 
                   name="invoiceId"
                   control={form.control}
                   render={({ field }) => (
-                    <Select
+                    <NativeSelect
                       value={field.value ? String(field.value) : 'none'}
-                      onValueChange={(value) => field.onChange(value === 'none' ? undefined : Number(value))}
+                      onChange={(event) => field.onChange(event.target.value === 'none' ? undefined : Number(event.target.value))}
                     >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Sin factura asociada" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Sin factura asociada</SelectItem>
-                        {invoices.map((invoice) => (
-                          <SelectItem key={invoice.id} value={String(invoice.id)}>
-                            {`${invoice.consecutive} · ${formatCurrency(invoice.total)}`}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      <option value="none">Sin factura asociada</option>
+                      {invoices.map((invoice) => (
+                        <option key={invoice.id} value={String(invoice.id)}>
+                          {`${invoice.consecutive} · ${formatCurrency(invoice.total)}`}
+                        </option>
+                      ))}
+                    </NativeSelect>
                   )}
                 />
               </div>

@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   Select,
   SelectContent,
@@ -97,21 +98,17 @@ function CreateReferralDialog({ open, onOpenChange, clients, onSubmit, isSubmitt
               name="referredClientId"
               control={form.control}
               render={({ field }) => (
-                <Select
-                  value={field.value ? String(field.value) : undefined}
-                  onValueChange={(value) => field.onChange(Number(value))}
+                <NativeSelect
+                  value={field.value ? String(field.value) : ''}
+                  onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecciona un cliente" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {clients.map((client) => (
-                      <SelectItem key={client.id} value={String(client.id)}>
-                        {`${client.firstName} ${client.lastName} · ${client.identification}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <option value="">Selecciona un cliente</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={String(client.id)}>
+                      {`${client.firstName} ${client.lastName} · ${client.identification}`}
+                    </option>
+                  ))}
+                </NativeSelect>
               )}
             />
           </div>

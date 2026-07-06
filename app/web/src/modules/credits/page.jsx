@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   Select,
   SelectContent,
@@ -123,27 +124,23 @@ function CreateCreditDialog({ open, onOpenChange, invoices, onSubmit, isSubmitti
         <form className="grid gap-4" onSubmit={form.handleSubmit(onSubmit)}>
           <div className="grid gap-2">
             <Label>Factura</Label>
-            <Controller
-              name="invoiceId"
-              control={form.control}
-              render={({ field }) => (
-                <Select
-                  value={field.value ? String(field.value) : undefined}
-                  onValueChange={(value) => field.onChange(Number(value))}
+              <Controller
+                name="invoiceId"
+                control={form.control}
+                render={({ field }) => (
+                <NativeSelect
+                  value={field.value ? String(field.value) : ''}
+                  onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecciona una factura" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {invoices.map((invoice) => (
-                      <SelectItem key={invoice.id} value={String(invoice.id)}>
-                        {`${invoice.consecutive} · ${formatCurrency(invoice.total)}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
+                  <option value="">Selecciona una factura</option>
+                  {invoices.map((invoice) => (
+                    <option key={invoice.id} value={String(invoice.id)}>
+                      {`${invoice.consecutive} · ${formatCurrency(invoice.total)}`}
+                    </option>
+                  ))}
+                </NativeSelect>
+                )}
+              />
           </div>
 
           <div className="grid gap-2">
@@ -192,28 +189,23 @@ function CreditPaymentDialog({ open, onOpenChange, credit, accounts, onSubmit, i
 
           <div className="grid gap-2">
             <Label>Cuenta bancaria</Label>
-            <Controller
-              name="bankAccountId"
-              control={form.control}
-              render={({ field }) => (
-                <Select
+              <Controller
+                name="bankAccountId"
+                control={form.control}
+                render={({ field }) => (
+                <NativeSelect
                   value={field.value ? String(field.value) : 'none'}
-                  onValueChange={(value) => field.onChange(value === 'none' ? undefined : Number(value))}
+                  onChange={(event) => field.onChange(event.target.value === 'none' ? undefined : Number(event.target.value))}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Sin cuenta asociada" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Sin cuenta asociada</SelectItem>
-                    {accounts.map((account) => (
-                      <SelectItem key={account.id} value={String(account.id)}>
-                        {`${account.name} · ${account.bankName}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            />
+                  <option value="none">Sin cuenta asociada</option>
+                  {accounts.map((account) => (
+                    <option key={account.id} value={String(account.id)}>
+                      {`${account.name} · ${account.bankName}`}
+                    </option>
+                  ))}
+                </NativeSelect>
+                )}
+              />
           </div>
 
           <div className="grid gap-2">

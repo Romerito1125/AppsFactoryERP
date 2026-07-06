@@ -7,8 +7,10 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
+import { ListProductBarcodesQueryDto } from './dto/list-product-barcodes-query.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '../../common/enums/role.enum';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -26,8 +28,8 @@ export class ProductBarcodesController {
   ) {}
 
   @Get('codigos-barras')
-  findAll() {
-    return this.productBarcodesService.findAll();
+  findAll(@Query() query: ListProductBarcodesQueryDto) {
+    return this.productBarcodesService.findAll(query);
   }
 
   @Get('codigos-barras/:id')

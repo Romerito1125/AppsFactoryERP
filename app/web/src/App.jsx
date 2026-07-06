@@ -24,6 +24,9 @@ const InventoryPage = lazy(() =>
 const ProductPricesPage = lazy(() =>
   import('@/modules/product-prices/page').then((module) => ({ default: module.ProductPricesPage })),
 )
+const ProductBarcodesPage = lazy(() =>
+  import('@/modules/product-barcodes/page').then((module) => ({ default: module.ProductBarcodesPage })),
+)
 const QuotesPage = lazy(() =>
   import('@/modules/quotes/page').then((module) => ({ default: module.QuotesPage })),
 )
@@ -130,6 +133,7 @@ function App() {
               <Route path="/usuarios" element={<ProtectedRoute allowedRoles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
               <Route path="/clientes" element={<ProtectedRoute allowedRoles={['ADMIN']}><ClientsPage /></ProtectedRoute>} />
               <Route path="/productos" element={<ProtectedRoute allowedRoles={['ADMIN']}><ProductsPage /></ProtectedRoute>} />
+              <Route path="/codigos-barras" element={<ProtectedRoute allowedRoles={['ADMIN']}><ProductBarcodesPage /></ProtectedRoute>} />
               <Route path="/inventario" element={<ProtectedRoute allowedRoles={['ADMIN']}><InventoryPage /></ProtectedRoute>} />
               <Route path="/precios-producto" element={<ProtectedRoute allowedRoles={['ADMIN']}><ProductPricesPage /></ProtectedRoute>} />
               <Route path="/cotizaciones" element={<ProtectedRoute allowedRoles={['ADMIN']}><QuotesPage /></ProtectedRoute>} />

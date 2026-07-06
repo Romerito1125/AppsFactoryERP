@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   Select,
   SelectContent,
@@ -315,21 +316,17 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
                 name="productId"
                 control={form.control}
                 render={({ field }) => (
-                  <Select
-                    value={field.value ? String(field.value) : undefined}
-                    onValueChange={(value) => field.onChange(Number(value))}
+                  <NativeSelect
+                    value={field.value ? String(field.value) : ''}
+                    onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
                   >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona un producto" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {products.map((product) => (
-                        <SelectItem key={product.id} value={String(product.id)}>
-                          {`${product.name} · stock ${getTotalStock(product)}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <option value="">Selecciona un producto</option>
+                    {products.map((product) => (
+                      <option key={product.id} value={String(product.id)}>
+                        {`${product.name} · stock ${getTotalStock(product)}`}
+                      </option>
+                    ))}
+                  </NativeSelect>
                 )}
               />
               {form.formState.errors.productId ? (
@@ -344,21 +341,17 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
                   name="fromWarehouseId"
                   control={form.control}
                   render={({ field }) => (
-                    <Select
-                      value={field.value ? String(field.value) : undefined}
-                      onValueChange={(value) => field.onChange(Number(value))}
+                    <NativeSelect
+                      value={field.value ? String(field.value) : ''}
+                      onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
                     >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecciona la bodega origen" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {warehouses.map((warehouse) => (
-                          <SelectItem key={warehouse.id} value={String(warehouse.id)}>
-                            {warehouse.location}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      <option value="">Selecciona la bodega origen</option>
+                      {warehouses.map((warehouse) => (
+                        <option key={warehouse.id} value={String(warehouse.id)}>
+                          {warehouse.location}
+                        </option>
+                      ))}
+                    </NativeSelect>
                   )}
                 />
                 {form.formState.errors.fromWarehouseId ? (
@@ -374,21 +367,17 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
                   name="toWarehouseId"
                   control={form.control}
                   render={({ field }) => (
-                    <Select
-                      value={field.value ? String(field.value) : undefined}
-                      onValueChange={(value) => field.onChange(Number(value))}
+                    <NativeSelect
+                      value={field.value ? String(field.value) : ''}
+                      onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
                     >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecciona la bodega destino" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {warehouses.map((warehouse) => (
-                          <SelectItem key={warehouse.id} value={String(warehouse.id)}>
-                            {warehouse.location}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      <option value="">Selecciona la bodega destino</option>
+                      {warehouses.map((warehouse) => (
+                        <option key={warehouse.id} value={String(warehouse.id)}>
+                          {warehouse.location}
+                        </option>
+                      ))}
+                    </NativeSelect>
                   )}
                 />
                 {form.formState.errors.toWarehouseId ? (
@@ -404,21 +393,17 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
                   name="warehouseId"
                   control={form.control}
                   render={({ field }) => (
-                    <Select
-                      value={field.value ? String(field.value) : undefined}
-                      onValueChange={(value) => field.onChange(Number(value))}
+                    <NativeSelect
+                      value={field.value ? String(field.value) : ''}
+                      onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
                     >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecciona la bodega" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {warehouses.map((warehouse) => (
-                          <SelectItem key={warehouse.id} value={String(warehouse.id)}>
-                            {warehouse.location}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      <option value="">Selecciona la bodega</option>
+                      {warehouses.map((warehouse) => (
+                        <option key={warehouse.id} value={String(warehouse.id)}>
+                          {warehouse.location}
+                        </option>
+                      ))}
+                    </NativeSelect>
                   )}
                 />
                 {form.formState.errors.warehouseId ? (

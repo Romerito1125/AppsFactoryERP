@@ -66,6 +66,13 @@ export const navigationGroups = [
         allowedRoles: ['ADMIN'],
       },
       {
+        path: '/codigos-barras',
+        label: 'Codigos',
+        description: 'Multiples codigos por producto',
+        icon: Tag,
+        allowedRoles: ['ADMIN'],
+      },
+      {
         path: '/tipos-producto',
         label: 'Tipos',
         description: 'Clasificacion base',

@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   Select,
   SelectContent,
@@ -33,6 +34,8 @@ function resolveOptions(options, lookups, record) {
 
   return options ?? []
 }
+
+const LARGE_OPTIONS_THRESHOLD = 50
 
 export function ModuleFormDialog({
   open,
@@ -99,6 +102,8 @@ export function ModuleFormDialog({
             {fields.map((field) => {
               const error = errors[field.name]?.message
               const options = resolveOptions(field.options, lookups, record)
+              const CustomField = field.render
+              const useNativeSelect = field.type === 'select' && (field.native === true || options.length > LARGE_OPTIONS_THRESHOLD)
 
               return (
                 <div
@@ -107,7 +112,19 @@ export function ModuleFormDialog({
                 >
                   <Label htmlFor={field.name}>{field.label}</Label>
 
-                  {field.type === 'textarea' ? (
+                  {CustomField ? (
+                    <CustomField
+                      field={field}
+                      control={control}
+                      register={register}
+                      errors={errors}
+                      lookups={lookups}
+                      mode={mode}
+                      record={record}
+                    />
+                  ) : null}
+
+                  {!CustomField && field.type === 'textarea' ? (
                     <Textarea
                       id={field.name}
                       placeholder={field.placeholder}
@@ -116,7 +133,34 @@ export function ModuleFormDialog({
                     />
                   ) : null}
 
-                  {field.type === 'select' ? (
+                  {!CustomField && field.type === 'select' && useNativeSelect ? (
+                    <Controller
+                      name={field.name}
+                      control={control}
+                      render={({ field: controllerField }) => (
+                        <NativeSelect
+                          value={
+                            controllerField.value === undefined || controllerField.value === null
+                              ? ''
+                              : String(controllerField.value)
+                          }
+                          onChange={(event) => {
+                            const { value } = event.target
+                            controllerField.onChange(value === '' ? undefined : field.valueType === 'number' ? Number(value) : value)
+                          }}
+                        >
+                          <option value="">{field.placeholder ?? 'Selecciona una opcion'}</option>
+                          {options.map((option) => (
+                            <option key={option.value} value={String(option.value)}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </NativeSelect>
+                      )}
+                    />
+                  ) : null}
+
+                  {!CustomField && field.type === 'select' && !useNativeSelect ? (
                     <Controller
                       name={field.name}
                       control={control}
@@ -146,7 +190,7 @@ export function ModuleFormDialog({
                     />
                   ) : null}
 
-                  {field.type === 'switch' ? (
+                  {!CustomField && field.type === 'switch' ? (
                     <Controller
                       name={field.name}
                       control={control}
@@ -164,7 +208,7 @@ export function ModuleFormDialog({
                     />
                   ) : null}
 
-                  {field.type === 'file' ? (
+                  {!CustomField && field.type === 'file' ? (
                     <Controller
                       name={field.name}
                       control={control}
@@ -210,7 +254,7 @@ export function ModuleFormDialog({
                     />
                   ) : null}
 
-                  {!['textarea', 'select', 'switch', 'file'].includes(field.type) ? (
+                  {!CustomField && !['textarea', 'select', 'switch', 'file'].includes(field.type) ? (
                     <Input
                       id={field.name}
                       type={field.type ?? 'text'}

@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   Select,
   SelectContent,
@@ -136,6 +137,7 @@ function CreateQuoteDialog({ open, onOpenChange, clients, products, onSubmit, is
   })
 
   const watchedItems = useWatch({ control: form.control, name: 'items' })
+  const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products])
 
   function closeDialog(nextOpen) {
     onOpenChange(nextOpen)
@@ -176,21 +178,17 @@ function CreateQuoteDialog({ open, onOpenChange, clients, products, onSubmit, is
                 name="clientId"
                 control={form.control}
                 render={({ field }) => (
-                  <Select
-                    value={field.value ? String(field.value) : undefined}
-                    onValueChange={(value) => field.onChange(Number(value))}
+                  <NativeSelect
+                    value={field.value ? String(field.value) : ''}
+                    onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
                   >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona un cliente" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {clients.map((client) => (
-                        <SelectItem key={client.id} value={String(client.id)}>
-                          {`${client.firstName} ${client.lastName} · ${client.identification}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <option value="">Selecciona un cliente</option>
+                    {clients.map((client) => (
+                      <option key={client.id} value={String(client.id)}>
+                        {`${client.firstName} ${client.lastName} · ${client.identification}`}
+                      </option>
+                    ))}
+                  </NativeSelect>
                 )}
               />
             </div>
@@ -216,7 +214,7 @@ function CreateQuoteDialog({ open, onOpenChange, clients, products, onSubmit, is
 
             <div className="grid gap-3">
               {fields.map((itemField, index) => {
-                const selectedProduct = products.find((product) => product.id === watchedItems[index]?.productId)
+                const selectedProduct = productById.get(watchedItems[index]?.productId)
                 const activePrices = (selectedProduct?.prices ?? []).filter((price) => price.isActive)
                 const selectedProductPrice =
                   activePrices.find((price) => price.id === watchedItems[index]?.productPriceId) ??
@@ -231,11 +229,11 @@ function CreateQuoteDialog({ open, onOpenChange, clients, products, onSubmit, is
                         name={`items.${index}.productId`}
                         control={form.control}
                         render={({ field }) => (
-                          <Select
-                            value={field.value ? String(field.value) : undefined}
-                            onValueChange={(value) => {
-                              const nextProductId = Number(value)
-                              const product = products.find((item) => item.id === nextProductId)
+                          <NativeSelect
+                            value={field.value ? String(field.value) : ''}
+                            onChange={(event) => {
+                              const nextProductId = event.target.value ? Number(event.target.value) : undefined
+                              const product = productById.get(nextProductId)
                               const defaultPrice =
                                 product?.prices?.find((price) => price.isActive && price.isDefault) ??
                                 product?.prices?.find((price) => price.isActive)
@@ -246,17 +244,13 @@ function CreateQuoteDialog({ open, onOpenChange, clients, products, onSubmit, is
                               })
                             }}
                           >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Selecciona un producto" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {products.map((product) => (
-                                <SelectItem key={product.id} value={String(product.id)}>
-                                  {`${product.name} · ${product.brand}`}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            <option value="">Selecciona un producto</option>
+                            {products.map((product) => (
+                              <option key={product.id} value={String(product.id)}>
+                                {`${product.name} · ${product.brand}`}
+                              </option>
+                            ))}
+                          </NativeSelect>
                         )}
                       />
                     </div>

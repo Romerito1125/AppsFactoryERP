@@ -1,9 +1,9 @@
-import { useDeferredValue, useEffect, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
-import { FilePlus2, MoreHorizontal, Plus, Search, Star, Trash2 } from 'lucide-react'
+import { FilePlus2, ImageUp, MoreHorizontal, Plus, Search, Star, Trash2 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   Select,
   SelectContent,
@@ -62,6 +63,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { apiClient } from '@/lib/api-client'
+import { readBarcodeFromImage } from '@/lib/barcode-reader'
 import {
   formatCurrency,
   formatDate,
@@ -159,6 +161,8 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
   const [favoriteProductIds, setFavoriteProductIds] = useState([])
   const [favoritesOnly, setFavoritesOnly] = useState(false)
   const [catalogTargetIndex, setCatalogTargetIndex] = useState(null)
+  const [scanLoading, setScanLoading] = useState(false)
+  const barcodeImageInputRef = useRef(null)
 
   useEffect(() => {
     try {
@@ -184,29 +188,37 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
     }
   }, [favoriteProductIds])
 
-  const catalogProducts = products
-    .filter((product) => product.isActive !== false && getActiveProductPrices(product).length)
-    .filter((product) => {
-      if (favoritesOnly && !favoriteProductIds.includes(product.id)) {
-        return false
-      }
+  const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products])
+  const favoriteProductIdSet = useMemo(() => new Set(favoriteProductIds), [favoriteProductIds])
+  const catalogSearchText = deferredCatalogSearch.trim().toLowerCase()
 
-      if (!deferredCatalogSearch) {
-        return true
-      }
+  const catalogProducts = useMemo(
+    () =>
+      products
+        .filter((product) => product.isActive !== false && getActiveProductPrices(product).length)
+        .filter((product) => {
+          if (favoritesOnly && !favoriteProductIdSet.has(product.id)) {
+            return false
+          }
 
-      return getProductSearchText(product).toLowerCase().includes(deferredCatalogSearch.toLowerCase())
-    })
-    .sort((left, right) => {
-      const leftFavoriteWeight = favoriteProductIds.includes(left.id) ? 1 : 0
-      const rightFavoriteWeight = favoriteProductIds.includes(right.id) ? 1 : 0
+          if (!catalogSearchText) {
+            return true
+          }
 
-      if (leftFavoriteWeight !== rightFavoriteWeight) {
-        return rightFavoriteWeight - leftFavoriteWeight
-      }
+          return getProductSearchText(product).toLowerCase().includes(catalogSearchText)
+        })
+        .sort((left, right) => {
+          const leftFavoriteWeight = favoriteProductIdSet.has(left.id) ? 1 : 0
+          const rightFavoriteWeight = favoriteProductIdSet.has(right.id) ? 1 : 0
 
-      return left.name.localeCompare(right.name)
-    })
+          if (leftFavoriteWeight !== rightFavoriteWeight) {
+            return rightFavoriteWeight - leftFavoriteWeight
+          }
+
+          return left.name.localeCompare(right.name)
+        }),
+    [catalogSearchText, favoriteProductIdSet, favoritesOnly, products],
+  )
 
   function resetDialog() {
     form.reset({
@@ -225,15 +237,15 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
     }
   }
 
-  function toggleFavoriteProduct(productId) {
+  const toggleFavoriteProduct = useCallback((productId) => {
     setFavoriteProductIds((current) =>
       current.includes(productId)
         ? current.filter((value) => value !== productId)
         : [...current, productId],
     )
-  }
+  }, [])
 
-  function applyProductToItem(index, product) {
+  const applyProductToItem = useCallback((index, product) => {
     const defaultPrice = getDefaultActivePrice(product)
 
     form.setValue(`items.${index}.productId`, product.id, {
@@ -251,16 +263,18 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
         shouldValidate: true,
       })
     }
-  }
+  }, [form])
 
-  function handleCatalogSelection(product) {
-    if (catalogTargetIndex !== null && watchedItems[catalogTargetIndex]) {
+  const handleCatalogSelection = useCallback((product) => {
+    const currentItems = form.getValues('items')
+
+    if (catalogTargetIndex !== null && currentItems[catalogTargetIndex]) {
       applyProductToItem(catalogTargetIndex, product)
       setCatalogTargetIndex(null)
       return
     }
 
-    const firstEmptyIndex = form.getValues('items').findIndex((item) => !item.productId)
+    const firstEmptyIndex = currentItems.findIndex((item) => !item.productId)
 
     if (firstEmptyIndex >= 0) {
       applyProductToItem(firstEmptyIndex, product)
@@ -273,7 +287,83 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
       productPriceId: defaultPrice?.id,
       quantity: 1,
     })
-  }
+  }, [append, applyProductToItem, catalogTargetIndex, form])
+
+  const handleBarcodeImageSelection = useCallback(
+    async (event) => {
+      const file = event.target.files?.[0]
+      event.target.value = ''
+
+      if (!file) {
+        return
+      }
+
+      setScanLoading(true)
+
+      try {
+        const result = await readBarcodeFromImage(file)
+        const product = await apiClient.get(`/productos/codigo-barras/${encodeURIComponent(result.code)}`)
+        handleCatalogSelection(product)
+        toast.success(`Producto detectado por codigo ${result.code}`)
+      } catch (error) {
+        toast.error(error.message)
+      } finally {
+        setScanLoading(false)
+      }
+    },
+    [handleCatalogSelection],
+  )
+
+  const catalogProductCards = useMemo(
+    () =>
+      catalogProducts.map((product) => {
+        const defaultPrice = getDefaultActivePrice(product)
+        const isFavorite = favoriteProductIdSet.has(product.id)
+
+        return (
+          <div
+            key={product.id}
+            className="relative rounded-2xl border border-border/70 bg-card p-3 transition hover:border-primary/35 hover:shadow-sm hover:shadow-primary/10"
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="absolute top-2 right-2 z-10 rounded-full"
+              onClick={() => toggleFavoriteProduct(product.id)}
+            >
+              <Star className={cn('size-4', isFavorite && 'fill-current text-primary')} />
+            </Button>
+
+            <button
+              type="button"
+              onClick={() => handleCatalogSelection(product)}
+              className="grid w-full gap-3 text-left"
+            >
+              <ProductImage
+                src={product.imageUrl}
+                alt={product.name}
+                className="aspect-[4/3] w-full rounded-xl"
+                iconClassName="size-6"
+              />
+              <div className="pr-8">
+                <p className="line-clamp-1 text-sm font-medium text-foreground">
+                  {product.name}
+                </p>
+                <p className="line-clamp-1 text-xs text-muted-foreground">
+                  {product.brand} · {product.productType?.name ?? 'Sin tipo'}
+                </p>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                <span>Stock {formatNumber(getProductTotalStock(product))}</span>
+                <span>{defaultPrice ? formatCurrency(defaultPrice.price) : 'Sin precio'}</span>
+              </div>
+            </button>
+          </div>
+        )
+      }),
+    [catalogProducts, favoriteProductIdSet, handleCatalogSelection, toggleFavoriteProduct],
+  )
 
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
@@ -301,21 +391,17 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                     name="clientId"
                     control={form.control}
                     render={({ field }) => (
-                      <Select
-                        value={field.value ? String(field.value) : undefined}
-                        onValueChange={(value) => field.onChange(Number(value))}
+                      <NativeSelect
+                        value={field.value ? String(field.value) : ''}
+                        onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
                       >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Selecciona un cliente" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {clients.map((client) => (
-                            <SelectItem key={client.id} value={String(client.id)}>
-                              {`${client.firstName} ${client.lastName} · ${client.identification}`}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        <option value="">Selecciona un cliente</option>
+                        {clients.map((client) => (
+                          <option key={client.id} value={String(client.id)}>
+                            {`${client.firstName} ${client.lastName} · ${client.identification}`}
+                          </option>
+                        ))}
+                      </NativeSelect>
                     )}
                   />
                   {form.formState.errors.clientId ? (
@@ -363,7 +449,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
 
                 <div className="grid gap-3">
                   {fields.map((itemField, index) => {
-                    const selectedProduct = products.find((product) => product.id === watchedItems[index]?.productId)
+                    const selectedProduct = productById.get(watchedItems[index]?.productId)
                     const activePrices = getActiveProductPrices(selectedProduct)
                     const selectedProductPrice =
                       activePrices.find((price) => price.id === watchedItems[index]?.productPriceId) ??
@@ -521,6 +607,13 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
               </CardHeader>
               <CardContent className="grid gap-4">
                 <div className="flex gap-2">
+                  <input
+                    ref={barcodeImageInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleBarcodeImageSelection}
+                  />
                   <div className="relative flex-1">
                     <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
@@ -539,6 +632,16 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                     <Star className={cn('mr-2 size-4', favoritesOnly && 'fill-current')} />
                     Favoritos
                   </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => barcodeImageInputRef.current?.click()}
+                    disabled={scanLoading}
+                    className="shrink-0"
+                  >
+                    <ImageUp className="mr-2 size-4" />
+                    {scanLoading ? 'Leyendo...' : 'Leer imagen'}
+                  </Button>
                 </div>
 
                 <div className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
@@ -552,54 +655,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
 
                 <ScrollArea className="h-[440px] pr-4">
                   {catalogProducts.length ? (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {catalogProducts.map((product) => {
-                        const defaultPrice = getDefaultActivePrice(product)
-                        const isFavorite = favoriteProductIds.includes(product.id)
-
-                        return (
-                          <div
-                            key={product.id}
-                            className="relative rounded-2xl border border-border/70 bg-card p-3 transition hover:border-primary/35 hover:shadow-sm hover:shadow-primary/10"
-                          >
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              className="absolute top-2 right-2 z-10 rounded-full"
-                              onClick={() => toggleFavoriteProduct(product.id)}
-                            >
-                              <Star className={cn('size-4', isFavorite && 'fill-current text-primary')} />
-                            </Button>
-
-                            <button
-                              type="button"
-                              onClick={() => handleCatalogSelection(product)}
-                              className="grid w-full gap-3 text-left"
-                            >
-                              <ProductImage
-                                src={product.imageUrl}
-                                alt={product.name}
-                                className="aspect-[4/3] w-full rounded-xl"
-                                iconClassName="size-6"
-                              />
-                              <div className="pr-8">
-                                <p className="line-clamp-1 text-sm font-medium text-foreground">
-                                  {product.name}
-                                </p>
-                                <p className="line-clamp-1 text-xs text-muted-foreground">
-                                  {product.brand} · {product.productType?.name ?? 'Sin tipo'}
-                                </p>
-                              </div>
-                              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                                <span>Stock {formatNumber(getProductTotalStock(product))}</span>
-                                <span>{defaultPrice ? formatCurrency(defaultPrice.price) : 'Sin precio'}</span>
-                              </div>
-                            </button>
-                          </div>
-                        )
-                      })}
-                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">{catalogProductCards}</div>
                   ) : (
                     <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-6 text-center">
                       <p className="font-medium text-foreground">No hay productos para este filtro</p>

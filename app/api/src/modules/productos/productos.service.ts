@@ -564,6 +564,7 @@ export class ProductosService {
     const conditions: Prisma.Sql[] = [];
     const search = filter.q?.trim();
     const brand = filter.brand?.trim();
+    const barcode = filter.barcode?.trim();
 
     if (filter.estado !== RecordStatusQuery.TODOS) {
       conditions.push(
@@ -581,6 +582,13 @@ export class ProductosService {
           OR COALESCE(p."description", '') ILIKE ${likeSearch}
           OR pt."name" ILIKE ${likeSearch}
           OR pr."name" ILIKE ${likeSearch}
+          OR EXISTS (
+            SELECT 1
+            FROM "ProductBarcode" pb_search
+            WHERE pb_search."productId" = p."id"
+              AND pb_search."isActive" = true
+              AND pb_search."code" ILIKE ${likeSearch}
+          )
           OR EXISTS (
             SELECT 1
             FROM "ProductWarehouse" pw_search
@@ -613,6 +621,18 @@ export class ProductosService {
 
     if (brand) {
       conditions.push(Prisma.sql`p."brand" ILIKE ${`%${brand}%`}`);
+    }
+
+    if (barcode) {
+      conditions.push(Prisma.sql`
+        EXISTS (
+          SELECT 1
+          FROM "ProductBarcode" pb_filter
+          WHERE pb_filter."productId" = p."id"
+            AND pb_filter."isActive" = true
+            AND pb_filter."code" ILIKE ${`%${barcode}%`}
+        )
+      `);
     }
 
     if (filter.stockStatus === ProductStockFilter.CON_STOCK) {

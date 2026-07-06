@@ -4,9 +4,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { BarcodeType, Prisma } from '@prisma/client';
+import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
+import {
+  buildPaginatedResponse,
+  resolvePagination,
+} from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { BarcodeFormatService } from '../../shared/products/barcode-format.service';
 import { CreateProductBarcodeDto } from './dto/create-product-barcode.dto';
+import { ListProductBarcodesQueryDto } from './dto/list-product-barcodes-query.dto';
 import { UpdateProductBarcodeDto } from './dto/update-product-barcode.dto';
 
 @Injectable()
@@ -16,11 +23,22 @@ export class ProductBarcodesService {
     private readonly barcodeFormat: BarcodeFormatService,
   ) {}
 
-  findAll() {
-    return this.prisma.productBarcode.findMany({
-      include: { product: true },
-      orderBy: { id: 'asc' },
-    });
+  async findAll(query: ListProductBarcodesQueryDto) {
+    const { page, limit, skip, take } = resolvePagination(query);
+    const where = this.buildWhere(query);
+
+    const [total, data] = await Promise.all([
+      this.prisma.productBarcode.count({ where }),
+      this.prisma.productBarcode.findMany({
+        where,
+        include: { product: true },
+        orderBy: [{ isPrimary: 'desc' }, { id: 'desc' }],
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
   }
 
   async findOne(id: number) {
@@ -178,5 +196,33 @@ export class ProductBarcodesService {
     if (id <= 0) {
       throw new BadRequestException('El id debe ser un número positivo');
     }
+  }
+
+  private buildWhere(query: ListProductBarcodesQueryDto): Prisma.ProductBarcodeWhereInput {
+    const search = query.q?.trim();
+    const where: Prisma.ProductBarcodeWhereInput = {};
+
+    if (query.estado !== RecordStatusQuery.TODOS) {
+      where.isActive = query.estado === RecordStatusQuery.INACTIVOS ? false : true;
+    }
+
+    if (query.type) {
+      where.type = query.type as BarcodeType;
+    }
+
+    if (query.productId) {
+      where.productId = query.productId;
+    }
+
+    if (search) {
+      where.OR = [
+        { code: { contains: search, mode: 'insensitive' } },
+        { product: { name: { contains: search, mode: 'insensitive' } } },
+        { product: { brand: { contains: search, mode: 'insensitive' } } },
+        { product: { description: { contains: search, mode: 'insensitive' } } },
+      ];
+    }
+
+    return where;
   }
 }

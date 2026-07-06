@@ -21,7 +21,11 @@ import {
   getRecordStatusVariant,
   toApiStatus,
 } from '@/lib/format'
+import { ProductBarcodesField, barcodeTypeOptions } from '@/modules/products/barcodes-field'
 import { CrudModulePage } from '@/modules/shared/crud-module-page'
+
+const barcodeTypeValues = barcodeTypeOptions.map((option) => option.value)
+const barcodeTypeLabels = Object.fromEntries(barcodeTypeOptions.map((option) => [option.value, option.label]))
 
 const optionalImageSchema = z
   .custom(
@@ -54,12 +58,28 @@ const createProductSchema = z
     initialPrice: z.number({ message: 'Precio obligatorio' }).positive('Debe ser mayor a cero'),
     initialWarehouseId: z.number({ message: 'Selecciona una bodega' }).int().positive('Selecciona una bodega'),
     initialQuantity: z.number({ message: 'Cantidad obligatoria' }).int().positive('Debe ser mayor a cero'),
+    barcodes: z
+      .array(
+        z.object({
+          code: z.string().trim().min(1, 'Ingresa el codigo'),
+          type: z.enum(barcodeTypeValues),
+          isPrimary: z.boolean().optional(),
+        }),
+      )
+      .optional(),
   })
   .refine(
     (values) => values.maximumStock === undefined || values.maximumStock >= values.minimumStock,
     {
       path: ['maximumStock'],
       message: 'El stock maximo no puede ser menor al minimo',
+    },
+  )
+  .refine(
+    (values) => (values.barcodes?.filter((barcode) => barcode.isPrimary).length ?? 0) <= 1,
+    {
+      path: ['barcodes'],
+      message: 'Solo puede existir un codigo principal por producto',
     },
   )
 
@@ -85,6 +105,44 @@ const updateProductSchema = z
 
 function getDefaultPrice(product) {
   return product.prices?.find((price) => price.isDefault) ?? product.prices?.[0] ?? null
+}
+
+function getPrimaryBarcode(product) {
+  return product.barcodes?.find((barcode) => barcode.isPrimary) ?? product.barcodes?.[0] ?? null
+}
+
+function formatBarcodeType(type) {
+  return barcodeTypeLabels[type] ?? type ?? 'Sin tipo'
+}
+
+function normalizeBarcodePayload(barcodes) {
+  const resolved = (barcodes ?? [])
+    .map((barcode) => ({
+      code: barcode.code.trim(),
+      type: barcode.type,
+      isPrimary: Boolean(barcode.isPrimary),
+    }))
+    .filter((barcode) => barcode.code)
+
+  if (resolved.length === 1 && !resolved[0].isPrimary) {
+    resolved[0].isPrimary = true
+  }
+
+  if (resolved.length > 1 && !resolved.some((barcode) => barcode.isPrimary)) {
+    resolved[0].isPrimary = true
+  }
+
+  return resolved
+}
+
+function formatBarcodeSummary(product) {
+  if (!product.barcodes?.length) {
+    return 'Sin codigos registrados'
+  }
+
+  return product.barcodes
+    .map((barcode) => `${barcode.code}${barcode.isPrimary ? ' (principal)' : ''}`)
+    .join(' · ')
 }
 
 function getTotalStock(product) {
@@ -170,19 +228,19 @@ function createProductsConfig(lookups) {
     key: 'productos',
     title: 'Productos',
     description:
-      'Gestiona el catalogo real con tipo, proveedor, marca, precios iniciales e inventario asociado a bodegas.',
+      'Gestiona el catalogo real con tipo, proveedor, marca, codigos de barras, precios iniciales e inventario asociado a bodegas.',
     singularLabel: 'Producto',
     badgeLabel: 'Catalogo · Inventario',
     createButtonLabel: 'Nuevo producto',
     createTitle: 'Crear producto',
     editTitle: 'Actualizar producto',
-    createDescription: 'Registra un producto con su precio inicial y stock inicial por bodega.',
+    createDescription: 'Registra un producto con su precio inicial, sus codigos de barras opcionales y stock inicial por bodega.',
     editDescription: 'Ajusta datos comerciales base del producto seleccionado.',
     submitCreateLabel: 'Crear producto',
     submitEditLabel: 'Guardar cambios',
     tableTitle: 'Catalogo operativo',
     tableDescription: 'Vista consolidada de tipo, proveedor, precio vigente y stock disponible.',
-    searchPlaceholder: 'Buscar por nombre, marca, tipo, proveedor o bodega...',
+    searchPlaceholder: 'Buscar por nombre, marca, codigo, tipo, proveedor o bodega...',
     emptyTitle: 'No hay productos disponibles',
     emptyDescription: 'Crea el primer producto para empezar a operar inventario.',
     archiveLoadingLabel: 'Desactivando producto...',
@@ -200,6 +258,7 @@ function createProductsConfig(lookups) {
       warehouseId: 'TODOS',
       stockStatus: 'TODOS',
       brand: '',
+      barcode: '',
     }),
     renderTableFilters: ({ filters, updateFilters }) => (
       <>
@@ -277,6 +336,13 @@ function createProductsConfig(lookups) {
           className="w-full md:w-[180px]"
         />
 
+        <Input
+          value={filters.barcode}
+          onChange={(event) => updateFilters((current) => ({ ...current, barcode: event.target.value }))}
+          placeholder="Filtrar codigo..."
+          className="w-full md:w-[180px]"
+        />
+
         <Button
           type="button"
           variant="outline"
@@ -287,6 +353,7 @@ function createProductsConfig(lookups) {
               warehouseId: 'TODOS',
               stockStatus: 'TODOS',
               brand: '',
+              barcode: '',
             })
           }
         >
@@ -329,6 +396,13 @@ function createProductsConfig(lookups) {
         placeholder: 'Descripcion corta del producto',
         rows: 3,
         fullWidth: true,
+      },
+      {
+        name: 'barcodes',
+        label: 'Codigos de barras',
+        render: ProductBarcodesField,
+        fullWidth: true,
+        hiddenOnEdit: true,
       },
       { name: 'taxRate', label: 'Impuesto %', type: 'number', placeholder: '19' },
       { name: 'minimumStock', label: 'Stock minimo', type: 'number', placeholder: '10' },
@@ -382,10 +456,11 @@ function createProductsConfig(lookups) {
       initialPrice: undefined,
       initialWarehouseId: undefined,
       initialQuantity: undefined,
+      barcodes: [],
     }),
     prepareValues: (mode, values) => {
       if (mode === 'edit') {
-        const { initialPriceName, initialPrice, initialWarehouseId, initialQuantity, ...payload } = values
+        const { initialPriceName, initialPrice, initialWarehouseId, initialQuantity, barcodes, ...payload } = values
         return buildProductFormData(payload)
       }
 
@@ -412,6 +487,7 @@ function createProductsConfig(lookups) {
             quantity: values.initialQuantity,
           },
         ],
+        barcodes: normalizeBarcodePayload(values.barcodes),
       })
     },
     fetchRecords: ({ status, search, page, limit, filters }) =>
@@ -425,6 +501,7 @@ function createProductsConfig(lookups) {
         warehouseId: filters.warehouseId === 'TODOS' ? undefined : Number(filters.warehouseId),
         stockStatus: filters.stockStatus === 'TODOS' ? undefined : filters.stockStatus,
         brand: filters.brand?.trim() || undefined,
+        barcode: filters.barcode?.trim() || undefined,
       }),
     createRecord: (payload) => apiClient.post('/productos', payload),
     updateRecord: (id, payload) => apiClient.patch(`/productos/${id}`, payload),
@@ -436,6 +513,7 @@ function createProductsConfig(lookups) {
       record.description,
       record.productType?.name,
       record.provider?.name,
+      ...(record.barcodes ?? []).map((barcode) => barcode.code),
       ...(record.warehouses ?? []).map((item) => item.warehouse?.location),
     ],
     getSummaryCards: ({ rawRecords }) => {
@@ -522,6 +600,27 @@ function createProductsConfig(lookups) {
         ),
       },
       {
+        key: 'barcode',
+        label: 'Codigo principal',
+        render: (record) => {
+          const primaryBarcode = getPrimaryBarcode(record)
+
+          if (!primaryBarcode) {
+            return 'Sin codigo'
+          }
+
+          return (
+            <div>
+              <p className="font-medium text-foreground">{primaryBarcode.code}</p>
+              <p className="text-xs text-muted-foreground">
+                {formatBarcodeType(primaryBarcode.type)}
+                {record.barcodes?.length > 1 ? ` · +${record.barcodes.length - 1} adicional(es)` : ''}
+              </p>
+            </div>
+          )
+        },
+      },
+      {
         key: 'status',
         label: 'Estado',
         render: (record) => (
@@ -576,6 +675,27 @@ function createProductsConfig(lookups) {
               ),
             },
             { label: 'Bodegas', value: formatWarehouseStock(record) },
+          ],
+        },
+        {
+          label: 'Codigos de barras',
+          items: [
+            {
+              label: 'Principal',
+              value: getPrimaryBarcode(record)?.code ?? 'Sin codigo principal',
+            },
+            {
+              label: 'Tipo principal',
+              value: formatBarcodeType(getPrimaryBarcode(record)?.type),
+            },
+            {
+              label: 'Total registrados',
+              value: record.barcodes?.length ? formatNumber(record.barcodes.length) : '0',
+            },
+            {
+              label: 'Todos los codigos',
+              value: formatBarcodeSummary(record),
+            },
           ],
         },
         {

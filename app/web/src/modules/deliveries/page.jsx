@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import {
   Select,
   SelectContent,
@@ -146,21 +147,17 @@ function DeliveryFormDialog({ open, onOpenChange, mode, delivery, invoices, onSu
                 name="invoiceId"
                 control={form.control}
                 render={({ field }) => (
-                  <Select
-                    value={field.value ? String(field.value) : undefined}
-                    onValueChange={(value) => field.onChange(Number(value))}
+                  <NativeSelect
+                    value={field.value ? String(field.value) : ''}
+                    onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
                   >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona una factura" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {invoices.map((invoice) => (
-                        <SelectItem key={invoice.id} value={String(invoice.id)}>
-                          {`${invoice.consecutive} · ${formatCurrency(invoice.total)}`}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <option value="">Selecciona una factura</option>
+                    {invoices.map((invoice) => (
+                      <option key={invoice.id} value={String(invoice.id)}>
+                        {`${invoice.consecutive} · ${formatCurrency(invoice.total)}`}
+                      </option>
+                    ))}
+                  </NativeSelect>
                 )}
               />
             </div>
