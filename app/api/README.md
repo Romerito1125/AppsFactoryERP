@@ -26,21 +26,22 @@ Excepción: los endpoints de productos que reciben imagen usan `multipart/form-d
 
 ```bash
 bun install
-bunx prisma format
-bunx prisma generate
+bun run db:generate
 bun run start:dev
 ```
+
+El proyecto sigue usando Bun como gestor y runner principal. Los scripts `db:*` ejecutan Prisma mediante `scripts/prisma-node-cli.js` para evitar un problema de Prisma 7 con `bunx --bun` en Windows.
 
 Si necesitas migrar:
 
 ```bash
-bunx prisma migrate dev --name update_erp_features
+bun run db:migrate -- --name update_erp_features
 ```
 
 Para agregar soporte de múltiples códigos de barras por producto:
 
 ```bash
-bunx prisma migrate dev --name add_product_barcodes
+bun run db:migrate -- --name add_product_barcodes
 ```
 
 Build y formato:

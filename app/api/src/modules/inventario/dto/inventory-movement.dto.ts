@@ -5,17 +5,21 @@ import {
   IsPositive,
   IsString,
   MinLength,
-  ValidateIf,
+  Validate,
 } from 'class-validator';
+import { HasProductIdentifierConstraint } from '../../../shared/products/validators/has-product-identifier.validator';
 
 export class InventoryEntryDto {
-  @ValidateIf((item) => !item.barcode)
+  @Validate(HasProductIdentifierConstraint)
+  private readonly productIdentifier?: never;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @IsPositive()
   productId?: number;
 
-  @ValidateIf((item) => !item.productId)
+  @IsOptional()
   @IsString()
   @MinLength(1)
   barcode?: string;
@@ -36,13 +40,16 @@ export class InventoryEntryDto {
 }
 
 export class InventoryExitDto {
-  @ValidateIf((item) => !item.barcode)
+  @Validate(HasProductIdentifierConstraint)
+  private readonly productIdentifier?: never;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @IsPositive()
   productId?: number;
 
-  @ValidateIf((item) => !item.productId)
+  @IsOptional()
   @IsString()
   @MinLength(1)
   barcode?: string;
@@ -70,13 +77,16 @@ export class InventoryTransferDto extends InventoryExitDto {
 }
 
 export class InventoryAdjustmentDto {
-  @ValidateIf((item) => !item.barcode)
+  @Validate(HasProductIdentifierConstraint)
+  private readonly productIdentifier?: never;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @IsPositive()
   productId?: number;
 
-  @ValidateIf((item) => !item.productId)
+  @IsOptional()
   @IsString()
   @MinLength(1)
   barcode?: string;

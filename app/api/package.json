@@ -6,7 +6,7 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "prisma:generate": "bunx --bun prisma generate --schema prisma/schema.prisma",
+    "prisma:generate": "node scripts/prisma-node-cli.js generate --schema prisma/schema.prisma",
     "dev": "bun run prisma:generate && nest start --watch",
     "build": "bun run prisma:generate && node -e \"require('node:fs').rmSync('dist',{ recursive:true, force:true })\" && nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -22,9 +22,9 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "db:generate": "bunx --bun prisma generate --schema prisma/schema.prisma",
-    "db:migrate": "bunx --bun prisma migrate dev --schema prisma/schema.prisma",
-    "db:deploy": "bunx --bun prisma migrate deploy --schema prisma/schema.prisma",
+    "db:generate": "node scripts/prisma-node-cli.js generate --schema prisma/schema.prisma",
+    "db:migrate": "node scripts/prisma-node-cli.js migrate dev --schema prisma/schema.prisma",
+    "db:deploy": "node scripts/prisma-node-cli.js migrate deploy --schema prisma/schema.prisma",
     "db:seed:quick-access": "node scripts/seed-quick-access-and-mobile-orders.js"
   },
   "dependencies": {
@@ -56,6 +56,7 @@
     "@types/multer": "^2.1.0",
     "@types/node": "^24.0.0",
     "@types/supertest": "^7.0.0",
+    "ajv": "^8.17.1",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^10.0.1",
     "eslint-plugin-prettier": "^5.2.2",

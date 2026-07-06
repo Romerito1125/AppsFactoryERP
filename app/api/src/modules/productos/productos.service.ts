@@ -314,7 +314,7 @@ export class ProductosService {
     return this.formatProduct(barcode.product);
   }
 
-  private readonly productInclude = {
+  private readonly productInclude: Prisma.ProductInclude = {
     productType: true,
     provider: true,
     tags: { include: { tag: true } },
@@ -324,15 +324,15 @@ export class ProductosService {
       orderBy: { warehouseId: 'asc' },
     },
     barcodes: { orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }] },
-  } as const;
+  };
 
-  private readonly productBarcodeLookupInclude = {
+  private readonly productBarcodeLookupInclude: Prisma.ProductInclude = {
     ...this.productInclude,
     prices: {
       where: { isActive: true },
       orderBy: { id: 'asc' },
     },
-  } as const;
+  };
 
   private async getExistingProduct(id: number) {
     const product = await this.prisma.product.findUnique({
