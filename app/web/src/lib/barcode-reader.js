@@ -9,6 +9,20 @@ const ZXING_TYPE_TO_APP_TYPE = {
   QR_CODE: 'QR',
 }
 
+function cleanupReader(reader) {
+  try {
+    reader.stopContinuousDecode?.()
+  } catch {}
+
+  try {
+    reader.stopAsyncDecode?.()
+  } catch {}
+
+  try {
+    reader.reset?.()
+  } catch {}
+}
+
 function buildDecodedBarcode(result, BarcodeFormat) {
   const code = result.getText()
   const rawFormat = BarcodeFormat[result.getBarcodeFormat?.()]
@@ -39,7 +53,7 @@ export async function readBarcodeFromImage(file) {
   } catch {
     throw new Error('No se pudo leer un codigo de barras en la imagen')
   } finally {
-    reader.reset()
+    cleanupReader(reader)
     URL.revokeObjectURL(objectUrl)
   }
 }
@@ -70,7 +84,7 @@ export async function scanBarcodeFromVideo(videoElement, options = {}) {
       try {
         controls?.stop?.()
       } finally {
-        reader.reset()
+        cleanupReader(reader)
         options.signal?.removeEventListener('abort', abortHandler)
       }
 

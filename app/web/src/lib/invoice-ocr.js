@@ -1,4 +1,4 @@
-import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker'
 
 import { inferBarcodeTypeFromCode } from '@/lib/barcodes'
 
@@ -29,6 +29,15 @@ const INVOICE_SKIP_HINTS = [
 ]
 const PRICE_TOKEN_PATTERN = /\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?|\d+(?:[.,]\d{2})?/g
 const LONG_CODE_PATTERN = /\b(?:\d{8,14}|[A-Z0-9][A-Z0-9\-._/]{5,})\b/gi
+let pdfWorkerPort = null
+
+function ensurePdfWorker(pdfjs) {
+  if (!pdfWorkerPort) {
+    pdfWorkerPort = new PdfWorker()
+  }
+
+  pdfjs.GlobalWorkerOptions.workerPort = pdfWorkerPort
+}
 
 function normalizeSpaces(value) {
   return value.replace(/\s+/g, ' ').trim()
@@ -208,24 +217,34 @@ async function recognizeImage(source, onProgress) {
 async function extractPdfText(file, onProgress) {
   const pdfjsModule = await import('pdfjs-dist/build/pdf.mjs')
   const pdfjs = pdfjsModule.default ?? pdfjsModule
-  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc
+  ensurePdfWorker(pdfjs)
 
-  const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
+  const loadingTask = pdfjs.getDocument({ data: await file.arrayBuffer() })
+  const pdf = await loadingTask.promise
   const pageTexts = []
   const totalPages = Math.min(pdf.numPages, MAX_PDF_PAGES)
 
-  for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
-    onProgress?.({ status: `Procesando pagina ${pageNumber} de ${totalPages}`, progress: pageNumber / totalPages })
-    const page = await pdf.getPage(pageNumber)
-    const viewport = page.getViewport({ scale: 2 })
-    const canvas = document.createElement('canvas')
-    const context = canvas.getContext('2d', { alpha: false })
+  try {
+    for (let pageNumber = 1; pageNumber <= totalPages; pageNumber += 1) {
+      onProgress?.({ status: `Procesando pagina ${pageNumber} de ${totalPages}`, progress: pageNumber / totalPages })
+      const page = await pdf.getPage(pageNumber)
+      const viewport = page.getViewport({ scale: 2 })
+      const canvas = document.createElement('canvas')
+      const context = canvas.getContext('2d', { alpha: false })
 
-    canvas.width = Math.ceil(viewport.width)
-    canvas.height = Math.ceil(viewport.height)
+      if (!context) {
+        throw new Error('No se pudo preparar el canvas para leer la factura PDF')
+      }
 
-    await page.render({ canvasContext: context, viewport }).promise
-    pageTexts.push(await recognizeImage(canvas, onProgress))
+      canvas.width = Math.ceil(viewport.width)
+      canvas.height = Math.ceil(viewport.height)
+
+      await page.render({ canvasContext: context, viewport }).promise
+      pageTexts.push(await recognizeImage(canvas, onProgress))
+    }
+  } finally {
+    await pdf.cleanup?.()
+    await loadingTask.destroy?.()
   }
 
   return pageTexts.join('\n\n')

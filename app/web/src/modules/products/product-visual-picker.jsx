@@ -92,7 +92,7 @@ export function ProductVisualPicker({
 
       <ScrollArea className={cn(maxHeightClassName, 'pr-4')}>
         {filteredProducts.length ? (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
             {filteredProducts.map((product) => {
               const primaryBarcode = getPrimaryBarcode(product)
               const isSelected = product.id === selectedProductId
@@ -101,7 +101,7 @@ export function ProductVisualPicker({
                 <div
                   key={product.id}
                   className={cn(
-                    'grid gap-3 rounded-2xl border border-border/70 bg-card p-3 transition hover:border-primary/35 hover:shadow-sm hover:shadow-primary/10',
+                    'grid min-w-0 gap-3 rounded-2xl border border-border/70 bg-card p-4 transition hover:border-primary/35 hover:shadow-sm hover:shadow-primary/10',
                     isSelected && 'border-primary/50 ring-2 ring-primary/15',
                   )}
                 >
@@ -116,15 +116,21 @@ export function ProductVisualPicker({
                       className="aspect-[4/3] w-full rounded-xl"
                       iconClassName="size-6"
                     />
-                    <div>
+                    <div className="min-w-0">
                       <p className="line-clamp-1 text-sm font-medium text-foreground">{product.name}</p>
                       <p className="line-clamp-1 text-xs text-muted-foreground">
                         {product.brand} · {product.productType?.name ?? 'Sin tipo'}
                       </p>
                     </div>
-                    <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                    <div className="flex min-w-0 flex-wrap gap-2 text-xs text-muted-foreground">
                       <Badge variant="outline">Stock {formatNumber(getTotalStock(product))}</Badge>
-                      {primaryBarcode ? <Badge variant="outline">{primaryBarcode.code}</Badge> : <Badge variant="outline">Sin codigo</Badge>}
+                      {primaryBarcode ? (
+                        <Badge variant="outline" className="max-w-full truncate">
+                          {primaryBarcode.code}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">Sin codigo</Badge>
+                      )}
                     </div>
                   </button>
 

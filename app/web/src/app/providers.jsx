@@ -13,8 +13,20 @@ export function AppProviders({ children }) {
         defaultOptions: {
           queries: {
             refetchOnWindowFocus: false,
-            refetchOnReconnect: false,
-            retry: 1,
+            refetchOnReconnect: true,
+            retry(failureCount, error) {
+              if (failureCount >= 3) {
+                return false
+              }
+
+              const message = String(error?.message ?? '').toLowerCase()
+
+              if (message.includes('401') || message.includes('403') || message.includes('404')) {
+                return false
+              }
+
+              return true
+            },
             staleTime: 60_000,
             gcTime: 10 * 60_000,
           },

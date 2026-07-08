@@ -34,7 +34,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { NativeSelect } from '@/components/ui/native-select'
 import {
   Select,
   SelectContent,
@@ -68,51 +67,6 @@ const statusOptions = [
   { value: 'todos', label: 'Todos' },
 ]
 const barcodeTypeFilterOptions = [{ value: 'TODOS', label: 'Todos los tipos' }, ...barcodeTypeOptions]
-
-const barcodeExampleTemplates = [
-  {
-    type: 'EAN13',
-    label: 'EAN-13',
-    description: 'Ideal para retail y lectura lineal estandar.',
-    getCode: (product) => `7701234${String(product.id).padStart(6, '0')}`,
-  },
-  {
-    type: 'EAN8',
-    label: 'EAN-8',
-    description: 'Version corta para empaques pequenos.',
-    getCode: (product) => `96${String(product.id).padStart(6, '0')}`,
-  },
-  {
-    type: 'UPC_A',
-    label: 'UPC-A',
-    description: 'Comun en productos empacados y cajas.',
-    getCode: (product) => `0421${String(product.id).padStart(8, '0')}`,
-  },
-  {
-    type: 'UPC_E',
-    label: 'UPC-E',
-    description: 'Alternativa compacta para etiquetas chicas.',
-    getCode: (product) => `42${String(product.id).padStart(4, '0')}`,
-  },
-  {
-    type: 'CODE128',
-    label: 'Code 128',
-    description: 'Util para codigos internos o promocionales.',
-    getCode: (product) => `PROD-${product.id}-PROMO`,
-  },
-  {
-    type: 'QR',
-    label: 'QR',
-    description: 'Puede resolver a una URL o detalle rapido.',
-    getCode: (product) => `https://erp.local/p/${product.id}`,
-  },
-  {
-    type: 'OTHER',
-    label: 'Interno',
-    description: 'Codigo auxiliar para operacion interna.',
-    getCode: (product) => `INTERNO-${String(product.id).padStart(3, '0')}`,
-  },
-]
 
 const createBarcodeSchema = z.object({
   productId: z.number({ message: 'Selecciona un producto' }).int().positive('Selecciona un producto'),
@@ -156,30 +110,7 @@ function getPrimaryBarcode(product) {
   return product?.barcodes?.find((barcode) => barcode.isPrimary) ?? product?.barcodes?.[0] ?? null
 }
 
-function buildBarcodeExampleAssignments(products) {
-  return barcodeExampleTemplates
-    .map((template, index) => {
-      const product = products[index]
-
-      if (!product) {
-        return null
-      }
-
-      return {
-        productId: product.id,
-        productName: product.name,
-        brand: product.brand,
-        imageUrl: product.imageUrl,
-        type: template.type,
-        label: template.label,
-        description: template.description,
-        code: template.getCode(product),
-      }
-    })
-    .filter(Boolean)
-}
-
-function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples, onSubmit, isSubmitting }) {
+function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit, isSubmitting }) {
   const schema = mode === 'create' ? createBarcodeSchema : updateBarcodeSchema
   const fileInputRef = useRef(null)
   const [scanLoading, setScanLoading] = useState(false)
@@ -245,25 +176,11 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples
     () => pickerProducts.find((product) => product.id === selectedProductId) ?? selectedProductQuery.data ?? null,
     [pickerProducts, selectedProductId, selectedProductQuery.data],
   )
-  const selectProducts = useMemo(
-    () =>
-      selectedProduct && !pickerProducts.some((product) => product.id === selectedProduct.id)
-        ? [selectedProduct, ...pickerProducts]
-        : pickerProducts,
-    [pickerProducts, selectedProduct],
-  )
-
   function closeDialog(nextOpen) {
     onOpenChange(nextOpen)
     if (!nextOpen) {
       form.reset(formDefaults)
     }
-  }
-
-  function applyExample(example) {
-    form.setValue('productId', example.productId, { shouldDirty: true, shouldValidate: true })
-    form.setValue('code', example.code, { shouldDirty: true, shouldValidate: true })
-    form.setValue('type', example.type, { shouldDirty: true, shouldValidate: true })
   }
 
   async function handleReadImage(event) {
@@ -296,7 +213,7 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples
 
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
-      <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-5xl">
+      <DialogContent className="max-h-[95vh] overflow-y-auto sm:max-w-6xl 2xl:max-w-7xl">
         <DialogHeader>
           <DialogTitle>{mode === 'create' ? 'Nuevo codigo de barras' : 'Actualizar codigo de barras'}</DialogTitle>
           <DialogDescription>
@@ -315,34 +232,10 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples
             }),
           )}
         >
-          <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr] xl:items-start">
+          <div className="grid gap-5 xl:grid-cols-[1.35fr_0.85fr] xl:items-start">
             <div className="grid gap-4">
               {mode === 'create' ? (
                 <>
-                  <div className="grid gap-2">
-                    <Label>Producto</Label>
-                    <Controller
-                      name="productId"
-                      control={form.control}
-                      render={({ field }) => (
-                        <NativeSelect
-                          value={field.value ? String(field.value) : ''}
-                          onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                        >
-                          <option value="">Selecciona un producto</option>
-                          {selectProducts.map((product) => (
-                            <option key={product.id} value={String(product.id)}>
-                              {getProductLabel(product)}
-                            </option>
-                          ))}
-                        </NativeSelect>
-                      )}
-                    />
-                    {form.formState.errors.productId ? (
-                      <p className="text-xs text-destructive">{String(form.formState.errors.productId.message)}</p>
-                    ) : null}
-                  </div>
-
                   {selectedProduct ? (
                     <div className="grid gap-3 rounded-2xl border border-border/70 bg-muted/15 p-4 md:grid-cols-[88px_minmax(0,1fr)] md:items-center">
                       <ProductImage
@@ -380,7 +273,7 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples
                     }}
                     disableLocalSearch
                     totalCount={productsQuery.data?.total ?? pickerProducts.length}
-                    maxHeightClassName="h-[360px]"
+                    maxHeightClassName="h-[520px]"
                     footerContent={
                       <LocalPagination
                         currentPage={Number(productsQuery.data?.page ?? 1)}
@@ -401,6 +294,10 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples
                       />
                     }
                   />
+
+                  {form.formState.errors.productId ? (
+                    <p className="text-xs text-destructive">{String(form.formState.errors.productId.message)}</p>
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -480,37 +377,6 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples
                   />
                 </div>
               </div>
-
-              {mode === 'create' && examples?.length ? (
-                <div className="grid gap-2">
-                  <Label>Ejemplos rapidos conectados a productos</Label>
-                  <div className="grid gap-2">
-                    {examples.map((example) => (
-                      <button
-                        key={`${example.productId}-${example.type}`}
-                        type="button"
-                        onClick={() => applyExample(example)}
-                        className="flex items-start gap-3 rounded-xl border border-border/70 bg-background px-3 py-2 text-left transition hover:border-primary/35 hover:bg-primary/5"
-                      >
-                        <ProductImage
-                          src={example.imageUrl}
-                          alt={example.productName}
-                          className="size-14 rounded-xl"
-                          iconClassName="size-4"
-                        />
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground">
-                            {example.label}: {example.code}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {example.productName} · {example.brand}
-                          </p>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
             </div>
           </div>
 
@@ -574,22 +440,8 @@ export function ProductBarcodesPage() {
     placeholderData: (previousData) => previousData,
   })
 
-  const exampleProductsQuery = useQuery({
-    queryKey: ['codigos-barras-example-products'],
-    queryFn: () =>
-      apiClient.get('/productos', {
-        estado: 'activos',
-        page: 1,
-        limit: barcodeExampleTemplates.length,
-      }),
-  })
-
   const records = barcodesQuery.data?.data ?? []
   const catalogProducts = catalogProductsQuery.data?.data ?? []
-  const barcodeExamples = useMemo(
-    () => buildBarcodeExampleAssignments(exampleProductsQuery.data?.data ?? []),
-    [exampleProductsQuery.data?.data],
-  )
 
   function openCreateDialog(preset = null) {
     setFormState({ open: true, mode: 'create', record: null, preset })
@@ -599,7 +451,6 @@ export function ProductBarcodesPage() {
     queryClient.invalidateQueries({ queryKey: ['codigos-barras'] })
     queryClient.invalidateQueries({ queryKey: ['productos'] })
     queryClient.invalidateQueries({ queryKey: ['codigos-barras-catalogo'] })
-    queryClient.invalidateQueries({ queryKey: ['codigos-barras-example-products'] })
   }
 
   const createMutation = useMutation({
@@ -694,7 +545,7 @@ export function ProductBarcodesPage() {
     ]
   }, [barcodesQuery.data?.total, records])
 
-  if (barcodesQuery.isLoading || catalogProductsQuery.isLoading || exampleProductsQuery.isLoading) {
+  if (barcodesQuery.isLoading || catalogProductsQuery.isLoading) {
     return <ProductBarcodesSkeleton />
   }
 
@@ -738,82 +589,43 @@ export function ProductBarcodesPage() {
           ))}
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-          <ProductVisualPicker
-            products={catalogProducts}
-            actionLabel="Agregar codigo"
-            onAction={(product) => openCreateDialog({ productId: product.id })}
-            title="Productos por foto"
-            description="Busqueda visual optimizada con paginacion del catalogo activo para abrir rapido el alta de codigos."
-            searchPlaceholder="Buscar por nombre, marca o codigo..."
-            searchValue={catalogSearch}
-            onSearchValueChange={(value) => {
-              setCatalogSearch(value)
-              setCatalogPage(1)
-            }}
-            disableLocalSearch
-            totalCount={Number(catalogProductsQuery.data?.total ?? catalogProducts.length)}
-            emptyTitle="No hay productos visibles"
-            emptyDescription="Cambia la busqueda para traer otras coincidencias del backend."
-            maxHeightClassName="h-[460px]"
-            footerContent={
-              <LocalPagination
-                currentPage={Number(catalogProductsQuery.data?.page ?? 1)}
-                totalPages={Math.max(1, Number(catalogProductsQuery.data?.totalPages ?? 1))}
-                totalItems={Number(catalogProductsQuery.data?.total ?? catalogProducts.length)}
-                startItem={
-                  Number(catalogProductsQuery.data?.total ?? 0) === 0
-                    ? 0
-                    : (Number(catalogProductsQuery.data?.page ?? 1) - 1) * PRODUCT_PICKER_PAGE_SIZE + 1
-                }
-                endItem={Math.min(
-                  (Number(catalogProductsQuery.data?.page ?? 1) - 1) * PRODUCT_PICKER_PAGE_SIZE + catalogProducts.length,
-                  Number(catalogProductsQuery.data?.total ?? catalogProducts.length),
-                )}
-                singularLabel="producto"
-                pluralLabel="productos"
-                onPageChange={setCatalogPage}
-              />
-            }
-          />
-
-          <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
-            <CardHeader>
-              <CardTitle>Ejemplos listos para pruebas</CardTitle>
-              <CardDescription>
-                Estos ejemplos ya quedaron conectados a productos activos de la BD y puedes reusarlos desde el formulario.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3">
-              {barcodeExamples.map((example) => (
-                <button
-                  key={`${example.productId}-${example.type}`}
-                  type="button"
-                  onClick={() => openCreateDialog({ productId: example.productId, code: example.code, type: example.type, isPrimary: false })}
-                  className="flex items-start gap-3 rounded-2xl border border-border/70 bg-muted/15 p-3 text-left transition hover:border-primary/35 hover:bg-primary/5"
-                >
-                  <ProductImage
-                    src={example.imageUrl}
-                    alt={example.productName}
-                    className="size-16 rounded-xl"
-                    iconClassName="size-4"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium text-foreground">{example.label}</p>
-                      <Badge>Sembrado</Badge>
-                    </div>
-                    <p className="mt-1 break-all text-xs text-foreground">{example.code}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {example.productName} · {example.brand}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">{example.description}</p>
-                  </div>
-                </button>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
+        <ProductVisualPicker
+          products={catalogProducts}
+          actionLabel="Agregar codigo"
+          onAction={(product) => openCreateDialog({ productId: product.id })}
+          title="Productos por foto"
+          description="Busqueda visual optimizada con paginacion del catalogo activo para abrir rapido el alta de codigos."
+          searchPlaceholder="Buscar por nombre, marca o codigo..."
+          searchValue={catalogSearch}
+          onSearchValueChange={(value) => {
+            setCatalogSearch(value)
+            setCatalogPage(1)
+          }}
+          disableLocalSearch
+          totalCount={Number(catalogProductsQuery.data?.total ?? catalogProducts.length)}
+          emptyTitle="No hay productos visibles"
+          emptyDescription="Cambia la busqueda para traer otras coincidencias del backend."
+          maxHeightClassName="h-[460px]"
+          footerContent={
+            <LocalPagination
+              currentPage={Number(catalogProductsQuery.data?.page ?? 1)}
+              totalPages={Math.max(1, Number(catalogProductsQuery.data?.totalPages ?? 1))}
+              totalItems={Number(catalogProductsQuery.data?.total ?? catalogProducts.length)}
+              startItem={
+                Number(catalogProductsQuery.data?.total ?? 0) === 0
+                  ? 0
+                  : (Number(catalogProductsQuery.data?.page ?? 1) - 1) * PRODUCT_PICKER_PAGE_SIZE + 1
+              }
+              endItem={Math.min(
+                (Number(catalogProductsQuery.data?.page ?? 1) - 1) * PRODUCT_PICKER_PAGE_SIZE + catalogProducts.length,
+                Number(catalogProductsQuery.data?.total ?? catalogProducts.length),
+              )}
+              singularLabel="producto"
+              pluralLabel="productos"
+              onPageChange={setCatalogPage}
+            />
+          }
+        />
 
         <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
           <CardHeader className="gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -1004,7 +816,6 @@ export function ProductBarcodesPage() {
         mode={formState.mode}
         barcode={formState.record}
         preset={formState.preset}
-        examples={barcodeExamples}
         onSubmit={handleSubmit}
         isSubmitting={createMutation.isPending || updateMutation.isPending}
       />

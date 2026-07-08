@@ -46,21 +46,39 @@ function getErrorMessage(payload, fallback) {
   return fallback
 }
 
+function parseResponsePayload(text) {
+  if (!text) {
+    return null
+  }
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
+
 async function request(path, options = {}, params) {
   const isFormData = isFormDataBody(options.body)
   const accessToken = getStoredSession()?.accessToken
 
-  const response = await fetch(buildUrl(path, params), {
-    headers: {
-      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      ...(options.headers ?? {}),
-    },
-    ...options,
-  })
+  let response
+
+  try {
+    response = await fetch(buildUrl(path, params), {
+      headers: {
+        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...(options.headers ?? {}),
+      },
+      ...options,
+    })
+  } catch {
+    throw new Error('No se pudo conectar con el servidor. Verifica que el API local este iniciado.')
+  }
 
   const text = await response.text()
-  const payload = text ? JSON.parse(text) : null
+  const payload = parseResponsePayload(text)
 
   if (!response.ok) {
     throw new Error(getErrorMessage(payload, 'No se pudo completar la solicitud'))
