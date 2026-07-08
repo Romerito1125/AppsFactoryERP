@@ -21,7 +21,10 @@ import {
   getRecordStatusVariant,
   toApiStatus,
 } from '@/lib/format'
-import { ProductBarcodesField, barcodeTypeOptions } from '@/modules/products/barcodes-field'
+import { barcodeTypeOptions } from '@/lib/barcodes'
+import { InvoiceOcrImportAction } from '@/modules/products/invoice-ocr-import-dialog'
+import { ProductBarcodesField } from '@/modules/products/barcodes-field'
+import { buildCreateProductFormData, buildProductFormData } from '@/modules/products/product-form-data'
 import { CrudModulePage } from '@/modules/shared/crud-module-page'
 
 const barcodeTypeValues = barcodeTypeOptions.map((option) => option.value)
@@ -115,26 +118,6 @@ function formatBarcodeType(type) {
   return barcodeTypeLabels[type] ?? type ?? 'Sin tipo'
 }
 
-function normalizeBarcodePayload(barcodes) {
-  const resolved = (barcodes ?? [])
-    .map((barcode) => ({
-      code: barcode.code.trim(),
-      type: barcode.type,
-      isPrimary: Boolean(barcode.isPrimary),
-    }))
-    .filter((barcode) => barcode.code)
-
-  if (resolved.length === 1 && !resolved[0].isPrimary) {
-    resolved[0].isPrimary = true
-  }
-
-  if (resolved.length > 1 && !resolved.some((barcode) => barcode.isPrimary)) {
-    resolved[0].isPrimary = true
-  }
-
-  return resolved
-}
-
 function formatBarcodeSummary(product) {
   if (!product.barcodes?.length) {
     return 'Sin codigos registrados'
@@ -157,32 +140,6 @@ function formatWarehouseStock(product) {
   return product.warehouses
     .map((item) => `${item.warehouse?.location ?? `Bodega #${item.warehouseId}`}: ${formatNumber(item.quantity)}`)
     .join(' · ')
-}
-
-function appendFormValue(formData, key, value) {
-  if (value === undefined || value === null || value === '') {
-    return
-  }
-
-  if (typeof File !== 'undefined' && value instanceof File) {
-    formData.append(key, value)
-    return
-  }
-
-  if (Array.isArray(value) || typeof value === 'object') {
-    formData.append(key, JSON.stringify(value))
-    return
-  }
-
-  formData.append(key, String(value))
-}
-
-function buildProductFormData(values) {
-  const formData = new FormData()
-
-  Object.entries(values).forEach(([key, value]) => appendFormValue(formData, key, value))
-
-  return formData
 }
 
 function getStockSignal(product) {
@@ -460,36 +417,20 @@ function createProductsConfig(lookups) {
     }),
     prepareValues: (mode, values) => {
       if (mode === 'edit') {
-        const { initialPriceName, initialPrice, initialWarehouseId, initialQuantity, barcodes, ...payload } = values
+        const payload = { ...values }
+        delete payload.initialPriceName
+        delete payload.initialPrice
+        delete payload.initialWarehouseId
+        delete payload.initialQuantity
+        delete payload.barcodes
         return buildProductFormData(payload)
       }
 
-      return buildProductFormData({
-        productTypeId: values.productTypeId,
-        providerId: values.providerId,
-        name: values.name,
-        image: values.image,
-        description: values.description,
-        brand: values.brand,
-        taxRate: values.taxRate,
-        minimumStock: values.minimumStock,
-        maximumStock: values.maximumStock,
-        prices: [
-          {
-            name: values.initialPriceName,
-            price: values.initialPrice,
-            isDefault: true,
-          },
-        ],
-        warehouses: [
-          {
-            warehouseId: values.initialWarehouseId,
-            quantity: values.initialQuantity,
-          },
-        ],
-        barcodes: normalizeBarcodePayload(values.barcodes),
-      })
+      return buildCreateProductFormData(values)
     },
+    renderHeaderActions: ({ invalidateRecords }) => (
+      <InvoiceOcrImportAction lookups={lookups} onImported={invalidateRecords} />
+    ),
     fetchRecords: ({ status, search, page, limit, filters }) =>
       apiClient.get('/productos', {
         estado: toApiStatus(status),

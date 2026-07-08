@@ -3,10 +3,11 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
-import { FilePlus2, ImageUp, MoreHorizontal, Plus, Search, Star, Trash2 } from 'lucide-react'
+import { FilePlus2, ImageUp, MoreHorizontal, Plus, ScanLine, Search, Star, Trash2 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
+import { BarcodeScannerDialog } from '@/components/barcode-scanner-dialog'
 import { Badge } from '@/components/ui/badge'
 import { ProductImage } from '@/components/product-image'
 import { Button } from '@/components/ui/button'
@@ -162,6 +163,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
   const [favoritesOnly, setFavoritesOnly] = useState(false)
   const [catalogTargetIndex, setCatalogTargetIndex] = useState(null)
   const [scanLoading, setScanLoading] = useState(false)
+  const [cameraScannerOpen, setCameraScannerOpen] = useState(false)
   const barcodeImageInputRef = useRef(null)
 
   useEffect(() => {
@@ -309,6 +311,19 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
         toast.error(error.message)
       } finally {
         setScanLoading(false)
+      }
+    },
+    [handleCatalogSelection],
+  )
+
+  const handleBarcodeDetected = useCallback(
+    async (result) => {
+      try {
+        const product = await apiClient.get(`/productos/codigo-barras/${encodeURIComponent(result.code)}`)
+        handleCatalogSelection(product)
+        toast.success(`Producto detectado por codigo ${result.code}`)
+      } catch (error) {
+        toast.error(error.message)
       }
     },
     [handleCatalogSelection],
@@ -635,6 +650,15 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                   <Button
                     type="button"
                     variant="outline"
+                    onClick={() => setCameraScannerOpen(true)}
+                    className="shrink-0"
+                  >
+                    <ScanLine className="mr-2 size-4" />
+                    Escanear
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
                     onClick={() => barcodeImageInputRef.current?.click()}
                     disabled={scanLoading}
                     className="shrink-0"
@@ -678,6 +702,14 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
             </Button>
           </DialogFooter>
         </form>
+
+        <BarcodeScannerDialog
+          open={cameraScannerOpen}
+          onOpenChange={setCameraScannerOpen}
+          onDetected={handleBarcodeDetected}
+          title="Escanear producto para la factura"
+          description="Lee el codigo de barras con la camara para agregar el producto a la siguiente linea disponible."
+        />
       </DialogContent>
     </Dialog>
   )

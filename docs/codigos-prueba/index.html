@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Codigos de prueba ERP</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #f6f7fb;
+        color: #101828;
+      }
+
+      main {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 32px 20px 64px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+      }
+
+      p {
+        color: #475467;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 16px;
+        margin-top: 24px;
+      }
+
+      .card {
+        background: #fff;
+        border: 1px solid #d0d5dd;
+        border-radius: 16px;
+        padding: 16px;
+        box-shadow: 0 8px 24px rgba(16, 24, 40, 0.06);
+      }
+
+      img {
+        width: 100%;
+        height: 180px;
+        object-fit: contain;
+        background: #fff;
+        border-radius: 12px;
+      }
+
+      code {
+        display: inline-block;
+        margin-top: 8px;
+        padding: 4px 8px;
+        background: #f2f4f7;
+        border-radius: 999px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Codigos de prueba</h1>
+      <p>Abre esta pagina o los PNG individuales para probar el lector por camara, por imagen y el flujo de busqueda por codigo.</p>
+
+      <p>
+        Factura OCR de prueba:
+        <a href="./factura-ocr-ejemplo.pdf">factura-ocr-ejemplo.pdf</a>
+      </p>
+
+      <div class="grid">
+        <article class="card">
+          <h2>EAN-13</h2>
+          <img src="./ean13-cafe-premium.png" alt="EAN 13 Cafe Premium" />
+          <code>7701234567897</code>
+        </article>
+        <article class="card">
+          <h2>EAN-8</h2>
+          <img src="./ean8-snack-mini.png" alt="EAN 8 Snack Mini" />
+          <code>55123457</code>
+        </article>
+        <article class="card">
+          <h2>UPC-A</h2>
+          <img src="./upca-galletas.png" alt="UPC A Galletas" />
+          <code>042100005264</code>
+        </article>
+        <article class="card">
+          <h2>Code 128</h2>
+          <img src="./code128-combo.png" alt="Code 128 Combo" />
+          <code>PROD-101-PROMO</code>
+        </article>
+        <article class="card">
+          <h2>QR</h2>
+          <img src="./qr-producto-demo.png" alt="QR Producto Demo" />
+          <code>https://erp.local/p/101</code>
+        </article>
+      </div>
+    </main>
+  </body>
+</html>

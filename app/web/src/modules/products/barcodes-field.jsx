@@ -1,6 +1,9 @@
+import { useRef, useState } from 'react'
 import { Controller, useFieldArray, useWatch } from 'react-hook-form'
-import { Plus, Star, Trash2 } from 'lucide-react'
+import { ImageUp, Plus, ScanLine, Star, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 
+import { BarcodeScannerDialog } from '@/components/barcode-scanner-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -10,18 +13,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-
-const DEFAULT_BARCODE_TYPE = 'EAN13'
-
-export const barcodeTypeOptions = [
-  { value: 'EAN13', label: 'EAN-13' },
-  { value: 'EAN8', label: 'EAN-8' },
-  { value: 'UPC_A', label: 'UPC-A' },
-  { value: 'UPC_E', label: 'UPC-E' },
-  { value: 'CODE128', label: 'Code 128' },
-  { value: 'QR', label: 'QR' },
-  { value: 'OTHER', label: 'Otro' },
-]
+import { DEFAULT_BARCODE_TYPE, barcodeTypeOptions } from '@/lib/barcodes'
+import { readBarcodeFromImage } from '@/lib/barcode-reader'
 
 function normalizeBarcodes(barcodes) {
   const resolved = (barcodes ?? []).map((barcode) => ({
@@ -47,6 +40,36 @@ export function ProductBarcodesField({ control, errors }) {
     name: 'barcodes',
   })
   const values = useWatch({ control, name: 'barcodes' }) ?? []
+  const fileInputRef = useRef(null)
+  const [scannerOpen, setScannerOpen] = useState(false)
+  const [scanLoading, setScanLoading] = useState(false)
+
+  function applyBarcodeResult(result) {
+    const targetIndex = values.findIndex((barcode) => !barcode?.code?.trim())
+
+    if (targetIndex === -1) {
+      append({
+        code: result.code,
+        type: result.type ?? DEFAULT_BARCODE_TYPE,
+        isPrimary: fields.length === 0,
+      })
+      return
+    }
+
+    replace(
+      normalizeBarcodes(
+        values.map((barcode, index) =>
+          index === targetIndex
+            ? {
+                ...barcode,
+                code: result.code,
+                type: result.type ?? DEFAULT_BARCODE_TYPE,
+              }
+            : barcode,
+        ),
+      ),
+    )
+  }
 
   function handleAddBarcode() {
     append({
@@ -78,20 +101,54 @@ export function ProductBarcodesField({ control, errors }) {
     replace(nextBarcodes)
   }
 
+  async function handleReadImage(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+
+    if (!file) {
+      return
+    }
+
+    setScanLoading(true)
+
+    try {
+      const result = await readBarcodeFromImage(file)
+      applyBarcodeResult(result)
+      toast.success(`Codigo detectado: ${result.code}`)
+    } catch (error) {
+      toast.error(error.message)
+    } finally {
+      setScanLoading(false)
+    }
+  }
+
   return (
-    <div className="grid gap-3">
+    <>
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleReadImage} />
+
+      <div className="grid gap-3">
       <div className="flex flex-col gap-2 rounded-2xl border border-border/70 bg-muted/20 p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-medium text-foreground">Codigos iniciales</p>
             <p className="text-xs text-muted-foreground">
-              Puedes registrar varios codigos desde la creacion. Luego podras administrarlos desde el modulo de codigos de barras.
+              Puedes registrar varios codigos desde la creacion y cargarlos por camara o imagen. Luego podras administrarlos desde el modulo de codigos de barras.
             </p>
           </div>
-          <Button type="button" variant="outline" size="sm" onClick={handleAddBarcode}>
-            <Plus className="size-4" />
-            Agregar codigo
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => setScannerOpen(true)}>
+              <ScanLine className="size-4" />
+              Escanear camara
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={scanLoading}>
+              <ImageUp className="size-4" />
+              {scanLoading ? 'Leyendo...' : 'Leer imagen'}
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={handleAddBarcode}>
+              <Plus className="size-4" />
+              Agregar codigo
+            </Button>
+          </div>
         </div>
 
         {fields.length ? (
@@ -168,7 +225,7 @@ export function ProductBarcodesField({ control, errors }) {
           </div>
         ) : (
           <div className="rounded-xl border border-dashed border-border/70 bg-background/70 p-4 text-sm text-muted-foreground">
-            Sin codigos configurados. Puedes guardar el producto sin codigos y agregarlos despues desde el admin.
+            Sin codigos configurados. Puedes guardar el producto sin codigos, agregarlos manualmente o escanearlos desde arriba.
           </div>
         )}
 
@@ -176,6 +233,18 @@ export function ProductBarcodesField({ control, errors }) {
           <p className="text-xs text-destructive">{String(errors.barcodes.message)}</p>
         ) : null}
       </div>
-    </div>
+      </div>
+
+      <BarcodeScannerDialog
+        open={scannerOpen}
+        onOpenChange={setScannerOpen}
+        onDetected={(result) => {
+          applyBarcodeResult(result)
+          toast.success(`Codigo detectado: ${result.code}`)
+        }}
+        title="Escanear codigo del producto"
+        description="Apunta la camara al codigo del empaque para agregarlo al producto en creacion."
+      />
+    </>
   )
 }

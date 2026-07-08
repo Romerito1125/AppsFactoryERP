@@ -2,11 +2,12 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useForm, useWatch } from 'react-hook-form'
-import { Eye, ImageUp, MoreHorizontal, Pencil, Plus, Power, Search, Star } from 'lucide-react'
+import { Eye, ImageUp, MoreHorizontal, Pencil, Plus, Power, ScanLine, Search, Star } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { z } from 'zod'
 
+import { BarcodeScannerDialog } from '@/components/barcode-scanner-dialog'
 import { ProductImage } from '@/components/product-image'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -51,9 +52,9 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { apiClient } from '@/lib/api-client'
+import { barcodeTypeLabels, barcodeTypeOptions } from '@/lib/barcodes'
 import { readBarcodeFromImage } from '@/lib/barcode-reader'
 import { formatDate, formatNumber, getRecordStatus, getRecordStatusVariant } from '@/lib/format'
-import { barcodeTypeOptions } from '@/modules/products/barcodes-field'
 import { ProductVisualPicker } from '@/modules/products/product-visual-picker'
 import { LocalPagination } from '@/modules/shared/local-pagination'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
@@ -61,7 +62,6 @@ import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
 const PAGE_SIZE = 20
 const PRODUCT_PICKER_PAGE_SIZE = 12
 const barcodeTypeValues = barcodeTypeOptions.map((option) => option.value)
-const barcodeTypeLabels = Object.fromEntries(barcodeTypeOptions.map((option) => [option.value, option.label]))
 const statusOptions = [
   { value: 'activos', label: 'Activos' },
   { value: 'inactivos', label: 'Inactivos' },
@@ -183,6 +183,7 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples
   const schema = mode === 'create' ? createBarcodeSchema : updateBarcodeSchema
   const fileInputRef = useRef(null)
   const [scanLoading, setScanLoading] = useState(false)
+  const [cameraScannerOpen, setCameraScannerOpen] = useState(false)
   const [productSearch, setProductSearch] = useState('')
   const [productPage, setProductPage] = useState(1)
   const deferredProductSearch = useDeferredValue(productSearch)
@@ -287,6 +288,12 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples
     }
   }
 
+  function handleScannerDetected(result) {
+    form.setValue('code', result.code, { shouldDirty: true, shouldValidate: true })
+    form.setValue('type', result.type, { shouldDirty: true, shouldValidate: true })
+    toast.success(`Codigo detectado: ${result.code}`)
+  }
+
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-5xl">
@@ -294,7 +301,7 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples
           <DialogTitle>{mode === 'create' ? 'Nuevo codigo de barras' : 'Actualizar codigo de barras'}</DialogTitle>
           <DialogDescription>
             {mode === 'create'
-              ? 'Asocia varios codigos a un producto, busca por foto y tambien puedes leer un codigo desde una imagen.'
+              ? 'Asocia varios codigos a un producto, busca por foto y tambien puedes leer un codigo desde camara o imagen.'
               : 'Actualiza el codigo, su formato o el indicador principal del registro seleccionado.'}
           </DialogDescription>
         </DialogHeader>
@@ -411,10 +418,16 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples
                         className="hidden"
                         onChange={handleReadImage}
                       />
-                      <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={scanLoading}>
-                        <ImageUp className="mr-2 size-4" />
-                        {scanLoading ? 'Leyendo...' : 'Leer desde imagen'}
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button type="button" variant="outline" size="sm" onClick={() => setCameraScannerOpen(true)}>
+                          <ScanLine className="mr-2 size-4" />
+                          Escanear camara
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={scanLoading}>
+                          <ImageUp className="mr-2 size-4" />
+                          {scanLoading ? 'Leyendo...' : 'Leer desde imagen'}
+                        </Button>
+                      </div>
                     </>
                   </div>
                   <Input {...form.register('code')} placeholder="7701234567890" />
@@ -510,6 +523,14 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, examples
             </Button>
           </DialogFooter>
         </form>
+
+        <BarcodeScannerDialog
+          open={cameraScannerOpen}
+          onOpenChange={setCameraScannerOpen}
+          onDetected={handleScannerDetected}
+          title="Escanear codigo para el producto"
+          description="Usa la camara para leer el codigo y completar el formulario automaticamente."
+        />
       </DialogContent>
     </Dialog>
   )

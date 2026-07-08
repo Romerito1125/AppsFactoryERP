@@ -191,6 +191,14 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
     currentPage,
   })
 
+  function openCreateDialog() {
+    setFormState({ open: true, mode: 'create', record: null })
+  }
+
+  function invalidateRecords() {
+    queryClient.invalidateQueries({ queryKey: [config.key] })
+  }
+
   async function handleSave(payload) {
     if (formState.mode === 'create') {
       await toast.promise(createMutation.mutateAsync(payload), {
@@ -250,13 +258,19 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
             {config.description}
           </p>
         </div>
-        <Button
-          className="rounded-full px-5"
-          onClick={() => setFormState({ open: true, mode: 'create', record: null })}
-        >
-          <Plus className="mr-2 size-4" />
-          {config.createButtonLabel}
-        </Button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+          {config.renderHeaderActions?.({
+            lookups,
+            status,
+            filters,
+            openCreateDialog,
+            invalidateRecords,
+          })}
+          <Button className="rounded-full px-5" onClick={openCreateDialog}>
+            <Plus className="mr-2 size-4" />
+            {config.createButtonLabel}
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
