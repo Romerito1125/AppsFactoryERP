@@ -213,7 +213,7 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
 
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
-      <DialogContent className="max-h-[95vh] overflow-y-auto sm:max-w-6xl 2xl:max-w-7xl">
+      <DialogContent className="max-h-[96svh] sm:max-w-6xl 2xl:max-w-7xl">
         <DialogHeader>
           <DialogTitle>{mode === 'create' ? 'Nuevo codigo de barras' : 'Actualizar codigo de barras'}</DialogTitle>
           <DialogDescription>
@@ -237,7 +237,7 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
               {mode === 'create' ? (
                 <>
                   {selectedProduct ? (
-                    <div className="grid gap-3 rounded-2xl border border-border/70 bg-muted/15 p-4 md:grid-cols-[88px_minmax(0,1fr)] md:items-center">
+                    <div className="grid gap-3 rounded-2xl border border-border/70 bg-muted/15 p-4 grid-cols-[72px_minmax(0,1fr)] items-center sm:grid-cols-[88px_minmax(0,1fr)]">
                       <ProductImage
                         src={selectedProduct.imageUrl}
                         alt={selectedProduct.name}
@@ -273,7 +273,7 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
                     }}
                     disableLocalSearch
                     totalCount={productsQuery.data?.total ?? pickerProducts.length}
-                    maxHeightClassName="h-[520px]"
+                    maxHeightClassName="h-[50svh] sm:h-[520px]"
                     footerContent={
                       <LocalPagination
                         currentPage={Number(productsQuery.data?.page ?? 1)}

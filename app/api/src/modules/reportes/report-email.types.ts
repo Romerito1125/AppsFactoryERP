@@ -1,0 +1,19 @@
+export enum ReportEmailSection {
+  RESUMEN = 'RESUMEN',
+  FACTURAS = 'FACTURAS',
+  IVA = 'IVA',
+  EXOGENAS = 'EXOGENAS',
+  GMF = 'GMF',
+  STOCK = 'STOCK',
+  PRODUCTOS = 'PRODUCTOS',
+}
+
+export interface ReportEmailMetric {
+  label: string;
+  value: string;
+  help?: string;
+}
+
+export interface ReportEmailTableRow {
+  [key: string]: string;
+}

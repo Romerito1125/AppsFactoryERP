@@ -2,6 +2,7 @@ import { useDeferredValue, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import {
+  Filter,
   Eye,
   MoreHorizontal,
   Pencil,
@@ -50,6 +51,14 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/drawer'
+import {
   getRecordStatus,
   getRecordStatusVariant,
   matchesSearch,
@@ -77,13 +86,15 @@ function ModuleSkeleton() {
 
 export function CrudModulePage({ config, lookups = {}, lookupsLoading = false }) {
   const queryClient = useQueryClient()
+  const initialFilters = useMemo(() => config.getInitialFilters?.() ?? {}, [config])
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('activos')
-  const [filters, setFilters] = useState(() => config.getInitialFilters?.() ?? {})
+  const [filters, setFilters] = useState(() => initialFilters)
   const [currentPage, setCurrentPage] = useState(1)
   const [formState, setFormState] = useState({ open: false, mode: 'create', record: null })
   const [detailRecord, setDetailRecord] = useState(null)
   const [actionState, setActionState] = useState(null)
+  const [filtersDrawerOpen, setFiltersDrawerOpen] = useState(false)
   const deferredSearch = useDeferredValue(search)
   const ITEMS_PER_PAGE = config.itemsPerPage ?? 20
 
@@ -190,6 +201,16 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
     totalRecords: totalItems,
     currentPage,
   })
+
+  const hasAdvancedFilters = Boolean(config.renderTableFilters)
+  const activeAdvancedFilters = useMemo(
+    () =>
+      Object.entries(filters ?? {}).filter(([key, value]) => {
+        const initialValue = initialFilters?.[key]
+        return JSON.stringify(value) !== JSON.stringify(initialValue)
+      }).length,
+    [filters, initialFilters],
+  )
 
   function openCreateDialog() {
     setFormState({ open: true, mode: 'create', record: null })
@@ -300,8 +321,9 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
             <CardTitle>{config.tableTitle}</CardTitle>
             <CardDescription>{config.tableDescription}</CardDescription>
           </div>
-          <div className="flex w-full flex-col gap-3 md:flex-row lg:w-auto">
-            <div className="relative min-w-[240px]">
+          <div className="flex w-full flex-col gap-3 lg:w-auto">
+            <div className="flex w-full flex-col gap-3 md:flex-row lg:justify-end">
+            <div className="relative min-w-[240px] flex-1 lg:max-w-[360px]">
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
@@ -313,12 +335,6 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
                 className="pl-9"
               />
             </div>
-            {config.renderTableFilters?.({
-              filters,
-              updateFilters,
-              lookups,
-              records,
-            })}
             {config.statusFilter ? (
               <Select
                 value={status}
@@ -339,6 +355,13 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
                 </SelectContent>
               </Select>
             ) : null}
+            {hasAdvancedFilters ? (
+              <Button type="button" variant="outline" onClick={() => setFiltersDrawerOpen(true)}>
+                <Filter className="mr-2 size-4" />
+                {activeAdvancedFilters ? `Mas filtros (${activeAdvancedFilters})` : 'Mas filtros'}
+              </Button>
+            ) : null}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -443,6 +466,32 @@ export function CrudModulePage({ config, lookups = {}, lookupsLoading = false })
            ) : null}
         </CardContent>
       </Card>
+
+      {hasAdvancedFilters ? (
+        <Drawer open={filtersDrawerOpen} onOpenChange={setFiltersDrawerOpen} direction="right">
+          <DrawerContent className="w-full sm:max-w-lg">
+            <DrawerHeader>
+              <DrawerTitle>Mas filtros</DrawerTitle>
+              <DrawerDescription>
+                Ajusta filtros avanzados para afinar la busqueda y ver solo los registros que necesitas.
+              </DrawerDescription>
+            </DrawerHeader>
+            <div className="grid gap-3 overflow-y-auto px-4 pb-4">
+              {config.renderTableFilters?.({
+                filters,
+                updateFilters,
+                lookups,
+                records,
+              })}
+            </div>
+            <DrawerFooter>
+              <Button type="button" variant="outline" onClick={() => setFiltersDrawerOpen(false)}>
+                Cerrar
+              </Button>
+            </DrawerFooter>
+          </DrawerContent>
+        </Drawer>
+      ) : null}
 
       <ModuleFormDialog
         open={formState.open}

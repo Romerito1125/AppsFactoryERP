@@ -1,17 +1,17 @@
 import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   AlertTriangle,
-  ArrowRightLeft,
   BarChart3,
   CircleDollarSign,
   Download,
   FileSpreadsheet,
   Landmark,
+  LoaderCircle,
+  Mail,
   PackageSearch,
   Printer,
   Receipt,
-  ScrollText,
   TrendingUp,
   Wallet,
 } from 'lucide-react'
@@ -27,7 +27,9 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
+import { toast } from 'sonner'
 
+import { useAuth } from '@/auth/auth-context'
 import { ProductImage } from '@/components/product-image'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -39,6 +41,14 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   ChartContainer,
   ChartLegend,
   ChartLegendContent,
@@ -46,6 +56,7 @@ import {
   ChartTooltipContent,
 } from '@/components/ui/chart'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -55,6 +66,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 import { apiClient } from '@/lib/api-client'
 import {
   formatClientType,
@@ -63,7 +75,6 @@ import {
   formatInvoiceStatus,
   formatNumber,
 } from '@/lib/format'
-import { cn } from '@/lib/utils'
 
 const GMF_RATE = 0.004
 const GMF_TYPES = new Set(['EGRESO', 'TRANSFERENCIA_SALIENTE'])
@@ -189,9 +200,122 @@ function rankRows(items, pickLabel) {
   }))
 }
 
+const reportEmailSectionOptions = [
+  { value: 'RESUMEN', label: 'Resumen ejecutivo', description: 'Indicadores principales y lectura del corte.' },
+  { value: 'FACTURAS', label: 'Facturas', description: 'Detalle operativo de facturacion por documento.' },
+  { value: 'IVA', label: 'IVA', description: 'Consolidado del impuesto por tarifa.' },
+  { value: 'EXOGENAS', label: 'Exogenas', description: 'Base consolidada por cliente.' },
+  { value: 'GMF', label: '4x1000', description: 'Impacto estimado por cuenta bancaria.' },
+  { value: 'STOCK', label: 'Stock critico', description: 'Productos en seguimiento o reposicion.' },
+  { value: 'PRODUCTOS', label: 'Top productos', description: 'Mayor rotacion y facturacion del periodo.' },
+]
+
+function buildReportEmailSubject(startDate, endDate) {
+  return `Reporte de corte ${startDate} a ${endDate}`
+}
+
+function parseEmailRecipients(value) {
+  return Array.from(
+    new Set(
+      String(value ?? '')
+        .split(/[\s,;]+/)
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  )
+}
+
+function formatGeneratedAt() {
+  return new Intl.DateTimeFormat('es-CO', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date())
+}
+
+function buildReportEmailPayload({ report, summaryCards, startDate, endDate, sections, generatedBy, subject }) {
+  return {
+    subject,
+    startDate,
+    endDate,
+    generatedAt: formatGeneratedAt(),
+    generatedBy,
+    sections,
+    summaryCards: summaryCards.map((card) => ({
+      label: card.label,
+      value: card.value,
+      help: card.help,
+    })),
+    highlights: [
+      { label: 'Facturas en corte', value: formatNumber(report.rangedInvoices.length) },
+      { label: 'Recaudo bancario', value: formatCurrency(report.collectedInBanks) },
+      { label: 'Traslados inventario', value: formatNumber(report.transfers.length) },
+    ],
+    invoiceRows: report.invoiceRows.slice(0, 25).map((row) => ({
+      Fecha: formatDate(row.createdAt),
+      Numero: row.consecutive,
+      Cliente: row.clientName,
+      Estado: formatInvoiceStatus(row.status),
+      Neto: formatCurrency(row.subtotal),
+      Contado: formatCurrency(row.contado),
+      Credito: formatCurrency(row.credito),
+      IVA: formatCurrency(row.taxes),
+      Total: formatCurrency(row.total),
+    })),
+    ivaRows: report.ivaRows.slice(0, 20).map((row) => ({
+      Tarifa: formatPercent(row.rate),
+      Base: formatCurrency(row.base),
+      IVA: formatCurrency(row.taxes),
+      Total: formatCurrency(row.total),
+      Unidades: formatNumber(row.items),
+    })),
+    exogenousRows: report.exogenousRows.slice(0, 25).map((row) => ({
+      Documento: row.identification,
+      Cliente: row.clientName,
+      Tipo: row.clientType ? formatClientType(row.clientType) : 'Sin tipo',
+      Facturas: formatNumber(row.invoices),
+      Base: formatCurrency(row.subtotal),
+      IVA: formatCurrency(row.taxes),
+      Total: formatCurrency(row.total),
+      'Credito pendiente': formatCurrency(row.pendingCredit),
+    })),
+    gmfRows: report.gmfByAccount.slice(0, 20).map((row) => ({
+      Cuenta: row.accountName,
+      Banco: row.bankName,
+      Movimientos: formatNumber(row.movements),
+      Base: formatCurrency(row.base),
+      '4x1000': formatCurrency(row.tax),
+      Impacto: formatCurrency(row.impact),
+    })),
+    lowStockRows: report.lowStockProducts.slice(0, 20).map((product) => ({
+      Producto: product.name,
+      Marca: product.brand,
+      Stock: formatNumber(product.totalStock),
+      'Min / Max':
+        product.maximumStock !== null && product.maximumStock !== undefined
+          ? `Min ${formatNumber(product.minimumStock)} · Max ${formatNumber(product.maximumStock)}`
+          : `Min ${formatNumber(product.minimumStock)} · Max libre`,
+      Semaforo: product.signal.label,
+    })),
+    topProductRows: report.productSales.slice(0, 20).map((product) => ({
+      Producto: product.name,
+      Categoria: product.productTypeName,
+      Proveedor: product.providerName,
+      Unidades: formatNumber(product.quantity),
+      Neto: formatCurrency(product.subtotal),
+      IVA: formatCurrency(product.taxes),
+      Total: formatCurrency(product.total),
+    })),
+  }
+}
+
 export function ReportsPage() {
+  const { user } = useAuth()
   const [startDate, setStartDate] = useState(() => toInputDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
   const [endDate, setEndDate] = useState(() => toInputDate(new Date()))
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false)
+  const [emailRecipients, setEmailRecipients] = useState('')
+  const [emailSubject, setEmailSubject] = useState(() => buildReportEmailSubject(toInputDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1)), toInputDate(new Date())))
+  const [selectedEmailSections, setSelectedEmailSections] = useState(() => reportEmailSectionOptions.map((option) => option.value))
 
   const reportsQuery = useQuery({
     queryKey: ['reportes-overview'],
@@ -211,6 +335,10 @@ export function ReportsPage() {
   })
 
   const range = useMemo(() => createDateRange(startDate, endDate), [startDate, endDate])
+
+  const sendReportEmailMutation = useMutation({
+    mutationFn: (payload) => apiClient.post('/reportes/email', payload),
+  })
 
   const report = useMemo(() => {
     const source = reportsQuery.data
@@ -516,6 +644,59 @@ export function ReportsPage() {
     window.print()
   }
 
+  function openEmailDialog() {
+    setEmailSubject(buildReportEmailSubject(startDate, endDate))
+    setSelectedEmailSections(reportEmailSectionOptions.map((option) => option.value))
+    setEmailDialogOpen(true)
+  }
+
+  function toggleEmailSection(section) {
+    setSelectedEmailSections((current) =>
+      current.includes(section)
+        ? current.filter((item) => item !== section)
+        : [...current, section],
+    )
+  }
+
+  async function handleSendReportEmail() {
+    const recipients = parseEmailRecipients(emailRecipients)
+    const subject = emailSubject.trim() || buildReportEmailSubject(startDate, endDate)
+
+    if (!recipients.length) {
+      toast.error('Ingresa al menos un correo destino')
+      return
+    }
+
+    if (!selectedEmailSections.length) {
+      toast.error('Selecciona al menos un bloque del reporte para enviar')
+      return
+    }
+
+    const payload = buildReportEmailPayload({
+      report,
+      summaryCards,
+      startDate,
+      endDate,
+      sections: selectedEmailSections,
+      generatedBy: user?.username,
+      subject,
+    })
+
+    await toast.promise(
+      sendReportEmailMutation.mutateAsync({
+        ...payload,
+        to: recipients,
+      }),
+      {
+        loading: 'Enviando reporte por correo...',
+        success: 'Reporte enviado correctamente',
+        error: (error) => error.message,
+      },
+    )
+
+    setEmailDialogOpen(false)
+  }
+
   function exportInvoiceReport() {
     downloadCsv('reporte-facturas.csv', [
       ['Fecha', 'Consecutivo', 'Cliente', 'Estado', 'Monto Neto', 'Contado', 'Credito', 'IVA', 'Total'],
@@ -578,6 +759,10 @@ export function ReportsPage() {
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={openEmailDialog}>
+            <Mail className="mr-2 size-4" />
+            Enviar correo
+          </Button>
           <Button variant="outline" onClick={handlePrint}>
             <Printer className="mr-2 size-4" />
             Imprimir
@@ -1175,6 +1360,81 @@ export function ReportsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Enviar reporte por correo</DialogTitle>
+            <DialogDescription>
+              Envia el corte actual por Resend incluyendo la fecha de corte y solo los bloques que necesites compartir.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="report-email-to">Destinatarios</Label>
+              <Textarea
+                id="report-email-to"
+                rows={3}
+                value={emailRecipients}
+                onChange={(event) => setEmailRecipients(event.target.value)}
+                placeholder="contabilidad@empresa.com gerencia@empresa.com"
+              />
+              <p className="text-xs text-muted-foreground">
+                Separa varios correos por coma, espacio o salto de linea.
+              </p>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="report-email-subject">Asunto</Label>
+              <Input
+                id="report-email-subject"
+                value={emailSubject}
+                onChange={(event) => setEmailSubject(event.target.value)}
+                placeholder="Reporte de corte 2026-07-01 a 2026-07-31"
+              />
+            </div>
+
+            <div className="grid gap-3 rounded-2xl border border-border/70 bg-muted/15 p-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">Bloques a incluir</p>
+                <p className="text-xs text-muted-foreground">Puedes enviar solo los reportes necesarios para este corte.</p>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {reportEmailSectionOptions.map((option) => (
+                  <label key={option.value} className="flex items-start gap-3 rounded-xl border border-border/70 bg-background p-3 text-left">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={selectedEmailSections.includes(option.value)}
+                      onChange={() => toggleEmailSection(option.value)}
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{option.label}</p>
+                      <p className="text-xs text-muted-foreground">{option.description}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEmailDialogOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={handleSendReportEmail} disabled={sendReportEmailMutation.isPending}>
+              {sendReportEmailMutation.isPending ? (
+                <LoaderCircle className="mr-2 size-4 animate-spin" />
+              ) : (
+                <Mail className="mr-2 size-4" />
+              )}
+              {sendReportEmailMutation.isPending ? 'Enviando...' : 'Enviar reporte'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -6,6 +6,9 @@ interface EnvVars {
   DATABASE_URL: string;
   JWT_SECRET?: string;
   JWT_EXPIRES_IN?: string;
+  RESEND_API_KEY?: string;
+  RESEND_FROM_EMAIL?: string;
+  RESEND_REPLY_TO_EMAIL?: string;
   CLOUDFLARE_R2_ACCOUNT_ID?: string;
   CLOUDFLARE_R2_ACCESS_KEY_ID?: string;
   CLOUDFLARE_R2_SECRET_ACCESS_KEY?: string;
@@ -20,6 +23,10 @@ const envSchema = Joi.object<EnvVars>({
 
   JWT_SECRET: Joi.string().default('dev-jwt-secret-change-me'),
   JWT_EXPIRES_IN: Joi.string().default('1d'),
+
+  RESEND_API_KEY: Joi.string().allow('').optional(),
+  RESEND_FROM_EMAIL: Joi.string().email({ tlds: { allow: false } }).allow('').optional(),
+  RESEND_REPLY_TO_EMAIL: Joi.string().email({ tlds: { allow: false } }).allow('').optional(),
 
   CLOUDFLARE_R2_ACCOUNT_ID: Joi.string().allow('').optional(),
   CLOUDFLARE_R2_ACCESS_KEY_ID: Joi.string().allow('').optional(),
@@ -53,6 +60,12 @@ export const envs = {
   jwt: {
     secret: envVars.JWT_SECRET,
     expiresIn: envVars.JWT_EXPIRES_IN,
+  },
+  resend: {
+    apiKey: envVars.RESEND_API_KEY || null,
+    fromEmail: envVars.RESEND_FROM_EMAIL || null,
+    replyToEmail: envVars.RESEND_REPLY_TO_EMAIL || null,
+    enabled: Boolean(envVars.RESEND_API_KEY && envVars.RESEND_FROM_EMAIL),
   },
   cloudflareR2: {
     ...cloudflareR2,

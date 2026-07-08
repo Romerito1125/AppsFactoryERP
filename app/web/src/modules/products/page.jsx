@@ -1,6 +1,10 @@
+import { useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
+import { ImageUp, ScanLine } from 'lucide-react'
+import { toast } from 'sonner'
 
+import { BarcodeScannerDialog } from '@/components/barcode-scanner-dialog'
 import { ProductImage } from '@/components/product-image'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -21,6 +25,7 @@ import {
   getRecordStatusVariant,
   toApiStatus,
 } from '@/lib/format'
+import { readBarcodeFromImage } from '@/lib/barcode-reader'
 import { barcodeTypeOptions } from '@/lib/barcodes'
 import { InvoiceOcrImportAction } from '@/modules/products/invoice-ocr-import-dialog'
 import { ProductBarcodesField } from '@/modules/products/barcodes-field'
@@ -180,7 +185,7 @@ const productStockFilterOptions = [
   { value: 'SOBRE_MAXIMO', label: 'Sobre maximo' },
 ]
 
-function createProductsConfig(lookups) {
+function createProductsConfig(lookups, barcodeSearch) {
   return {
     key: 'productos',
     title: 'Productos',
@@ -299,6 +304,24 @@ function createProductsConfig(lookups) {
           placeholder="Filtrar codigo..."
           className="w-full md:w-[180px]"
         />
+
+        <input
+          ref={barcodeSearch.imageInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={barcodeSearch.onReadImage}
+        />
+
+        <Button type="button" variant="outline" onClick={() => barcodeSearch.onOpenScanner(updateFilters)}>
+          <ScanLine className="mr-2 size-4" />
+          Escanear codigo
+        </Button>
+
+        <Button type="button" variant="outline" onClick={() => barcodeSearch.onOpenImagePicker(updateFilters)} disabled={barcodeSearch.scanLoading}>
+          <ImageUp className="mr-2 size-4" />
+          {barcodeSearch.scanLoading ? 'Leyendo...' : 'Leer imagen'}
+        </Button>
 
         <Button
           type="button"
@@ -660,6 +683,11 @@ function createProductsConfig(lookups) {
 }
 
 export function ProductsPage() {
+  const barcodeFilterApplyRef = useRef(null)
+  const barcodeImageInputRef = useRef(null)
+  const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false)
+  const [scanLoading, setScanLoading] = useState(false)
+
   const productTypesQuery = useQuery({
     queryKey: ['productos-tipos-lookup'],
     queryFn: () => apiClient.getAllPages('/tipos-producto'),
@@ -681,10 +709,68 @@ export function ProductsPage() {
     warehouses: warehousesQuery.data ?? [],
   }
 
+  function applyScannedBarcode(code) {
+    const normalizedCode = String(code ?? '').trim()
+
+    if (!normalizedCode) {
+      return
+    }
+
+    barcodeFilterApplyRef.current?.((current) => ({
+      ...current,
+      barcode: normalizedCode,
+    }))
+    toast.success(`Filtro por codigo aplicado: ${normalizedCode}`)
+  }
+
+  async function handleBarcodeImageSelection(event) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+
+    if (!file) {
+      return
+    }
+
+    setScanLoading(true)
+
+    try {
+      const result = await readBarcodeFromImage(file)
+      applyScannedBarcode(result.code)
+    } catch (error) {
+      toast.error(error.message)
+    } finally {
+      setScanLoading(false)
+    }
+  }
+
+  const productsConfig = createProductsConfig(lookups, {
+    imageInputRef: barcodeImageInputRef,
+    scanLoading,
+    onReadImage: handleBarcodeImageSelection,
+    onOpenScanner(updateFilters) {
+      barcodeFilterApplyRef.current = updateFilters
+      setBarcodeScannerOpen(true)
+    },
+    onOpenImagePicker(updateFilters) {
+      barcodeFilterApplyRef.current = updateFilters
+      barcodeImageInputRef.current?.click()
+    },
+  })
+
   return (
-    <CrudModulePage
-      config={createProductsConfig(lookups)}
-      lookupsLoading={productTypesQuery.isLoading || providersQuery.isLoading || warehousesQuery.isLoading}
-    />
+    <>
+      <CrudModulePage
+        config={productsConfig}
+        lookupsLoading={productTypesQuery.isLoading || providersQuery.isLoading || warehousesQuery.isLoading}
+      />
+
+      <BarcodeScannerDialog
+        open={barcodeScannerOpen}
+        onOpenChange={setBarcodeScannerOpen}
+        onDetected={(result) => applyScannedBarcode(result.code)}
+        title="Escanear codigo para buscar producto"
+        description="Lee el codigo desde camara para aplicarlo al filtro de productos."
+      />
+    </>
   )
 }

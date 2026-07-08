@@ -90,7 +90,7 @@ export function ProductVisualPicker({
         <span>{formatNumber(totalCount ?? filteredProducts.length)} productos</span>
       </div>
 
-      <ScrollArea className={cn(maxHeightClassName, 'pr-4')}>
+      <ScrollArea className={cn(maxHeightClassName, 'pr-2 sm:pr-4')}>
         {filteredProducts.length ? (
           <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
             {filteredProducts.map((product) => {
@@ -108,7 +108,7 @@ export function ProductVisualPicker({
                   <button
                     type="button"
                     onClick={() => onSelectProduct?.(product.id)}
-                    className="grid gap-3 text-left"
+                    className="grid min-w-0 gap-3 text-left"
                   >
                     <ProductImage
                       src={product.imageUrl}
@@ -134,16 +134,16 @@ export function ProductVisualPicker({
                     </div>
                   </button>
 
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-xs text-muted-foreground">
                       {product.barcodes?.length ? `${formatNumber(product.barcodes.length)} codigos` : 'Sin codigos registrados'}
                     </p>
                     {onAction ? (
-                      <Button type="button" size="sm" onClick={() => onAction(product)}>
+                      <Button type="button" size="sm" className="w-full sm:w-auto" onClick={() => onAction(product)}>
                         {actionLabel}
                       </Button>
                     ) : (
-                      <Button type="button" size="sm" variant={isSelected ? 'default' : 'outline'} onClick={() => onSelectProduct?.(product.id)}>
+                      <Button type="button" size="sm" className="w-full sm:w-auto" variant={isSelected ? 'default' : 'outline'} onClick={() => onSelectProduct?.(product.id)}>
                         {isSelected ? 'Seleccionado' : actionLabel}
                       </Button>
                     )}

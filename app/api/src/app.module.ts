@@ -23,12 +23,14 @@ import { TagsModule } from './modules/tags/tags.module';
 import { UsuariosModule } from './modules/usuarios/usuarios.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { NotificacionesModule } from './modules/notificaciones/notificaciones.module';
+import { ReportesModule } from './modules/reportes/reportes.module';
 import { TiendaModule } from './modules/tienda/tienda.module';
 
 @Module({
   imports: [
     PrismaModule,
     AuthModule,
+    ReportesModule,
     NotificacionesModule,
     UsuariosModule,
     ClientesModule,

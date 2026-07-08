@@ -59,7 +59,7 @@ export function BarcodeScannerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="max-h-[96svh] sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -67,7 +67,7 @@ export function BarcodeScannerDialog({
 
         <div className="grid gap-4">
           <div className="overflow-hidden rounded-2xl border border-border/70 bg-black/90">
-            <video ref={videoRef} className="aspect-video w-full object-cover" muted playsInline />
+            <video ref={videoRef} className="aspect-[4/3] w-full object-cover sm:aspect-video" muted playsInline />
           </div>
 
           <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 text-sm">
