@@ -66,6 +66,9 @@ const WarehousesPage = lazy(() =>
 const InvoicesPage = lazy(() =>
   import('@/modules/invoices/page').then((module) => ({ default: module.InvoicesPage })),
 )
+const PurchasesPage = lazy(() =>
+  import('@/modules/purchases/page').then((module) => ({ default: module.PurchasesPage })),
+)
 const ReportsPage = lazy(() =>
   import('@/modules/reports/page').then((module) => ({ default: module.ReportsPage })),
 )
@@ -149,6 +152,7 @@ function App() {
               <Route path="/etiquetas" element={<ProtectedRoute allowedRoles={['ADMIN']}><TagsPage /></ProtectedRoute>} />
               <Route path="/bodegas" element={<ProtectedRoute allowedRoles={['ADMIN']}><WarehousesPage /></ProtectedRoute>} />
               <Route path="/facturas" element={<ProtectedRoute allowedRoles={['ADMIN']}><InvoicesPage /></ProtectedRoute>} />
+              <Route path="/compras" element={<ProtectedRoute allowedRoles={['ADMIN']}><PurchasesPage /></ProtectedRoute>} />
               <Route path="/reportes" element={<ProtectedRoute allowedRoles={['ADMIN', 'CONTADOR']}><ReportsPage /></ProtectedRoute>} />
             </Route>
           </Routes>

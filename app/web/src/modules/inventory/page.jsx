@@ -152,6 +152,31 @@ function getTotalStock(product) {
   return (product.warehouses ?? []).reduce((sum, item) => sum + Number(item.quantity ?? 0), 0)
 }
 
+function getAssociatedProviders(product) {
+  return Array.isArray(product?.providers) && product.providers.length
+    ? product.providers
+    : product?.provider
+      ? [{ ...product.provider, isPrimary: true }]
+      : []
+}
+
+function matchesProviderAssociation(product, providerId) {
+  return getAssociatedProviders(product).some((provider) => provider.id === providerId)
+}
+
+function formatProviderSummary(product) {
+  const providers = getAssociatedProviders(product)
+
+  if (!providers.length) {
+    return 'Sin proveedor'
+  }
+
+  const primaryProvider = providers.find((provider) => provider.isPrimary) ?? providers[0]
+  const additionalCount = Math.max(0, providers.length - 1)
+
+  return additionalCount ? `${primaryProvider.name} · +${additionalCount} asociado(s)` : primaryProvider.name
+}
+
 function getStockSignal(product) {
   const totalStock = getTotalStock(product)
   const minimumStock = Number(product.minimumStock ?? 0)
@@ -510,11 +535,11 @@ export function InventoryPage() {
           record.name,
           record.brand,
           record.productType?.name,
-          record.provider?.name,
+          ...getAssociatedProviders(record).map((provider) => provider.name),
           ...(record.warehouses ?? []).map((item) => item.warehouse?.location),
         ]) &&
         (stockFilters.productTypeId === 'TODOS' || product.productType?.id === Number(stockFilters.productTypeId)) &&
-        (stockFilters.providerId === 'TODOS' || product.provider?.id === Number(stockFilters.providerId)) &&
+        (stockFilters.providerId === 'TODOS' || matchesProviderAssociation(product, Number(stockFilters.providerId))) &&
         (stockFilters.warehouseId === 'TODOS' ||
           (product.warehouses ?? []).some((item) => item.warehouseId === Number(stockFilters.warehouseId))) &&
         matchesStockFilter(product, stockFilters.stockStatus),
@@ -697,8 +722,11 @@ export function InventoryPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="TODOS">Todos los proveedores</SelectItem>
-                    {Array.from(new Map(inventory.map((item) => [item.provider?.id, item.provider])).values())
-                      .filter(Boolean)
+                    {Array.from(
+                      new Map(
+                        inventory.flatMap((item) => getAssociatedProviders(item).map((provider) => [provider.id, provider])),
+                      ).values(),
+                    )
                       .map((item) => (
                         <SelectItem key={item.id} value={String(item.id)}>
                           {item.name}
@@ -830,7 +858,7 @@ export function InventoryPage() {
                             </p>
                           </div>
                         </TableCell>
-                        <TableCell>{product.provider?.name ?? 'Sin proveedor'}</TableCell>
+                        <TableCell>{formatProviderSummary(product)}</TableCell>
                         <TableCell>
                           <div>
                             <p>{formatNumber(getTotalStock(product))}</p>
@@ -944,7 +972,15 @@ export function InventoryPage() {
                 {
                   label: 'Producto',
                   items: [
-                    { label: 'Proveedor', value: detailProduct.provider?.name ?? 'Sin proveedor' },
+                    { label: 'Proveedor principal', value: detailProduct.provider?.name ?? 'Sin proveedor' },
+                    {
+                      label: 'Todos los proveedores',
+                      value: getAssociatedProviders(detailProduct).length
+                        ? getAssociatedProviders(detailProduct)
+                            .map((provider) => `${provider.name}${provider.isPrimary ? ' (principal)' : ''}`)
+                            .join(' · ')
+                        : 'Sin proveedores asociados',
+                    },
                     { label: 'Marca', value: detailProduct.brand },
                     { label: 'IVA', value: `${detailProduct.taxRate}%` },
                     { label: 'Stock total', value: formatNumber(getTotalStock(detailProduct)) },

@@ -37,7 +37,11 @@ export class InventarioService {
         where,
         include: {
           productType: true,
-          provider: true,
+          primaryProvider: true,
+          providers: {
+            include: { provider: true },
+            orderBy: { providerId: 'asc' },
+          },
           warehouses: {
             include: { warehouse: true },
             orderBy: { warehouseId: 'asc' },
@@ -49,33 +53,60 @@ export class InventarioService {
       }),
     ]);
 
-    return buildPaginatedResponse(data, total, page, limit);
+    return buildPaginatedResponse(
+      data.map((product) => this.formatProduct(product)),
+      total,
+      page,
+      limit,
+    );
   }
 
   async findByProduct(productId: number) {
     this.ensurePositiveId(productId);
     await this.ensureActiveProduct(productId);
-    return this.prisma.productWarehouse.findMany({
+    const rows = await this.prisma.productWarehouse.findMany({
       where: { productId },
       include: {
-        product: { include: { productType: true, provider: true } },
+        product: {
+          include: {
+            productType: true,
+            primaryProvider: true,
+            providers: { include: { provider: true }, orderBy: { providerId: 'asc' } },
+          },
+        },
         warehouse: true,
       },
       orderBy: { warehouseId: 'asc' },
     });
+
+    return rows.map((row) => ({
+      ...row,
+      product: this.formatProduct(row.product),
+    }));
   }
 
   async findByWarehouse(warehouseId: number) {
     this.ensurePositiveId(warehouseId);
     await this.ensureActiveWarehouse(warehouseId);
-    return this.prisma.productWarehouse.findMany({
+    const rows = await this.prisma.productWarehouse.findMany({
       where: { warehouseId },
       include: {
-        product: { include: { productType: true, provider: true } },
+        product: {
+          include: {
+            productType: true,
+            primaryProvider: true,
+            providers: { include: { provider: true }, orderBy: { providerId: 'asc' } },
+          },
+        },
         warehouse: true,
       },
       orderBy: { productId: 'asc' },
     });
+
+    return rows.map((row) => ({
+      ...row,
+      product: this.formatProduct(row.product),
+    }));
   }
 
   entry(dto: InventoryEntryDto) {
@@ -293,9 +324,21 @@ export class InventarioService {
         { name: { contains: q, mode: 'insensitive' as const } },
         { brand: { contains: q, mode: 'insensitive' as const } },
         { productType: { name: { contains: q, mode: 'insensitive' as const } } },
-        { provider: { name: { contains: q, mode: 'insensitive' as const } } },
+        { primaryProvider: { name: { contains: q, mode: 'insensitive' as const } } },
+        { providers: { some: { provider: { name: { contains: q, mode: 'insensitive' as const } } } } },
         { warehouses: { some: { warehouse: { location: { contains: q, mode: 'insensitive' as const } } } } },
       ],
+    };
+  }
+
+  private formatProduct(product) {
+    return {
+      ...product,
+      provider: product.primaryProvider,
+      providers: (product.providers ?? []).map((item) => ({
+        ...item.provider,
+        isPrimary: item.providerId === product.providerId,
+      })),
     };
   }
 

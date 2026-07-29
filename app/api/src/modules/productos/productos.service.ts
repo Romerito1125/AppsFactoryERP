@@ -76,8 +76,12 @@ export class ProductosService {
     createProductDto: CreateProductDto,
     image?: Express.Multer.File,
   ) {
-    const { tagIds, prices, warehouses, barcodes, ...productData } =
+    const { tagIds, prices, warehouses, barcodes, providerIds, ...productData } =
       createProductDto;
+    const relatedProviderIds = this.resolveProviderIds(
+      productData.providerId,
+      providerIds,
+    );
     const uploadedImage = image
       ? await this.storage.uploadProductImage(image)
       : undefined;
@@ -85,7 +89,7 @@ export class ProductosService {
     try {
       // El producto depende de catálogos activos; no se crean relaciones inválidas.
       await this.ensureProductTypeExists(productData.productTypeId);
-      await this.ensureProviderExists(productData.providerId);
+      await this.ensureProvidersExist(relatedProviderIds);
       await this.ensureTagsExist(tagIds);
       await this.ensureWarehousesExist(
         warehouses?.map((item) => item.warehouseId),
@@ -106,6 +110,13 @@ export class ProductosService {
               : undefined,
             prices: normalizedPrices.length
               ? { create: normalizedPrices }
+              : undefined,
+            providers: relatedProviderIds.length
+              ? {
+                  create: relatedProviderIds.map((providerId) => ({
+                    providerId,
+                  })),
+                }
               : undefined,
             barcodes: normalizedBarcodes.length
               ? { create: normalizedBarcodes }
@@ -154,7 +165,14 @@ export class ProductosService {
     this.ensurePositiveId(id);
     const currentProduct = await this.getExistingProduct(id);
 
-    const { tagIds, barcodes, ...productData } = updateProductDto;
+    const { tagIds, barcodes, providerIds, ...productData } = updateProductDto;
+    const resolvedProviderIds =
+      providerIds || productData.providerId
+        ? this.resolveProviderIds(
+            productData.providerId ?? currentProduct.providerId,
+            providerIds ?? currentProduct.providers.map((item) => item.providerId),
+          )
+        : null;
     const uploadedImage = image
       ? await this.storage.uploadProductImage(image, id)
       : undefined;
@@ -164,8 +182,8 @@ export class ProductosService {
         await this.ensureProductTypeExists(productData.productTypeId);
       }
 
-      if (productData.providerId) {
-        await this.ensureProviderExists(productData.providerId);
+      if (resolvedProviderIds) {
+        await this.ensureProvidersExist(resolvedProviderIds);
       }
 
       await this.ensureTagsExist(tagIds);
@@ -175,6 +193,10 @@ export class ProductosService {
         // Si el frontend envía tagIds, se interpreta como reemplazo completo de etiquetas.
         if (tagIds) {
           await tx.productTag.deleteMany({ where: { productId: id } });
+        }
+
+        if (resolvedProviderIds) {
+          await tx.productProvider.deleteMany({ where: { productId: id } });
         }
 
         if (normalizedBarcodes.some((barcode) => barcode.isPrimary)) {
@@ -212,6 +234,13 @@ export class ProductosService {
             imageUrl: uploadedImage?.url,
             tags: tagIds
               ? { create: tagIds.map((tagId) => ({ tagId })) }
+              : undefined,
+            providers: resolvedProviderIds
+              ? {
+                  create: resolvedProviderIds.map((providerId) => ({
+                    providerId,
+                  })),
+                }
               : undefined,
           },
           include: this.productInclude,
@@ -316,7 +345,11 @@ export class ProductosService {
 
   private readonly productInclude: Prisma.ProductInclude = {
     productType: true,
-    provider: true,
+    primaryProvider: true,
+    providers: {
+      include: { provider: true },
+      orderBy: { providerId: 'asc' },
+    },
     tags: { include: { tag: true } },
     prices: { orderBy: { id: 'asc' } },
     warehouses: {
@@ -357,8 +390,15 @@ export class ProductosService {
 
   // La tabla pivote ProductTag es un detalle interno; la API responde tags planos.
   private formatProduct(product) {
+    const providers = (product.providers ?? []).map((item) => ({
+      ...item.provider,
+      isPrimary: item.providerId === product.providerId,
+    }));
+
     return {
       ...product,
+      provider: product.primaryProvider,
+      providers,
       tags: product.tags.map((productTag) => productTag.tag),
       warehouses: product.warehouses.map((item) => ({
         warehouseId: item.warehouseId,
@@ -468,17 +508,26 @@ export class ProductosService {
     }
   }
 
-  private async ensureProviderExists(id: number) {
-    this.ensurePositiveId(id);
+  private async ensureProvidersExist(ids: number[]) {
+    const uniqueIds = [...new Set(ids)];
 
-    const provider = await this.prisma.provider.findUnique({ where: { id } });
-
-    if (!provider) {
-      throw new NotFoundException('Proveedor no encontrado');
+    if (!uniqueIds.length) {
+      throw new BadRequestException('Selecciona al menos un proveedor');
     }
 
-    if (!provider.isActive) {
-      throw new BadRequestException('El proveedor está inactivo');
+    uniqueIds.forEach((id) => this.ensurePositiveId(id));
+
+    const providers = await this.prisma.provider.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, isActive: true },
+    });
+
+    if (providers.length !== uniqueIds.length) {
+      throw new NotFoundException('Uno o más proveedores no existen');
+    }
+
+    if (providers.some((provider) => !provider.isActive)) {
+      throw new BadRequestException('Uno o más proveedores están inactivos');
     }
   }
 
@@ -584,6 +633,13 @@ export class ProductosService {
           OR pr."name" ILIKE ${likeSearch}
           OR EXISTS (
             SELECT 1
+            FROM "ProductProvider" pp_search
+            INNER JOIN "Provider" prv_search ON prv_search."id" = pp_search."providerId"
+            WHERE pp_search."productId" = p."id"
+              AND prv_search."name" ILIKE ${likeSearch}
+          )
+          OR EXISTS (
+            SELECT 1
             FROM "ProductBarcode" pb_search
             WHERE pb_search."productId" = p."id"
               AND pb_search."isActive" = true
@@ -605,7 +661,14 @@ export class ProductosService {
     }
 
     if (filter.providerId) {
-      conditions.push(Prisma.sql`p."providerId" = ${filter.providerId}`);
+      conditions.push(Prisma.sql`
+        EXISTS (
+          SELECT 1
+          FROM "ProductProvider" pp_filter
+          WHERE pp_filter."productId" = p."id"
+            AND pp_filter."providerId" = ${filter.providerId}
+        )
+      `);
     }
 
     if (filter.warehouseId) {
@@ -677,5 +740,13 @@ export class ProductosService {
     if (id <= 0) {
       throw new BadRequestException('El id debe ser un número positivo');
     }
+  }
+
+  private resolveProviderIds(primaryProviderId: number, providerIds?: number[]) {
+    const relatedProviderIds = [primaryProviderId, ...(providerIds ?? [])].filter(
+      (value): value is number => Number.isInteger(value) && value > 0,
+    );
+
+    return [...new Set(relatedProviderIds)];
   }
 }

@@ -4,8 +4,17 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InvoiceSource } from '@prisma/client';
+import {
+  InvoiceSource,
+  Prisma,
+  Product,
+  ProductCost,
+  ProductPrice,
+  ReferralBenefitStatus,
+  Role as PrismaRole,
+} from '@prisma/client';
 import { InvoiceStatus } from '../../common/enums/invoice-status.enum';
+import { convertQuantity } from '../../common/utils/unit-conversion.util';
 import {
   buildPaginatedResponse,
   resolvePagination,
@@ -17,6 +26,11 @@ import { ProductResolverService } from '../../shared/products/product-resolver.s
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { ListInvoicesQueryDto } from './dto/list-invoices-query.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
+
+type ResolvedInvoiceProduct = Product & {
+  prices: ProductPrice[];
+  costs: ProductCost[];
+};
 
 @Injectable()
 export class FacturasService {
@@ -82,13 +96,18 @@ export class FacturasService {
         productId: number;
         productPriceId?: number;
         quantity: number;
-        product: any;
+        product: ResolvedInvoiceProduct;
       }> = [];
 
       for (const item of createInvoiceDto.items) {
-        const product = await this.productResolver.resolve(item, tx, {
+        const product = (await this.productResolver.resolve(item, tx, {
           prices: { where: { isActive: true } },
-        });
+          costs: {
+            where: { isActive: true },
+            orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+            take: 1,
+          },
+        })) as ResolvedInvoiceProduct;
 
         resolvedItems.push({
           productId: product.id,
@@ -100,7 +119,7 @@ export class FacturasService {
 
       const groupedItems = this.groupItems(resolvedItems);
 
-      const invoiceItems = groupedItems.map((item) => {
+      const grossInvoiceItems = groupedItems.map((item) => {
         const product = item.product;
 
         if (!product.isActive) {
@@ -123,10 +142,24 @@ export class FacturasService {
 
         const unitPrice = Number(productPrice.price);
         const taxRate = Number(product.taxRate);
-        // El precio e impuesto se congelan en el detalle para conservar histórico.
-        const subtotal = unitPrice * item.quantity;
-        const taxAmount = subtotal * (taxRate / 100);
-        const total = subtotal + taxAmount;
+        const grossSubtotal = this.roundMoney(unitPrice * item.quantity);
+        const currentCost = product.costs[0];
+        let unitCost: number | null = null;
+
+        if (currentCost && Number(currentCost.quantity) > 0) {
+          const quantityInCostUnit = convertQuantity(
+            Number(productPrice.quantity),
+            productPrice.unit,
+            currentCost.unit,
+          );
+
+          if (quantityInCostUnit !== null) {
+            unitCost = this.roundMoney(
+              (Number(currentCost.cost) / Number(currentCost.quantity)) *
+                quantityInCostUnit,
+            );
+          }
+        }
 
         return {
           productId: product.id,
@@ -134,21 +167,87 @@ export class FacturasService {
           quantity: item.quantity,
           unitPrice,
           taxRate,
-          subtotal,
-          taxAmount,
-          total,
+          grossSubtotal,
+          unitCost,
         };
       });
 
-      const subtotal = invoiceItems.reduce(
-        (sum, item) => sum + item.subtotal,
-        0,
+      const grossSubtotal = this.roundMoney(
+        grossInvoiceItems.reduce((sum, item) => sum + item.grossSubtotal, 0),
       );
-      const taxes = invoiceItems.reduce((sum, item) => sum + item.taxAmount, 0);
-      const total = invoiceItems.reduce((sum, item) => sum + item.total, 0);
+      const referralDiscount = this.roundMoney(
+        createInvoiceDto.referralDiscount ?? 0,
+      );
+
+      if (referralDiscount > grossSubtotal) {
+        throw new BadRequestException(
+          'El descuento de referidos no puede superar el subtotal de la factura',
+        );
+      }
+
+      const discountAmounts = this.allocateDiscount(
+        referralDiscount,
+        grossInvoiceItems.map((item) => item.grossSubtotal),
+      );
+      const invoiceItems = grossInvoiceItems.map((item, index) => {
+        const discountAmount = discountAmounts[index];
+        const subtotal = this.roundMoney(item.grossSubtotal - discountAmount);
+        const taxAmount = this.roundMoney(subtotal * (item.taxRate / 100));
+        const total = this.roundMoney(subtotal + taxAmount);
+        const profitAmount =
+          item.unitCost === null
+            ? 0
+            : this.roundMoney(subtotal - item.unitCost * item.quantity);
+
+        return {
+          ...item,
+          subtotal,
+          taxAmount,
+          total,
+          discountAmount,
+          profitAmount,
+        };
+      });
+      const subtotal = this.roundMoney(
+        invoiceItems.reduce((sum, item) => sum + item.subtotal, 0),
+      );
+      const taxes = this.roundMoney(
+        invoiceItems.reduce((sum, item) => sum + item.taxAmount, 0),
+      );
+      const total = this.roundMoney(
+        invoiceItems.reduce((sum, item) => sum + item.total, 0),
+      );
+      const baseProfit = this.roundMoney(
+        Math.max(
+          0,
+          invoiceItems.reduce((sum, item) => sum + item.profitAmount, 0),
+        ),
+      );
+      const availableBenefits = referralDiscount
+        ? await tx.referralBenefit.findMany({
+            where: {
+              beneficiaryClientId: client.id,
+              status: ReferralBenefitStatus.DISPONIBLE,
+              remainingAmount: { gt: 0 },
+            },
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          })
+        : [];
+      const availableDiscount = this.roundMoney(
+        availableBenefits.reduce(
+          (sum, benefit) => sum + Number(benefit.remainingAmount),
+          0,
+        ),
+      );
+
+      if (referralDiscount > availableDiscount) {
+        throw new BadRequestException(
+          `Saldo de descuento insuficiente. Disponible: ${availableDiscount.toFixed(2)}`,
+        );
+      }
 
       let creatorId = authUser.sub;
-      let creatorRole = authUser.role;
+      let creatorRole = authUser.role as PrismaRole;
       let creatorUsername = authUser.username;
 
       if (createInvoiceDto.createdByUserId) {
@@ -157,7 +256,7 @@ export class FacturasService {
         });
         if (creatorUser) {
           creatorId = creatorUser.id;
-          creatorRole = creatorUser.role as any;
+          creatorRole = creatorUser.role;
           creatorUsername = creatorUser.username;
         }
       }
@@ -173,14 +272,27 @@ export class FacturasService {
           subtotal,
           taxes,
           total,
+          discountTotal: referralDiscount,
+          referralDiscount,
           items: { create: invoiceItems },
         },
         include: this.invoiceInclude,
       });
 
+      await this.consumeReferralBenefits(
+        tx,
+        invoice.id,
+        referralDiscount,
+        availableBenefits,
+      );
+      await this.createReferralBenefits(tx, client.id, invoice.id, baseProfit);
+
       await this.notificacionesService.createInvoiceNotification(tx, invoice);
 
-      return invoice;
+      return tx.invoice.findUnique({
+        where: { id: invoice.id },
+        include: this.invoiceInclude,
+      });
     });
   }
 
@@ -223,6 +335,42 @@ export class FacturasService {
         throw new BadRequestException('La factura ya está anulada');
       }
 
+      await tx.referralBenefit.updateMany({
+        where: { originInvoiceId: id },
+        data: {
+          status: ReferralBenefitStatus.ANULADO,
+          remainingAmount: 0,
+        },
+      });
+
+      const redemptions = await tx.referralBenefitRedemption.findMany({
+        where: { invoiceId: id },
+      });
+      const restoredByBenefit = new Map<number, number>();
+
+      for (const redemption of redemptions) {
+        restoredByBenefit.set(
+          redemption.benefitId,
+          this.roundMoney(
+            (restoredByBenefit.get(redemption.benefitId) ?? 0) +
+              Number(redemption.amount),
+          ),
+        );
+      }
+
+      for (const [benefitId, amount] of restoredByBenefit) {
+        await tx.referralBenefit.updateMany({
+          where: {
+            id: benefitId,
+            status: { not: ReferralBenefitStatus.ANULADO },
+          },
+          data: {
+            remainingAmount: { increment: amount },
+            status: ReferralBenefitStatus.DISPONIBLE,
+          },
+        });
+      }
+
       return tx.invoice.update({
         where: { id },
         data: { status: InvoiceStatus.ANULADA },
@@ -252,14 +400,125 @@ export class FacturasService {
         productPrice: true,
       },
     },
+    generatedReferralBenefits: true,
+    benefitRedemptions: {
+      include: { benefit: true },
+      orderBy: { id: 'asc' },
+    },
   } as const;
+
+  private async consumeReferralBenefits(
+    tx: Prisma.TransactionClient,
+    invoiceId: number,
+    requestedAmount: number,
+    benefits: Array<{
+      id: number;
+      remainingAmount: Prisma.Decimal;
+    }>,
+  ) {
+    let pendingAmount = requestedAmount;
+
+    for (const benefit of benefits) {
+      if (pendingAmount <= 0) break;
+
+      const currentAmount = Number(benefit.remainingAmount);
+      const consumedAmount = this.roundMoney(
+        Math.min(pendingAmount, currentAmount),
+      );
+      const consumesAll = consumedAmount === this.roundMoney(currentAmount);
+      const claimed = await tx.referralBenefit.updateMany({
+        where: {
+          id: benefit.id,
+          status: ReferralBenefitStatus.DISPONIBLE,
+          remainingAmount: { equals: benefit.remainingAmount },
+        },
+        data: {
+          remainingAmount: { decrement: consumedAmount },
+          ...(consumesAll ? { status: ReferralBenefitStatus.USADO } : {}),
+        },
+      });
+
+      if (claimed.count !== 1) {
+        throw new ConflictException(
+          'El saldo de referidos cambió durante la facturación; intente nuevamente',
+        );
+      }
+
+      await tx.referralBenefitRedemption.create({
+        data: {
+          benefitId: benefit.id,
+          invoiceId,
+          amount: consumedAmount,
+        },
+      });
+      pendingAmount = this.roundMoney(pendingAmount - consumedAmount);
+    }
+
+    if (pendingAmount > 0) {
+      throw new BadRequestException('Saldo de descuento insuficiente');
+    }
+  }
+
+  private async createReferralBenefits(
+    tx: Prisma.TransactionClient,
+    buyerClientId: number,
+    originInvoiceId: number,
+    baseProfit: number,
+  ) {
+    const policies = await tx.referralProfitPolicy.findMany({
+      where: { isActive: true },
+      orderBy: { generation: 'asc' },
+    });
+
+    if (!policies.length) return;
+
+    const policyByGeneration = new Map(
+      policies.map((policy) => [policy.generation, policy]),
+    );
+    const lastGeneration = policies[policies.length - 1].generation;
+    const visited = new Set<number>([buyerClientId]);
+    let descendantClientId = buyerClientId;
+
+    for (let generation = 1; generation <= lastGeneration; generation += 1) {
+      const referral = await tx.referral.findUnique({
+        where: { referredClientId: descendantClientId },
+        select: { referrerClientId: true },
+      });
+
+      if (!referral || visited.has(referral.referrerClientId)) break;
+
+      const beneficiaryClientId = referral.referrerClientId;
+      visited.add(beneficiaryClientId);
+      const policy = policyByGeneration.get(generation);
+
+      if (policy) {
+        const percentage = Number(policy.percentage);
+        const amount = this.roundMoney(baseProfit * (percentage / 100));
+
+        await tx.referralBenefit.create({
+          data: {
+            beneficiaryClientId,
+            buyerClientId,
+            originInvoiceId,
+            generation,
+            baseProfit,
+            percentage,
+            amount,
+            remainingAmount: amount,
+          },
+        });
+      }
+
+      descendantClientId = beneficiaryClientId;
+    }
+  }
 
   private groupItems(
     items: Array<{
       productId: number;
       productPriceId?: number;
       quantity: number;
-      product: any;
+      product: ResolvedInvoiceProduct;
     }>,
   ) {
     const groupedItems = new Map<
@@ -268,7 +527,7 @@ export class FacturasService {
         productId: number;
         productPriceId?: number;
         quantity: number;
-        product: any;
+        product: ResolvedInvoiceProduct;
       }
     >();
 
@@ -286,6 +545,52 @@ export class FacturasService {
     }
 
     return Array.from(groupedItems.values());
+  }
+
+  private allocateDiscount(discount: number, subtotals: number[]) {
+    const discountCents = Math.round(discount * 100);
+    const subtotalCents = subtotals.map((subtotal) =>
+      Math.round(subtotal * 100),
+    );
+    const totalCents = subtotalCents.reduce(
+      (sum, subtotal) => sum + subtotal,
+      0,
+    );
+
+    if (!discountCents || !totalCents) {
+      return subtotals.map(() => 0);
+    }
+
+    const allocations = subtotalCents.map((subtotal, index) => {
+      const exactShare = (discountCents * subtotal) / totalCents;
+
+      return {
+        index,
+        cents: Math.floor(exactShare),
+        remainder: exactShare - Math.floor(exactShare),
+      };
+    });
+    let unallocated =
+      discountCents -
+      allocations.reduce((sum, allocation) => sum + allocation.cents, 0);
+
+    allocations
+      .slice()
+      .sort(
+        (left, right) =>
+          right.remainder - left.remainder || left.index - right.index,
+      )
+      .forEach((allocation) => {
+        if (unallocated <= 0) return;
+        allocations[allocation.index].cents += 1;
+        unallocated -= 1;
+      });
+
+    return allocations.map((allocation) => allocation.cents / 100);
+  }
+
+  private roundMoney(value: number) {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
   }
 
   private generateConsecutive() {
@@ -311,9 +616,15 @@ export class FacturasService {
     return {
       OR: [
         { consecutive: { contains: q, mode: 'insensitive' as const } },
-        { client: { firstName: { contains: q, mode: 'insensitive' as const } } },
+        {
+          client: { firstName: { contains: q, mode: 'insensitive' as const } },
+        },
         { client: { lastName: { contains: q, mode: 'insensitive' as const } } },
-        { client: { identification: { contains: q, mode: 'insensitive' as const } } },
+        {
+          client: {
+            identification: { contains: q, mode: 'insensitive' as const },
+          },
+        },
         { createdByUsername: { contains: q, mode: 'insensitive' as const } },
       ],
     };

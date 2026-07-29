@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BarcodeType, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
 import {
   buildPaginatedResponse,
@@ -153,6 +153,19 @@ export class ProductBarcodesService {
     });
   }
 
+  async reactivate(id: number) {
+    const current = await this.findOne(id);
+
+    if (current.isActive) {
+      return current;
+    }
+
+    return this.prisma.productBarcode.update({
+      where: { id },
+      data: { isActive: true },
+    });
+  }
+
   async markPrimary(id: number) {
     this.ensurePositiveId(id);
     const current = await this.findOne(id);
@@ -198,16 +211,19 @@ export class ProductBarcodesService {
     }
   }
 
-  private buildWhere(query: ListProductBarcodesQueryDto): Prisma.ProductBarcodeWhereInput {
+  private buildWhere(
+    query: ListProductBarcodesQueryDto,
+  ): Prisma.ProductBarcodeWhereInput {
     const search = query.q?.trim();
     const where: Prisma.ProductBarcodeWhereInput = {};
 
     if (query.estado !== RecordStatusQuery.TODOS) {
-      where.isActive = query.estado === RecordStatusQuery.INACTIVOS ? false : true;
+      where.isActive =
+        query.estado === RecordStatusQuery.INACTIVOS ? false : true;
     }
 
     if (query.type) {
-      where.type = query.type as BarcodeType;
+      where.type = query.type;
     }
 
     if (query.productId) {

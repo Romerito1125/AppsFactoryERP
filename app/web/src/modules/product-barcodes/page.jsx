@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useForm, useWatch } from 'react-hook-form'
-import { Eye, ImageUp, MoreHorizontal, Pencil, Plus, Power, ScanLine, Search, Star } from 'lucide-react'
+import { Eye, ImageUp, MoreHorizontal, Pencil, Plus, Power, RotateCcw, ScanLine, Search, Star } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { z } from 'zod'
@@ -11,45 +11,14 @@ import { BarcodeScannerDialog } from '@/components/barcode-scanner-dialog'
 import { ProductImage } from '@/components/product-image'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { apiClient } from '@/lib/api-client'
 import { barcodeTypeLabels, barcodeTypeOptions } from '@/lib/barcodes'
 import { readBarcodeFromImage } from '@/lib/barcode-reader'
@@ -145,11 +114,6 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
     form.reset(formDefaults)
   }, [form, formDefaults])
 
-  useEffect(() => {
-    setProductSearch('')
-    setProductPage(1)
-  }, [open, mode])
-
   const productsQuery = useQuery({
     queryKey: ['barcode-form-products', deferredProductSearch, productPage],
     queryFn: () =>
@@ -163,8 +127,11 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
     placeholderData: (previousData) => previousData,
   })
 
-  const selectedProductId = useWatch({ control: form.control, name: 'productId' })
-  const pickerProducts = productsQuery.data?.data ?? []
+  const selectedProductId = useWatch({
+    control: form.control,
+    name: 'productId',
+  })
+  const pickerProducts = useMemo(() => productsQuery.data?.data ?? [], [productsQuery.data?.data])
 
   const selectedProductQuery = useQuery({
     queryKey: ['barcode-form-selected-product', selectedProductId],
@@ -180,6 +147,8 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
     onOpenChange(nextOpen)
     if (!nextOpen) {
       form.reset(formDefaults)
+      setProductSearch('')
+      setProductPage(1)
     }
   }
 
@@ -195,8 +164,14 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
 
     try {
       const result = await readBarcodeFromImage(file)
-      form.setValue('code', result.code, { shouldDirty: true, shouldValidate: true })
-      form.setValue('type', result.type, { shouldDirty: true, shouldValidate: true })
+      form.setValue('code', result.code, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+      form.setValue('type', result.type, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
       toast.success(`Codigo detectado: ${result.code}`)
     } catch (error) {
       toast.error(error.message)
@@ -206,8 +181,14 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
   }
 
   function handleScannerDetected(result) {
-    form.setValue('code', result.code, { shouldDirty: true, shouldValidate: true })
-    form.setValue('type', result.type, { shouldDirty: true, shouldValidate: true })
+    form.setValue('code', result.code, {
+      shouldDirty: true,
+      shouldValidate: true,
+    })
+    form.setValue('type', result.type, {
+      shouldDirty: true,
+      shouldValidate: true,
+    })
     toast.success(`Codigo detectado: ${result.code}`)
   }
 
@@ -260,7 +241,10 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
                     products={pickerProducts}
                     selectedProductId={selectedProductId}
                     onSelectProduct={(productId) =>
-                      form.setValue('productId', productId, { shouldDirty: true, shouldValidate: true })
+                      form.setValue('productId', productId, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      })
                     }
                     actionLabel="Elegir producto"
                     title="Selecciona el producto por imagen"
@@ -308,19 +292,19 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
                   <div className="flex items-center justify-between gap-3">
                     <Label>Codigo</Label>
                     <>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={handleReadImage}
-                      />
+                      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleReadImage} />
                       <div className="flex flex-wrap gap-2">
                         <Button type="button" variant="outline" size="sm" onClick={() => setCameraScannerOpen(true)}>
                           <ScanLine className="mr-2 size-4" />
                           Escanear camara
                         </Button>
-                        <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={scanLoading}>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={scanLoading}
+                        >
                           <ImageUp className="mr-2 size-4" />
                           {scanLoading ? 'Leyendo...' : 'Leer desde imagen'}
                         </Button>
@@ -410,7 +394,12 @@ export function ProductBarcodesPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const [catalogSearch, setCatalogSearch] = useState('')
   const [catalogPage, setCatalogPage] = useState(1)
-  const [formState, setFormState] = useState({ open: false, mode: 'create', record: null, preset: null })
+  const [formState, setFormState] = useState({
+    open: false,
+    mode: 'create',
+    record: null,
+    preset: null,
+  })
   const [detailRecord, setDetailRecord] = useState(null)
   const deferredSearch = useDeferredValue(search)
   const deferredCatalogSearch = useDeferredValue(catalogSearch)
@@ -440,7 +429,7 @@ export function ProductBarcodesPage() {
     placeholderData: (previousData) => previousData,
   })
 
-  const records = barcodesQuery.data?.data ?? []
+  const records = useMemo(() => barcodesQuery.data?.data ?? [], [barcodesQuery.data?.data])
   const catalogProducts = catalogProductsQuery.data?.data ?? []
 
   function openCreateDialog(preset = null) {
@@ -483,6 +472,13 @@ export function ProductBarcodesPage() {
     },
   })
 
+  const reactivateMutation = useMutation({
+    mutationFn: (id) => apiClient.patch(`/codigos-barras/${id}/reactivar`),
+    onSuccess: () => {
+      invalidateBarcodeQueries()
+    },
+  })
+
   async function handleSubmit(payload) {
     if (formState.mode === 'create') {
       await toast.promise(createMutation.mutateAsync(payload), {
@@ -512,6 +508,14 @@ export function ProductBarcodesPage() {
     await toast.promise(markPrimaryMutation.mutateAsync(record.id), {
       loading: 'Marcando codigo principal...',
       success: 'Codigo marcado como principal',
+      error: (error) => error.message,
+    })
+  }
+
+  async function handleReactivateBarcode(record) {
+    await toast.promise(reactivateMutation.mutateAsync(record.id), {
+      loading: 'Reactivando codigo de barras...',
+      success: 'Codigo de barras reactivado',
       error: (error) => error.message,
     })
   }
@@ -555,9 +559,7 @@ export function ProductBarcodesPage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <Badge className="mb-3 bg-primary/12 text-primary hover:bg-primary/12">Catalogo · Identificacion</Badge>
-            <h2 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
-              Codigos de barras
-            </h2>
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">Codigos de barras</h2>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground md:text-base">
               Gestion rapida con paginacion real, multiples codigos por producto, lectura desde imagen y selector visual por foto.
             </p>
@@ -631,7 +633,9 @@ export function ProductBarcodesPage() {
           <CardHeader className="gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <CardTitle>Relacion producto-codigo</CardTitle>
-              <CardDescription>Consulta codigos activos e inactivos, su formato y el producto asociado usando filtros rapidos del backend.</CardDescription>
+              <CardDescription>
+                Consulta codigos activos e inactivos, su formato y el producto asociado usando filtros rapidos del backend.
+              </CardDescription>
             </div>
             <div className="flex w-full flex-col gap-3 md:flex-row lg:w-auto">
               <div className="relative min-w-[240px]">
@@ -744,7 +748,16 @@ export function ProductBarcodesPage() {
                                   <Eye className="mr-2 size-4" />
                                   Ver detalle
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => setFormState({ open: true, mode: 'edit', record, preset: null })}>
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    setFormState({
+                                      open: true,
+                                      mode: 'edit',
+                                      record,
+                                      preset: null,
+                                    })
+                                  }
+                                >
                                   <Pencil className="mr-2 size-4" />
                                   Editar
                                 </DropdownMenuItem>
@@ -759,7 +772,12 @@ export function ProductBarcodesPage() {
                                     <Power className="mr-2 size-4" />
                                     Desactivar
                                   </DropdownMenuItem>
-                                ) : null}
+                                ) : (
+                                  <DropdownMenuItem onClick={() => handleReactivateBarcode(record)}>
+                                    <RotateCcw className="mr-2 size-4" />
+                                    Reactivar
+                                  </DropdownMenuItem>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </TableCell>
@@ -784,11 +802,7 @@ export function ProductBarcodesPage() {
                   currentPage={Number(barcodesQuery.data?.page ?? 1)}
                   totalPages={Math.max(1, Number(barcodesQuery.data?.totalPages ?? 1))}
                   totalItems={Number(barcodesQuery.data?.total ?? records.length)}
-                  startItem={
-                    Number(barcodesQuery.data?.total ?? 0) === 0
-                      ? 0
-                      : (Number(barcodesQuery.data?.page ?? 1) - 1) * PAGE_SIZE + 1
-                  }
+                  startItem={Number(barcodesQuery.data?.total ?? 0) === 0 ? 0 : (Number(barcodesQuery.data?.page ?? 1) - 1) * PAGE_SIZE + 1}
                   endItem={Math.min(
                     (Number(barcodesQuery.data?.page ?? 1) - 1) * PAGE_SIZE + records.length,
                     Number(barcodesQuery.data?.total ?? records.length),
@@ -829,7 +843,14 @@ export function ProductBarcodesPage() {
         }}
         title={detailRecord?.code ?? 'Detalle del codigo'}
         description={detailRecord ? getProductLabel(detailRecord.product) : ''}
-        badge={detailRecord ? { label: getRecordStatus(detailRecord), variant: getRecordStatusVariant(detailRecord) } : undefined}
+        badge={
+          detailRecord
+            ? {
+                label: getRecordStatus(detailRecord),
+                variant: getRecordStatusVariant(detailRecord),
+              }
+            : undefined
+        }
         fields={
           detailRecord
             ? [
@@ -837,18 +858,36 @@ export function ProductBarcodesPage() {
                   label: 'Ficha del codigo',
                   items: [
                     { label: 'Codigo', value: detailRecord.code },
-                    { label: 'Tipo', value: formatBarcodeType(detailRecord.type) },
-                    { label: 'Principal', value: detailRecord.isPrimary ? 'Si' : 'No' },
+                    {
+                      label: 'Tipo',
+                      value: formatBarcodeType(detailRecord.type),
+                    },
+                    {
+                      label: 'Principal',
+                      value: detailRecord.isPrimary ? 'Si' : 'No',
+                    },
                     { label: 'Estado', value: getRecordStatus(detailRecord) },
                   ],
                 },
                 {
                   label: 'Producto asociado',
                   items: [
-                    { label: 'Producto', value: detailRecord.product?.name ?? 'Producto eliminado' },
-                    { label: 'Marca', value: detailRecord.product?.brand ?? 'Sin marca' },
-                    { label: 'Creado', value: formatDate(detailRecord.createdAt) },
-                    { label: 'Actualizado', value: formatDate(detailRecord.updatedAt) },
+                    {
+                      label: 'Producto',
+                      value: detailRecord.product?.name ?? 'Producto eliminado',
+                    },
+                    {
+                      label: 'Marca',
+                      value: detailRecord.product?.brand ?? 'Sin marca',
+                    },
+                    {
+                      label: 'Creado',
+                      value: formatDate(detailRecord.createdAt),
+                    },
+                    {
+                      label: 'Actualizado',
+                      value: formatDate(detailRecord.updatedAt),
+                    },
                   ],
                 },
               ]

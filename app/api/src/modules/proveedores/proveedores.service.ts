@@ -28,7 +28,9 @@ export class ProveedoresService {
       this.prisma.provider.count({ where }),
       this.prisma.provider.findMany({
         where,
-        include: { products: true },
+        include: {
+          _count: { select: { productLinks: true, purchaseOrders: true } },
+        },
         orderBy: { id: 'asc' },
         skip,
         take,
@@ -42,7 +44,9 @@ export class ProveedoresService {
     this.ensurePositiveId(id);
     const provider = await this.prisma.provider.findUnique({
       where: { id },
-      include: { products: true },
+      include: {
+        _count: { select: { productLinks: true, purchaseOrders: true } },
+      },
     });
     if (!provider) throw new NotFoundException('Proveedor no encontrado');
     return provider;
@@ -63,8 +67,8 @@ export class ProveedoresService {
   async remove(id: number) {
     this.ensurePositiveId(id);
     await this.findOne(id);
-    const activeProducts = await this.prisma.product.count({
-      where: { providerId: id, isActive: true },
+    const activeProducts = await this.prisma.productProvider.count({
+      where: { providerId: id, product: { isActive: true } },
     });
     if (activeProducts > 0) {
       throw new BadRequestException(

@@ -29,6 +29,14 @@ export class UpdateProductDto {
   providerId?: number;
 
   @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @IsPositive({ each: true })
+  providerIds?: number[];
+
+  @IsOptional()
   @IsString()
   @MinLength(2)
   name?: string;

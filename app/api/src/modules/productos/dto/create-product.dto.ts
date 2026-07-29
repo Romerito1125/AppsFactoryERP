@@ -64,6 +64,14 @@ export class CreateProductDto {
   @IsPositive()
   providerId: number;
 
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @Type(() => Number)
+  @IsInt({ each: true })
+  @IsPositive({ each: true })
+  providerIds?: number[];
+
   @IsString()
   @MinLength(2)
   name: string;

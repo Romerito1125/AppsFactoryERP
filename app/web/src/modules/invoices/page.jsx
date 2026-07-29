@@ -1,9 +1,9 @@
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useDeferredValue, useMemo, useRef, useState } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
-import { FilePlus2, ImageUp, MoreHorizontal, Plus, ScanLine, Search, Star, Trash2 } from 'lucide-react'
+import { Eye, FileDown, FilePlus2, ImageUp, MoreHorizontal, Plus, ScanLine, Search, Star, Trash2 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
@@ -11,47 +11,16 @@ import { BarcodeScannerDialog } from '@/components/barcode-scanner-dialog'
 import { Badge } from '@/components/ui/badge'
 import { ProductImage } from '@/components/product-image'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   AlertDialog,
@@ -65,15 +34,9 @@ import {
 } from '@/components/ui/alert-dialog'
 import { apiClient } from '@/lib/api-client'
 import { readBarcodeFromImage } from '@/lib/barcode-reader'
-import {
-  formatCurrency,
-  formatDate,
-  formatInvoiceSource,
-  formatInvoiceStatus,
-  formatNumber,
-  formatRole,
-} from '@/lib/format'
+import { formatCurrency, formatDate, formatInvoiceSource, formatInvoiceStatus, formatNumber, formatRole } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { downloadInvoicePdf, openInvoicePdf } from '@/modules/invoices/invoice-pdf'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
 import { LocalPagination } from '@/modules/shared/local-pagination'
 
@@ -81,6 +44,7 @@ const PAGE_SIZE = 20
 
 const invoiceSchema = z.object({
   clientId: z.number({ message: 'Selecciona un cliente' }).int().positive('Selecciona un cliente'),
+  referralDiscount: z.number().min(0, 'No puede ser negativo').optional(),
   items: z
     .array(
       z.object({
@@ -95,8 +59,6 @@ const invoiceSchema = z.object({
 const consecutiveSchema = z.object({
   consecutive: z.string().min(4, 'Minimo 4 caracteres'),
 })
-
-const FAVORITE_PRODUCTS_STORAGE_KEY = 'facturas-favorite-products'
 
 function getProductTotalStock(product) {
   return (product?.warehouses ?? []).reduce((sum, item) => sum + Number(item.quantity ?? 0), 0)
@@ -120,9 +82,7 @@ function getInvoiceActorLabel(invoice) {
   }
 
   if (invoice.createdByRole || invoice.createdByUsername) {
-    return [invoice.createdByRole ? formatRole(invoice.createdByRole) : null, invoice.createdByUsername]
-      .filter(Boolean)
-      .join(' · ')
+    return [invoice.createdByRole ? formatRole(invoice.createdByRole) : null, invoice.createdByUsername].filter(Boolean).join(' · ')
   }
 
   return formatInvoiceSource(invoice.source)
@@ -142,10 +102,12 @@ function InvoiceSkeleton() {
 }
 
 function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, isSubmitting }) {
+  const queryClient = useQueryClient()
   const form = useForm({
     resolver: zodResolver(invoiceSchema),
     defaultValues: {
       clientId: undefined,
+      referralDiscount: 0,
       items: [{ productId: undefined, productPriceId: undefined, quantity: 1 }],
     },
   })
@@ -156,42 +118,38 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
   })
 
   const watchedItems = useWatch({ control: form.control, name: 'items' })
+  const selectedClientId = useWatch({
+    control: form.control,
+    name: 'clientId',
+  })
 
   const [catalogSearch, setCatalogSearch] = useState('')
   const deferredCatalogSearch = useDeferredValue(catalogSearch)
-  const [favoriteProductIds, setFavoriteProductIds] = useState([])
   const [favoritesOnly, setFavoritesOnly] = useState(false)
   const [catalogTargetIndex, setCatalogTargetIndex] = useState(null)
   const [scanLoading, setScanLoading] = useState(false)
   const [cameraScannerOpen, setCameraScannerOpen] = useState(false)
   const barcodeImageInputRef = useRef(null)
 
-  useEffect(() => {
-    try {
-      const savedFavorites = localStorage.getItem(FAVORITE_PRODUCTS_STORAGE_KEY)
-      if (!savedFavorites) {
-        return
-      }
-
-      const parsedFavorites = JSON.parse(savedFavorites)
-      if (Array.isArray(parsedFavorites)) {
-        setFavoriteProductIds(parsedFavorites.filter((value) => Number.isInteger(value)))
-      }
-    } catch {
-      setFavoriteProductIds([])
-    }
-  }, [])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(FAVORITE_PRODUCTS_STORAGE_KEY, JSON.stringify(favoriteProductIds))
-    } catch {
-      return
-    }
-  }, [favoriteProductIds])
+  const favoritesQuery = useQuery({
+    queryKey: ['productos-favoritos-mios'],
+    queryFn: () => apiClient.get('/productos/favoritos/mios'),
+    enabled: open,
+  })
+  const referralBalanceQuery = useQuery({
+    queryKey: ['cliente-estadisticas-referidos', selectedClientId],
+    queryFn: () => apiClient.get(`/clientes/${selectedClientId}/estadisticas-referidos`),
+    enabled: open && Boolean(selectedClientId),
+  })
+  const favoriteMutation = useMutation({
+    mutationFn: ({ productId, isFavorite }) =>
+      isFavorite ? apiClient.delete(`/productos/${productId}/favorito`) : apiClient.put(`/productos/${productId}/favorito`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['productos-favoritos-mios'] }),
+  })
 
   const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products])
-  const favoriteProductIdSet = useMemo(() => new Set(favoriteProductIds), [favoriteProductIds])
+  const favoriteProductIdSet = useMemo(() => new Set((favoritesQuery.data ?? []).map((product) => product.id)), [favoritesQuery.data])
+  const availableReferralDiscount = Number(referralBalanceQuery.data?.descuentoDisponible ?? 0)
   const catalogSearchText = deferredCatalogSearch.trim().toLowerCase()
 
   const catalogProducts = useMemo(
@@ -225,6 +183,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
   function resetDialog() {
     form.reset({
       clientId: undefined,
+      referralDiscount: 0,
       items: [{ productId: undefined, productPriceId: undefined, quantity: 1 }],
     })
     setCatalogSearch('')
@@ -239,57 +198,67 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
     }
   }
 
-  const toggleFavoriteProduct = useCallback((productId) => {
-    setFavoriteProductIds((current) =>
-      current.includes(productId)
-        ? current.filter((value) => value !== productId)
-        : [...current, productId],
-    )
-  }, [])
+  const toggleFavoriteProduct = useCallback(
+    async (productId) => {
+      const isFavorite = favoriteProductIdSet.has(productId)
+      await toast.promise(favoriteMutation.mutateAsync({ productId, isFavorite }), {
+        loading: isFavorite ? 'Quitando favorito...' : 'Guardando favorito...',
+        success: isFavorite ? 'Favorito eliminado' : 'Favorito guardado en tu cuenta',
+        error: (error) => error.message,
+      })
+    },
+    [favoriteMutation, favoriteProductIdSet],
+  )
 
-  const applyProductToItem = useCallback((index, product) => {
-    const defaultPrice = getDefaultActivePrice(product)
+  const applyProductToItem = useCallback(
+    (index, product) => {
+      const defaultPrice = getDefaultActivePrice(product)
 
-    form.setValue(`items.${index}.productId`, product.id, {
-      shouldDirty: true,
-      shouldValidate: true,
-    })
-    form.setValue(`items.${index}.productPriceId`, defaultPrice?.id, {
-      shouldDirty: true,
-      shouldValidate: true,
-    })
-
-    if (!form.getValues(`items.${index}.quantity`)) {
-      form.setValue(`items.${index}.quantity`, 1, {
+      form.setValue(`items.${index}.productId`, product.id, {
         shouldDirty: true,
         shouldValidate: true,
       })
-    }
-  }, [form])
+      form.setValue(`items.${index}.productPriceId`, defaultPrice?.id, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
 
-  const handleCatalogSelection = useCallback((product) => {
-    const currentItems = form.getValues('items')
+      if (!form.getValues(`items.${index}.quantity`)) {
+        form.setValue(`items.${index}.quantity`, 1, {
+          shouldDirty: true,
+          shouldValidate: true,
+        })
+      }
+    },
+    [form],
+  )
 
-    if (catalogTargetIndex !== null && currentItems[catalogTargetIndex]) {
-      applyProductToItem(catalogTargetIndex, product)
-      setCatalogTargetIndex(null)
-      return
-    }
+  const handleCatalogSelection = useCallback(
+    (product) => {
+      const currentItems = form.getValues('items')
 
-    const firstEmptyIndex = currentItems.findIndex((item) => !item.productId)
+      if (catalogTargetIndex !== null && currentItems[catalogTargetIndex]) {
+        applyProductToItem(catalogTargetIndex, product)
+        setCatalogTargetIndex(null)
+        return
+      }
 
-    if (firstEmptyIndex >= 0) {
-      applyProductToItem(firstEmptyIndex, product)
-      return
-    }
+      const firstEmptyIndex = currentItems.findIndex((item) => !item.productId)
 
-    const defaultPrice = getDefaultActivePrice(product)
-    append({
-      productId: product.id,
-      productPriceId: defaultPrice?.id,
-      quantity: 1,
-    })
-  }, [append, applyProductToItem, catalogTargetIndex, form])
+      if (firstEmptyIndex >= 0) {
+        applyProductToItem(firstEmptyIndex, product)
+        return
+      }
+
+      const defaultPrice = getDefaultActivePrice(product)
+      append({
+        productId: product.id,
+        productPriceId: defaultPrice?.id,
+        quantity: 1,
+      })
+    },
+    [append, applyProductToItem, catalogTargetIndex, form],
+  )
 
   const handleBarcodeImageSelection = useCallback(
     async (event) => {
@@ -350,21 +319,10 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
               <Star className={cn('size-4', isFavorite && 'fill-current text-primary')} />
             </Button>
 
-            <button
-              type="button"
-              onClick={() => handleCatalogSelection(product)}
-              className="grid w-full gap-3 text-left"
-            >
-              <ProductImage
-                src={product.imageUrl}
-                alt={product.name}
-                className="aspect-[4/3] w-full rounded-xl"
-                iconClassName="size-6"
-              />
+            <button type="button" onClick={() => handleCatalogSelection(product)} className="grid w-full gap-3 text-left">
+              <ProductImage src={product.imageUrl} alt={product.name} className="aspect-[4/3] w-full rounded-xl" iconClassName="size-6" />
               <div className="pr-8">
-                <p className="line-clamp-1 text-sm font-medium text-foreground">
-                  {product.name}
-                </p>
+                <p className="line-clamp-1 text-sm font-medium text-foreground">{product.name}</p>
                 <p className="line-clamp-1 text-xs text-muted-foreground">
                   {product.brand} · {product.productType?.name ?? 'Sin tipo'}
                 </p>
@@ -385,9 +343,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-6xl">
         <DialogHeader>
           <DialogTitle>Nueva factura</DialogTitle>
-          <DialogDescription>
-            Crea la venta con un catalogo visual para seleccionar productos por imagen y favoritos.
-          </DialogDescription>
+          <DialogDescription>Crea la venta con un catalogo visual para seleccionar productos por imagen y favoritos.</DialogDescription>
         </DialogHeader>
 
         <form
@@ -420,21 +376,30 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                     )}
                   />
                   {form.formState.errors.clientId ? (
-                    <p className="text-xs text-destructive">
-                      {String(form.formState.errors.clientId.message)}
-                    </p>
+                    <p className="text-xs text-destructive">{String(form.formState.errors.clientId.message)}</p>
                   ) : null}
                 </div>
 
                 <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4">
-                  <p className="text-xs font-semibold tracking-[0.18em] text-primary uppercase">
-                    Recomendaciones
-                  </p>
-                  <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-                    <li>Selecciona productos por imagen para reducir errores de despacho.</li>
-                    <li>Marca favoritos para ventas recurrentes.</li>
-                    <li>La factura usara el precio activo seleccionado o el default del producto.</li>
-                  </ul>
+                  <p className="text-xs font-semibold tracking-[0.18em] text-primary uppercase">Descuento de red</p>
+                  <p className="mt-2 text-sm text-muted-foreground">Saldo disponible para este cliente</p>
+                  <p className="mt-1 text-xl font-semibold text-primary">{formatCurrency(availableReferralDiscount)}</p>
+                  <div className="mt-3 grid gap-2">
+                    <Label htmlFor="referralDiscount">Valor a aplicar</Label>
+                    <Input
+                      id="referralDiscount"
+                      type="number"
+                      min="0"
+                      max={availableReferralDiscount}
+                      step="0.01"
+                      {...form.register('referralDiscount', {
+                        setValueAs: (value) => Number(value || 0),
+                      })}
+                    />
+                    {form.formState.errors.referralDiscount ? (
+                      <p className="text-xs text-destructive">{String(form.formState.errors.referralDiscount.message)}</p>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 
@@ -453,7 +418,11 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                     variant="outline"
                     onClick={() => {
                       const nextIndex = fields.length
-                      append({ productId: undefined, productPriceId: undefined, quantity: 1 })
+                      append({
+                        productId: undefined,
+                        productPriceId: undefined,
+                        quantity: 1,
+                      })
                       setCatalogTargetIndex(nextIndex)
                     }}
                   >
@@ -494,9 +463,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                                 iconClassName="size-4"
                               />
                               <div className="min-w-0">
-                                <p className="truncate text-sm font-medium text-foreground">
-                                  {selectedProduct.name}
-                                </p>
+                                <p className="truncate text-sm font-medium text-foreground">{selectedProduct.name}</p>
                                 <p className="truncate text-xs text-muted-foreground">
                                   {selectedProduct.brand} · Stock {formatNumber(totalStock)}
                                 </p>
@@ -510,15 +477,11 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                               className="flex min-h-24 flex-col items-center justify-center rounded-xl border border-dashed border-border/70 bg-muted/10 p-3 text-center transition hover:border-primary/40 hover:bg-primary/5"
                             >
                               <p className="text-sm font-medium text-foreground">Seleccionar producto</p>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                Usa el panel visual para escoger por imagen.
-                              </p>
+                              <p className="mt-1 text-xs text-muted-foreground">Usa el panel visual para escoger por imagen.</p>
                             </button>
                           )}
                           {form.formState.errors.items?.[index]?.productId ? (
-                            <p className="text-xs text-destructive">
-                              {String(form.formState.errors.items[index].productId.message)}
-                            </p>
+                            <p className="text-xs text-destructive">{String(form.formState.errors.items[index].productId.message)}</p>
                           ) : null}
                         </div>
 
@@ -547,9 +510,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                             )}
                           />
                           {form.formState.errors.items?.[index]?.productPriceId ? (
-                            <p className="text-xs text-destructive">
-                              {String(form.formState.errors.items[index].productPriceId.message)}
-                            </p>
+                            <p className="text-xs text-destructive">{String(form.formState.errors.items[index].productPriceId.message)}</p>
                           ) : null}
                         </div>
 
@@ -563,9 +524,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                             })}
                           />
                           {form.formState.errors.items?.[index]?.quantity ? (
-                            <p className="text-xs text-destructive">
-                              {String(form.formState.errors.items[index].quantity.message)}
-                            </p>
+                            <p className="text-xs text-destructive">{String(form.formState.errors.items[index].quantity.message)}</p>
                           ) : null}
                         </div>
 
@@ -573,9 +532,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                           <p className="text-xs text-muted-foreground">Vista previa</p>
                           <p className="mt-1 font-medium">
                             {selectedProductPrice
-                              ? formatCurrency(
-                                  Number(selectedProductPrice.price ?? 0) * Number(watchedItems[index]?.quantity ?? 0),
-                                )
+                              ? formatCurrency(Number(selectedProductPrice.price ?? 0) * Number(watchedItems[index]?.quantity ?? 0))
                               : 'Selecciona producto'}
                           </p>
                           {selectedProduct ? (
@@ -616,9 +573,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
             <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
               <CardHeader>
                 <CardTitle>Catalogo visual</CardTitle>
-                <CardDescription>
-                  Selecciona productos por imagen y guarda favoritos para facturar mas rapido.
-                </CardDescription>
+                <CardDescription>Selecciona productos por imagen y guarda favoritos para facturar mas rapido.</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4">
                 <div className="flex gap-2">
@@ -647,12 +602,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                     <Star className={cn('mr-2 size-4', favoritesOnly && 'fill-current')} />
                     Favoritos
                   </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setCameraScannerOpen(true)}
-                    className="shrink-0"
-                  >
+                  <Button type="button" variant="outline" onClick={() => setCameraScannerOpen(true)} className="shrink-0">
                     <ScanLine className="mr-2 size-4" />
                     Escanear
                   </Button>
@@ -683,9 +633,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
                   ) : (
                     <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-6 text-center">
                       <p className="font-medium text-foreground">No hay productos para este filtro</p>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        Ajusta la busqueda o desactiva el filtro de favoritos.
-                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">Ajusta la busqueda o desactiva el filtro de favoritos.</p>
                     </div>
                   )}
                 </ScrollArea>
@@ -726,21 +674,14 @@ function UpdateConsecutiveDialog({ open, onOpenChange, invoice, onSubmit, isSubm
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Actualizar consecutivo</DialogTitle>
-          <DialogDescription>
-            Actualiza el consecutivo manteniendo intacto el detalle comercial de la factura.
-          </DialogDescription>
+          <DialogDescription>Actualiza el consecutivo manteniendo intacto el detalle comercial de la factura.</DialogDescription>
         </DialogHeader>
-        <form
-          className="grid gap-4"
-          onSubmit={form.handleSubmit((values) => onSubmit(values))}
-        >
+        <form className="grid gap-4" onSubmit={form.handleSubmit((values) => onSubmit(values))}>
           <div className="grid gap-2">
             <Label htmlFor="consecutive">Consecutivo</Label>
             <Input id="consecutive" {...form.register('consecutive')} />
             {form.formState.errors.consecutive ? (
-              <p className="text-xs text-destructive">
-                {String(form.formState.errors.consecutive.message)}
-              </p>
+              <p className="text-xs text-destructive">{String(form.formState.errors.consecutive.message)}</p>
             ) : null}
           </div>
           <DialogFooter>
@@ -782,20 +723,13 @@ export function InvoicesPage() {
     placeholderData: (previousData) => previousData,
   })
 
-  const invoices = invoicesQuery.data?.data ?? []
-
-  useEffect(() => {
-    if (invoiceIdParam && invoices.length) {
-      const targetInvoice = invoices.find((inv) => inv.id === Number(invoiceIdParam))
-      if (targetInvoice) {
-        setDetailInvoice(targetInvoice)
-        setSearchParams((params) => {
-          params.delete('invoiceId')
-          return params
-        }, { replace: true })
-      }
-    }
-  }, [invoiceIdParam, invoices, setSearchParams])
+  const invoices = useMemo(() => invoicesQuery.data?.data ?? [], [invoicesQuery.data?.data])
+  const invoiceParamQuery = useQuery({
+    queryKey: ['factura-detalle', invoiceIdParam],
+    queryFn: () => apiClient.get(`/facturas/${invoiceIdParam}`),
+    enabled: Boolean(invoiceIdParam),
+  })
+  const selectedDetailInvoice = detailInvoice ?? invoiceParamQuery.data ?? null
 
   const clientsQuery = useQuery({
     queryKey: ['facturas-clientes'],
@@ -876,10 +810,7 @@ export function InvoicesPage() {
     {
       label: 'Items vendidos',
       value: formatNumber(
-        activeInvoices.reduce(
-          (sum, invoice) => sum + invoice.items.reduce((itemSum, item) => itemSum + Number(item.quantity ?? 0), 0),
-          0,
-        ),
+        activeInvoices.reduce((sum, invoice) => sum + invoice.items.reduce((itemSum, item) => itemSum + Number(item.quantity ?? 0), 0), 0),
       ),
       help: 'Cantidad total de unidades registradas en ventas activas.',
     },
@@ -913,16 +844,20 @@ export function InvoicesPage() {
     })
   }
 
+  function handleInvoicePdfView(invoice) {
+    openInvoicePdf(invoice)
+  }
+
+  function handleInvoicePdfDownload(invoice) {
+    downloadInvoicePdf(invoice)
+  }
+
   return (
     <div className="grid gap-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <Badge className="mb-3 bg-primary/12 text-primary hover:bg-primary/12">
-            Facturacion · Trazabilidad
-          </Badge>
-          <h2 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">
-            Facturas
-          </h2>
+          <Badge className="mb-3 bg-primary/12 text-primary hover:bg-primary/12">Facturacion · Trazabilidad</Badge>
+          <h2 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">Facturas</h2>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground md:text-base">
             Flujo completo para crear facturas, cambiar consecutivos y anular documentos manteniendo inventario sincronizado.
           </p>
@@ -968,10 +903,10 @@ export function InvoicesPage() {
             </div>
             <Tabs
               value={statusTab}
-                onValueChange={(value) => {
-                  setStatusTab(value)
-                  setCurrentPage(1)
-                }}
+              onValueChange={(value) => {
+                setStatusTab(value)
+                setCurrentPage(1)
+              }}
             >
               <TabsList>
                 <TabsTrigger value="ACTIVA">Activas</TabsTrigger>
@@ -984,13 +919,13 @@ export function InvoicesPage() {
         <CardContent>
           <Table>
             <TableHeader>
-                <TableRow>
-                  <TableHead>Consecutivo</TableHead>
-                  <TableHead>Cliente</TableHead>
-                  <TableHead>Origen / autor</TableHead>
-                  <TableHead>Items</TableHead>
-                  <TableHead>Total</TableHead>
-                  <TableHead>Estado</TableHead>
+              <TableRow>
+                <TableHead>Consecutivo</TableHead>
+                <TableHead>Cliente</TableHead>
+                <TableHead>Origen / autor</TableHead>
+                <TableHead>Items</TableHead>
+                <TableHead>Total</TableHead>
+                <TableHead>Estado</TableHead>
                 <TableHead>Fecha</TableHead>
                 <TableHead className="text-right">Acciones</TableHead>
               </TableRow>
@@ -1002,21 +937,19 @@ export function InvoicesPage() {
                     key={invoice.id}
                     className="cursor-pointer transition hover:bg-muted/20"
                     onClick={() => setDetailInvoice(invoice)}
-                    >
-                      <TableCell className="font-medium text-primary">{invoice.consecutive}</TableCell>
-                      <TableCell>{`${invoice.client.firstName} ${invoice.client.lastName}`}</TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="text-sm font-medium text-foreground">{formatInvoiceSource(invoice.source)}</p>
-                          <p className="text-xs text-muted-foreground">{getInvoiceActorLabel(invoice)}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>{formatNumber(invoice.items.length)}</TableCell>
-                      <TableCell>{formatCurrency(invoice.total)}</TableCell>
+                  >
+                    <TableCell className="font-medium text-primary">{invoice.consecutive}</TableCell>
+                    <TableCell>{`${invoice.client.firstName} ${invoice.client.lastName}`}</TableCell>
                     <TableCell>
-                      <Badge variant={invoice.status === 'ACTIVA' ? 'default' : 'secondary'}>
-                        {formatInvoiceStatus(invoice.status)}
-                      </Badge>
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{formatInvoiceSource(invoice.source)}</p>
+                        <p className="text-xs text-muted-foreground">{getInvoiceActorLabel(invoice)}</p>
+                      </div>
+                    </TableCell>
+                    <TableCell>{formatNumber(invoice.items.length)}</TableCell>
+                    <TableCell>{formatCurrency(invoice.total)}</TableCell>
+                    <TableCell>
+                      <Badge variant={invoice.status === 'ACTIVA' ? 'default' : 'secondary'}>{formatInvoiceStatus(invoice.status)}</Badge>
                     </TableCell>
                     <TableCell>{formatDate(invoice.createdAt)}</TableCell>
                     <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
@@ -1026,18 +959,17 @@ export function InvoicesPage() {
                             <MoreHorizontal className="size-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-48">
-                          <DropdownMenuItem onClick={() => setDetailInvoice(invoice)}>
-                            Ver detalle
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => setEditInvoice(invoice)}>
-                            Editar consecutivo
-                          </DropdownMenuItem>
-                          {invoice.status === 'ACTIVA' ? (
-                            <DropdownMenuItem
-                              onClick={() => setCancelInvoice(invoice)}
-                              className="text-destructive focus:text-destructive"
-                            >
+                          <DropdownMenuContent align="end" className="w-48">
+                            <DropdownMenuItem onClick={() => setDetailInvoice(invoice)}>Ver detalle</DropdownMenuItem>
+                           <DropdownMenuItem onClick={() => handleInvoicePdfView(invoice)}>
+                             Ver PDF
+                           </DropdownMenuItem>
+                           <DropdownMenuItem onClick={() => handleInvoicePdfDownload(invoice)}>
+                             Descargar PDF
+                           </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setEditInvoice(invoice)}>Editar consecutivo</DropdownMenuItem>
+                            {invoice.status === 'ACTIVA' ? (
+                              <DropdownMenuItem onClick={() => setCancelInvoice(invoice)} className="text-destructive focus:text-destructive">
                               Anular factura
                             </DropdownMenuItem>
                           ) : null}
@@ -1048,7 +980,7 @@ export function InvoicesPage() {
                 ))
               ) : (
                 <TableRow>
-                    <TableCell colSpan={8} className="py-12 text-center">
+                  <TableCell colSpan={8} className="py-12 text-center">
                     <div className="mx-auto max-w-md rounded-2xl border border-dashed border-border/70 bg-muted/20 p-6">
                       <p className="font-medium text-foreground">No hay facturas para esta vista</p>
                       <p className="mt-1 text-sm text-muted-foreground">
@@ -1092,75 +1024,82 @@ export function InvoicesPage() {
       />
 
       <ModuleDetailsDrawer
-        open={Boolean(detailInvoice)}
-        onOpenChange={(open) => !open && setDetailInvoice(null)}
-        title={detailInvoice?.consecutive ?? ''}
-        description={
-          detailInvoice
-            ? `${detailInvoice.client.firstName} ${detailInvoice.client.lastName}`
-            : ''
-        }
+        open={Boolean(selectedDetailInvoice)}
+        onOpenChange={(open) => {
+          if (open) return
+          setDetailInvoice(null)
+          setSearchParams(
+            (params) => {
+              params.delete('invoiceId')
+              return params
+            },
+            { replace: true },
+          )
+        }}
+        title={selectedDetailInvoice?.consecutive ?? ''}
+        description={selectedDetailInvoice ? `${selectedDetailInvoice.client.firstName} ${selectedDetailInvoice.client.lastName}` : ''}
         badge={
-          detailInvoice
+          selectedDetailInvoice
             ? {
-                label: formatInvoiceStatus(detailInvoice.status),
-                variant: detailInvoice.status === 'ACTIVA' ? 'default' : 'secondary',
+                label: formatInvoiceStatus(selectedDetailInvoice.status),
+                variant: selectedDetailInvoice.status === 'ACTIVA' ? 'default' : 'secondary',
               }
             : null
         }
       >
-        {detailInvoice ? (
+        {selectedDetailInvoice ? (
           <div className="grid gap-4">
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={() => handleInvoicePdfView(selectedDetailInvoice)}>
+                <Eye className="mr-2 size-4" />
+                Ver PDF
+              </Button>
+              <Button type="button" onClick={() => handleInvoicePdfDownload(selectedDetailInvoice)}>
+                <FileDown className="mr-2 size-4" />
+                Descargar PDF
+              </Button>
+            </div>
+
             <div className="rounded-2xl border border-border/70 bg-card p-4">
-              <p className="text-xs font-semibold tracking-[0.18em] text-primary uppercase">
-                Resumen
-              </p>
+              <p className="text-xs font-semibold tracking-[0.18em] text-primary uppercase">Resumen</p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>
                   <p className="text-xs text-muted-foreground">Cliente</p>
                   <p className="mt-1 text-sm font-medium text-foreground">
-                    {`${detailInvoice.client.firstName} ${detailInvoice.client.lastName}`}
+                    {`${selectedDetailInvoice.client.firstName} ${selectedDetailInvoice.client.lastName}`}
                   </p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Fecha</p>
-                  <p className="mt-1 text-sm font-medium text-foreground">
-                    {formatDate(detailInvoice.createdAt)}
-                  </p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{formatDate(selectedDetailInvoice.createdAt)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Origen</p>
-                  <p className="mt-1 text-sm font-medium text-foreground">
-                    {formatInvoiceSource(detailInvoice.source)}
-                  </p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{formatInvoiceSource(selectedDetailInvoice.source)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Realizada por</p>
-                  <p className="mt-1 text-sm font-medium text-foreground">
-                    {getInvoiceActorLabel(detailInvoice)}
-                  </p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{getInvoiceActorLabel(selectedDetailInvoice)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Subtotal</p>
-                  <p className="mt-1 text-sm font-medium text-foreground">
-                    {formatCurrency(detailInvoice.subtotal)}
-                  </p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{formatCurrency(selectedDetailInvoice.subtotal)}</p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Impuestos</p>
-                  <p className="mt-1 text-sm font-medium text-foreground">
-                    {formatCurrency(detailInvoice.taxes)}
-                  </p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{formatCurrency(selectedDetailInvoice.taxes)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Descuento de red</p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{formatCurrency(selectedDetailInvoice.referralDiscount ?? 0)}</p>
                 </div>
               </div>
             </div>
 
             <div className="rounded-2xl border border-border/70 bg-card p-4">
-              <p className="mb-3 text-xs font-semibold tracking-[0.18em] text-primary uppercase">
-                Items facturados
-              </p>
+              <p className="mb-3 text-xs font-semibold tracking-[0.18em] text-primary uppercase">Items facturados</p>
               <div className="grid gap-3">
-                {detailInvoice.items.map((item) => (
+                {selectedDetailInvoice.items.map((item) => (
                   <div
                     key={item.id}
                     className="grid gap-3 rounded-2xl border border-border/70 bg-muted/10 p-3 sm:grid-cols-[auto_1fr_auto] sm:items-center"
@@ -1172,9 +1111,7 @@ export function InvoicesPage() {
                       iconClassName="size-5"
                     />
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-foreground">
-                        {item.product.name}
-                      </p>
+                      <p className="truncate text-sm font-medium text-foreground">{item.product.name}</p>
                       <p className="truncate text-xs text-muted-foreground">
                         {item.product.brand} · {item.productPrice?.name ?? 'Precio default'}
                       </p>
@@ -1186,9 +1123,7 @@ export function InvoicesPage() {
                     </div>
                     <div className="text-left sm:text-right">
                       <p className="text-xs text-muted-foreground">Total</p>
-                      <p className="text-sm font-semibold text-foreground">
-                        {formatCurrency(item.total)}
-                      </p>
+                      <p className="text-sm font-semibold text-foreground">{formatCurrency(item.total)}</p>
                     </div>
                   </div>
                 ))}
@@ -1202,9 +1137,7 @@ export function InvoicesPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Anular factura</AlertDialogTitle>
-            <AlertDialogDescription>
-              La factura pasara a estado ANULADA y se conservara para trazabilidad comercial.
-            </AlertDialogDescription>
+            <AlertDialogDescription>La factura pasara a estado ANULADA y se conservara para trazabilidad comercial.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>

@@ -12,6 +12,7 @@ import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreateReferralDto } from './dto/create-referral.dto';
 import { ListReferralsQueryDto } from './dto/list-referrals-query.dto';
 import { ValidateReferralDto } from './dto/validate-referral.dto';
+import { UpdateReferralProfitPolicyDto } from './dto/update-referral-profit-policy.dto';
 
 @Injectable()
 export class ReferralsService {
@@ -117,6 +118,25 @@ export class ReferralsService {
       throw new ConflictException('El cliente ya fue registrado como referido');
     }
 
+    let ancestorId = referrerClient.id;
+    const visited = new Set<number>();
+
+    while (!visited.has(ancestorId)) {
+      if (ancestorId === referredClient.id) {
+        throw new BadRequestException(
+          'La relación crearía un ciclo dentro de la red de referidos',
+        );
+      }
+
+      visited.add(ancestorId);
+      const parent = await this.prisma.referral.findUnique({
+        where: { referredClientId: ancestorId },
+        select: { referrerClientId: true },
+      });
+      if (!parent) break;
+      ancestorId = parent.referrerClientId;
+    }
+
     return { codeUsed, referrerClient, referredClient };
   }
 
@@ -146,6 +166,82 @@ export class ReferralsService {
     }
   }
 
+  findProfitPolicies() {
+    return this.prisma.referralProfitPolicy.findMany({
+      orderBy: { generation: 'asc' },
+    });
+  }
+
+  async updateProfitPolicies(policies: UpdateReferralProfitPolicyDto[]) {
+    if (!Array.isArray(policies) || !policies.length) {
+      throw new BadRequestException('Debe enviar al menos una política');
+    }
+
+    const generations = new Set<number>();
+
+    for (const policy of policies) {
+      if (!policy || typeof policy !== 'object') {
+        throw new BadRequestException('Cada política debe ser un objeto');
+      }
+
+      if (!Number.isInteger(policy.generation) || policy.generation <= 0) {
+        throw new BadRequestException(
+          'La generación debe ser un número entero positivo',
+        );
+      }
+
+      if (
+        typeof policy.percentage !== 'number' ||
+        !Number.isFinite(policy.percentage) ||
+        policy.percentage < 0 ||
+        policy.percentage > 100 ||
+        Math.abs(
+          Math.round(policy.percentage * 100) / 100 - policy.percentage,
+        ) > Number.EPSILON
+      ) {
+        throw new BadRequestException(
+          'El porcentaje debe estar entre 0 y 100 y tener máximo dos decimales',
+        );
+      }
+
+      if (
+        policy.isActive !== undefined &&
+        typeof policy.isActive !== 'boolean'
+      ) {
+        throw new BadRequestException('isActive debe ser booleano');
+      }
+
+      if (generations.has(policy.generation)) {
+        throw new BadRequestException(
+          `La generación ${policy.generation} está repetida`,
+        );
+      }
+
+      generations.add(policy.generation);
+    }
+
+    await this.prisma.$transaction(
+      policies.map((policy) =>
+        this.prisma.referralProfitPolicy.upsert({
+          where: { generation: policy.generation },
+          create: {
+            generation: policy.generation,
+            percentage: policy.percentage,
+            isActive: policy.isActive ?? true,
+          },
+          update: {
+            percentage: policy.percentage,
+            ...(policy.isActive === undefined
+              ? {}
+              : { isActive: policy.isActive }),
+          },
+        }),
+      ),
+    );
+
+    return this.findProfitPolicies();
+  }
+
   private getSearchWhere(search?: string) {
     const q = search?.trim();
 
@@ -154,10 +250,26 @@ export class ReferralsService {
     return {
       OR: [
         { codeUsed: { contains: q, mode: 'insensitive' as const } },
-        { referrerClient: { firstName: { contains: q, mode: 'insensitive' as const } } },
-        { referrerClient: { lastName: { contains: q, mode: 'insensitive' as const } } },
-        { referredClient: { firstName: { contains: q, mode: 'insensitive' as const } } },
-        { referredClient: { lastName: { contains: q, mode: 'insensitive' as const } } },
+        {
+          referrerClient: {
+            firstName: { contains: q, mode: 'insensitive' as const },
+          },
+        },
+        {
+          referrerClient: {
+            lastName: { contains: q, mode: 'insensitive' as const },
+          },
+        },
+        {
+          referredClient: {
+            firstName: { contains: q, mode: 'insensitive' as const },
+          },
+        },
+        {
+          referredClient: {
+            lastName: { contains: q, mode: 'insensitive' as const },
+          },
+        },
       ],
     };
   }

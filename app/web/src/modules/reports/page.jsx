@@ -75,6 +75,7 @@ import {
   formatInvoiceStatus,
   formatNumber,
 } from '@/lib/format'
+import { downloadReportPdf } from '@/modules/reports/report-pdf'
 
 const GMF_RATE = 0.004
 const GMF_TYPES = new Set(['EGRESO', 'TRANSFERENCIA_SALIENTE'])
@@ -200,6 +201,27 @@ function rankRows(items, pickLabel) {
   }))
 }
 
+function getAssociatedProviders(product) {
+  return Array.isArray(product?.providers) && product.providers.length
+    ? product.providers
+    : product?.provider
+      ? [{ ...product.provider, isPrimary: true }]
+      : []
+}
+
+function formatProductProviderSummary(product) {
+  const providers = getAssociatedProviders(product)
+
+  if (!providers.length) {
+    return 'Sin proveedor'
+  }
+
+  const primaryProvider = providers.find((provider) => provider.isPrimary) ?? providers[0]
+  const additionalCount = Math.max(0, providers.length - 1)
+
+  return additionalCount ? `${primaryProvider.name} · +${additionalCount} asociado(s)` : primaryProvider.name
+}
+
 const reportEmailSectionOptions = [
   { value: 'RESUMEN', label: 'Resumen ejecutivo', description: 'Indicadores principales y lectura del corte.' },
   { value: 'FACTURAS', label: 'Facturas', description: 'Detalle operativo de facturacion por documento.' },
@@ -308,6 +330,199 @@ function buildReportEmailPayload({ report, summaryCards, startDate, endDate, sec
   }
 }
 
+function buildReportSectionConfigs({ report, startDate, endDate }) {
+  const periodLabel = `${startDate} a ${endDate}`
+
+  return [
+    {
+      key: 'FACTURAS',
+      title: 'Facturacion del mes',
+      description: 'Corte operativo con neto, contado, credito e impuestos por factura.',
+      icon: TrendingUp,
+      filename: `reporte-facturacion-${startDate}-${endDate}.pdf`,
+      csvFilename: `reporte-facturacion-${startDate}-${endDate}.csv`,
+      metrics: [
+        { label: 'Facturas en corte', value: formatNumber(report.invoiceRows.length), help: periodLabel },
+        { label: 'Neto', value: formatCurrency(report.totals.subtotal), help: 'Base de facturacion activa.' },
+        { label: 'IVA', value: formatCurrency(report.totals.taxes), help: 'Impuesto acumulado.' },
+        { label: 'Total', value: formatCurrency(report.totals.total), help: 'Valor total del corte.' },
+      ],
+      columns: [
+        { key: 'fecha', label: 'Fecha' },
+        { key: 'consecutivo', label: 'Consecutivo' },
+        { key: 'cliente', label: 'Cliente' },
+        { key: 'estado', label: 'Estado' },
+        { key: 'neto', label: 'Neto' },
+        { key: 'contado', label: 'Contado' },
+        { key: 'credito', label: 'Credito' },
+        { key: 'iva', label: 'IVA' },
+        { key: 'total', label: 'Total' },
+      ],
+      rows: report.invoiceRows.map((row) => ({
+        fecha: formatDate(row.createdAt),
+        consecutivo: row.consecutive,
+        cliente: row.clientName,
+        estado: formatInvoiceStatus(row.status),
+        neto: formatCurrency(row.subtotal),
+        contado: formatCurrency(row.contado),
+        credito: formatCurrency(row.credito),
+        iva: formatCurrency(row.taxes),
+        total: formatCurrency(row.total),
+      })),
+    },
+    {
+      key: 'IVA',
+      title: 'IVA cobrado',
+      description: 'Resumen por tarifa para declaraciones y cierres contables.',
+      icon: Receipt,
+      filename: `reporte-iva-${startDate}-${endDate}.pdf`,
+      csvFilename: `reporte-iva-${startDate}-${endDate}.csv`,
+      metrics: [
+        { label: 'Tarifas activas', value: formatNumber(report.ivaRows.length), help: periodLabel },
+        { label: 'Base', value: formatCurrency(report.totals.subtotal), help: 'Base gravable acumulada.' },
+        { label: 'IVA cobrado', value: formatCurrency(report.totals.taxes), help: 'Total del periodo.' },
+      ],
+      columns: [
+        { key: 'tarifa', label: 'Tarifa' },
+        { key: 'base', label: 'Base' },
+        { key: 'iva', label: 'IVA' },
+        { key: 'total', label: 'Total' },
+        { key: 'unidades', label: 'Unidades' },
+      ],
+      rows: report.ivaRows.map((row) => ({
+        tarifa: formatPercent(row.rate),
+        base: formatCurrency(row.base),
+        iva: formatCurrency(row.taxes),
+        total: formatCurrency(row.total),
+        unidades: formatNumber(row.items),
+      })),
+    },
+    {
+      key: 'EXOGENAS',
+      title: 'Base para exogenas',
+      description: 'Consolidado por cliente listo para soporte contable.',
+      icon: FileSpreadsheet,
+      filename: `reporte-exogenas-${startDate}-${endDate}.pdf`,
+      csvFilename: `reporte-exogenas-${startDate}-${endDate}.csv`,
+      metrics: [
+        { label: 'Clientes', value: formatNumber(report.exogenousRows.length), help: periodLabel },
+        { label: 'Facturado', value: formatCurrency(report.totals.total), help: 'Total comercial del corte.' },
+        { label: 'Cartera abierta', value: formatCurrency(report.outstandingCredits), help: 'Saldo pendiente actual.' },
+      ],
+      columns: [
+        { key: 'documento', label: 'Documento' },
+        { key: 'cliente', label: 'Cliente' },
+        { key: 'tipo', label: 'Tipo' },
+        { key: 'facturas', label: 'Facturas' },
+        { key: 'base', label: 'Base' },
+        { key: 'iva', label: 'IVA' },
+        { key: 'total', label: 'Total' },
+        { key: 'credito', label: 'Credito pendiente' },
+      ],
+      rows: report.exogenousRows.map((row) => ({
+        documento: row.identification,
+        cliente: row.clientName,
+        tipo: row.clientType ? formatClientType(row.clientType) : 'Sin tipo',
+        facturas: formatNumber(row.invoices),
+        base: formatCurrency(row.subtotal),
+        iva: formatCurrency(row.taxes),
+        total: formatCurrency(row.total),
+        credito: formatCurrency(row.pendingCredit),
+      })),
+    },
+    {
+      key: 'GMF',
+      title: '4x1000 bancario',
+      description: 'Impacto estimado sobre egresos y transferencias salientes.',
+      icon: Landmark,
+      filename: `reporte-4x1000-${startDate}-${endDate}.pdf`,
+      csvFilename: `reporte-4x1000-${startDate}-${endDate}.csv`,
+      metrics: [
+        { label: 'Cuentas impactadas', value: formatNumber(report.gmfByAccount.length), help: periodLabel },
+        { label: 'Base gravable', value: formatCurrency(report.gmfMovements.reduce((sum, item) => sum + item.base, 0)), help: 'Movimientos salientes.' },
+        { label: 'GMF estimado', value: formatCurrency(report.gmfMovements.reduce((sum, item) => sum + item.tax, 0)), help: 'Calculo referencial.' },
+      ],
+      columns: [
+        { key: 'cuenta', label: 'Cuenta' },
+        { key: 'banco', label: 'Banco' },
+        { key: 'movimientos', label: 'Movimientos' },
+        { key: 'base', label: 'Base' },
+        { key: 'gmf', label: '4x1000' },
+        { key: 'impacto', label: 'Impacto total' },
+      ],
+      rows: report.gmfByAccount.map((row) => ({
+        cuenta: row.accountName,
+        banco: row.bankName,
+        movimientos: formatNumber(row.movements),
+        base: formatCurrency(row.base),
+        gmf: formatCurrency(row.tax),
+        impacto: formatCurrency(row.impact),
+      })),
+    },
+    {
+      key: 'STOCK',
+      title: 'Stock critico',
+      description: 'Productos que requieren reposicion o seguimiento.',
+      icon: PackageSearch,
+      filename: `reporte-stock-${startDate}-${endDate}.pdf`,
+      csvFilename: `reporte-stock-${startDate}-${endDate}.csv`,
+      metrics: [
+        { label: 'Criticos', value: formatNumber(report.stockHealth.critical), help: 'En rojo.' },
+        { label: 'En alerta', value: formatNumber(report.stockHealth.warning), help: 'En amarillo.' },
+        { label: 'Buen stock', value: formatNumber(report.stockHealth.good), help: 'Operativos.' },
+      ],
+      columns: [
+        { key: 'producto', label: 'Producto' },
+        { key: 'marca', label: 'Marca' },
+        { key: 'stock', label: 'Stock' },
+        { key: 'minmax', label: 'Min / Max' },
+        { key: 'semaforo', label: 'Semaforo' },
+      ],
+      rows: report.lowStockProducts.map((product) => ({
+        producto: product.name,
+        marca: product.brand,
+        stock: formatNumber(product.totalStock),
+        minmax:
+          product.maximumStock !== null && product.maximumStock !== undefined
+            ? `Min ${formatNumber(product.minimumStock)} · Max ${formatNumber(product.maximumStock)}`
+            : `Min ${formatNumber(product.minimumStock)} · Max libre`,
+        semaforo: product.signal.label,
+      })),
+    },
+    {
+      key: 'PRODUCTOS',
+      title: 'Top productos vendidos',
+      description: 'Rotacion por referencia, categoria y proveedor principal.',
+      icon: BarChart3,
+      filename: `reporte-top-productos-${startDate}-${endDate}.pdf`,
+      csvFilename: `reporte-top-productos-${startDate}-${endDate}.csv`,
+      metrics: [
+        { label: 'Referencias con ventas', value: formatNumber(report.productSales.length), help: periodLabel },
+        { label: 'Unidades', value: formatNumber(report.totals.items), help: 'Items facturados.' },
+        { label: 'Facturado', value: formatCurrency(report.totals.total), help: 'Total del corte.' },
+      ],
+      columns: [
+        { key: 'producto', label: 'Producto' },
+        { key: 'categoria', label: 'Categoria' },
+        { key: 'proveedor', label: 'Proveedor' },
+        { key: 'unidades', label: 'Unidades' },
+        { key: 'neto', label: 'Neto' },
+        { key: 'iva', label: 'IVA' },
+        { key: 'total', label: 'Total' },
+      ],
+      rows: report.productSales.map((product) => ({
+        producto: product.name,
+        categoria: product.productTypeName,
+        proveedor: product.providerName,
+        unidades: formatNumber(product.quantity),
+        neto: formatCurrency(product.subtotal),
+        iva: formatCurrency(product.taxes),
+        total: formatCurrency(product.total),
+      })),
+    },
+  ]
+}
+
 export function ReportsPage() {
   const { user } = useAuth()
   const [startDate, setStartDate] = useState(() => toInputDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
@@ -405,7 +620,7 @@ export function ReportsPage() {
             brand: catalogProduct?.brand ?? item.product?.brand ?? 'Sin marca',
             imageUrl: catalogProduct?.imageUrl ?? item.product?.imageUrl ?? null,
             productTypeName: catalogProduct?.productType?.name ?? item.product?.productType?.name ?? 'Sin tipo',
-            providerName: catalogProduct?.provider?.name ?? 'Sin proveedor',
+            providerName: formatProductProviderSummary(catalogProduct),
             quantity: 0,
             subtotal: 0,
             taxes: 0,
@@ -639,10 +854,8 @@ export function ReportsPage() {
     { name: 'warning', label: 'Stock regular', value: report.stockHealth.warning, fill: chartConfig.warning.color },
     { name: 'good', label: 'Buen stock', value: report.stockHealth.good, fill: chartConfig.good.color },
   ]
-
-  function handlePrint() {
-    window.print()
-  }
+  const reportSections = buildReportSectionConfigs({ report, startDate, endDate })
+  const reportSectionByKey = new Map(reportSections.map((section) => [section.key, section]))
 
   function openEmailDialog() {
     setEmailSubject(buildReportEmailSubject(startDate, endDate))
@@ -697,50 +910,45 @@ export function ReportsPage() {
     setEmailDialogOpen(false)
   }
 
-  function exportInvoiceReport() {
-    downloadCsv('reporte-facturas.csv', [
-      ['Fecha', 'Consecutivo', 'Cliente', 'Estado', 'Monto Neto', 'Contado', 'Credito', 'IVA', 'Total'],
-      ...report.invoiceRows.map((row) => [
-        formatDate(row.createdAt),
-        row.consecutive,
-        row.clientName,
-        formatInvoiceStatus(row.status),
-        row.subtotal.toFixed(2),
-        row.contado.toFixed(2),
-        row.credito.toFixed(2),
-        row.taxes.toFixed(2),
-        row.total.toFixed(2),
-      ]),
+  function exportSectionCsv(sectionKey) {
+    const section = reportSectionByKey.get(sectionKey)
+
+    if (!section) {
+      return
+    }
+
+    downloadCsv(section.csvFilename, [
+      section.columns.map((column) => column.label),
+      ...section.rows.map((row) => section.columns.map((column) => row[column.key] ?? '')),
     ])
+  }
+
+  function exportSectionPdf(sectionKey) {
+    const section = reportSectionByKey.get(sectionKey)
+
+    if (!section) {
+      return
+    }
+
+    downloadReportPdf({
+      ...section,
+      tableTitle: section.title,
+      tableSubtitle: section.description,
+      subtitle: `Corte ${startDate} a ${endDate}`,
+      meta: [`Generado ${formatGeneratedAt()}`, `Facturas en corte: ${formatNumber(report.rangedInvoices.length)}`],
+    })
+  }
+
+  function exportInvoiceReport() {
+    exportSectionCsv('FACTURAS')
   }
 
   function exportIvaReport() {
-    downloadCsv('reporte-iva.csv', [
-      ['Tarifa', 'Base', 'IVA', 'Total', 'Unidades'],
-      ...report.ivaRows.map((row) => [
-        formatPercent(row.rate),
-        row.base.toFixed(2),
-        row.taxes.toFixed(2),
-        row.total.toFixed(2),
-        row.items,
-      ]),
-    ])
+    exportSectionCsv('IVA')
   }
 
   function exportExogenousReport() {
-    downloadCsv('reporte-exogenas-base.csv', [
-      ['Documento', 'Cliente', 'Tipo', 'Facturas', 'Base', 'IVA', 'Total', 'Credito Pendiente'],
-      ...report.exogenousRows.map((row) => [
-        row.identification,
-        row.clientName,
-        row.clientType ? formatClientType(row.clientType) : 'Sin tipo',
-        row.invoices,
-        row.subtotal.toFixed(2),
-        row.taxes.toFixed(2),
-        row.total.toFixed(2),
-        row.pendingCredit.toFixed(2),
-      ]),
-    ])
+    exportSectionCsv('EXOGENAS')
   }
 
   return (
@@ -754,7 +962,7 @@ export function ReportsPage() {
             Reportes del negocio
           </h2>
           <p className="mt-2 max-w-4xl text-sm text-muted-foreground md:text-base">
-            Estado comercial, IVA cobrado, base para exogenas, comportamiento de productos vendidos y lectura financiera con 4x1000 estimado usando la API actual.
+            Centro de reportes subdividido por facturacion, IVA, exogenas, 4x1000, stock y productos para descargar cada corte por separado.
           </p>
         </div>
 
@@ -763,21 +971,9 @@ export function ReportsPage() {
             <Mail className="mr-2 size-4" />
             Enviar correo
           </Button>
-          <Button variant="outline" onClick={handlePrint}>
+          <Button variant="outline" onClick={() => exportSectionPdf('FACTURAS')}>
             <Printer className="mr-2 size-4" />
-            Imprimir
-          </Button>
-          <Button variant="outline" onClick={exportInvoiceReport}>
-            <Download className="mr-2 size-4" />
-            Facturas CSV
-          </Button>
-          <Button variant="outline" onClick={exportIvaReport}>
-            <Receipt className="mr-2 size-4" />
-            IVA CSV
-          </Button>
-          <Button onClick={exportExogenousReport}>
-            <FileSpreadsheet className="mr-2 size-4" />
-            Exogenas CSV
+            PDF facturacion
           </Button>
         </div>
       </div>
@@ -815,6 +1011,48 @@ export function ReportsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {reportSections.map((section) => {
+          const Icon = section.icon
+
+          return (
+            <Card key={section.key} className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+              <CardHeader className="gap-3">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <CardTitle className="text-lg">{section.title}</CardTitle>
+                    <CardDescription className="mt-1">{section.description}</CardDescription>
+                  </div>
+                  <div className="rounded-2xl bg-primary/10 p-2 text-primary">
+                    <Icon className="size-5" />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                <div className="grid gap-2 text-sm">
+                  {section.metrics.slice(0, 3).map((metric) => (
+                    <div key={metric.label} className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/15 px-3 py-2">
+                      <span className="text-muted-foreground">{metric.label}</span>
+                      <span className="font-medium text-foreground">{metric.value}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={() => exportSectionPdf(section.key)}>
+                    <Printer className="mr-2 size-4" />
+                    Descargar PDF
+                  </Button>
+                  <Button variant="outline" onClick={() => exportSectionCsv(section.key)}>
+                    <Download className="mr-2 size-4" />
+                    Descargar CSV
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
 
       <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
         {summaryCards.map((card) => {
@@ -941,9 +1179,21 @@ export function ReportsPage() {
       </div>
 
       <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
-        <CardHeader>
-          <CardTitle>Reporte de facturas</CardTitle>
-          <CardDescription>Lectura operativa con neto, contado, credito, impuestos y total por factura.</CardDescription>
+        <CardHeader className="gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <CardTitle>Reporte de facturas</CardTitle>
+            <CardDescription>Lectura operativa con neto, contado, credito, impuestos y total por factura.</CardDescription>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => exportSectionPdf('FACTURAS')}>
+              <Printer className="mr-2 size-4" />
+              PDF
+            </Button>
+            <Button variant="outline" onClick={exportInvoiceReport}>
+              <Download className="mr-2 size-4" />
+              CSV
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
@@ -995,9 +1245,21 @@ export function ReportsPage() {
 
       <div className="grid gap-4 xl:grid-cols-[1.1fr_1.4fr]">
         <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
-          <CardHeader>
-            <CardTitle>IVA cobrado</CardTitle>
-            <CardDescription>Detalle del impuesto por tarifa para declaraciones y revisiones.</CardDescription>
+          <CardHeader className="gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div>
+              <CardTitle>IVA cobrado</CardTitle>
+              <CardDescription>Detalle del impuesto por tarifa para declaraciones y revisiones.</CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => exportSectionPdf('IVA')}>
+                <Printer className="mr-2 size-4" />
+                PDF
+              </Button>
+              <Button variant="outline" onClick={exportIvaReport}>
+                <Download className="mr-2 size-4" />
+                CSV
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="grid gap-3">
             {report.ivaRows.length ? (
@@ -1021,9 +1283,21 @@ export function ReportsPage() {
         </Card>
 
         <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
-          <CardHeader>
-            <CardTitle>Base para exogenas</CardTitle>
-            <CardDescription>Consolidado por cliente para analisis y exportacion contable.</CardDescription>
+          <CardHeader className="gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div>
+              <CardTitle>Base para exogenas</CardTitle>
+              <CardDescription>Consolidado por cliente para analisis y exportacion contable.</CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => exportSectionPdf('EXOGENAS')}>
+                <Printer className="mr-2 size-4" />
+                PDF
+              </Button>
+              <Button variant="outline" onClick={exportExogenousReport}>
+                <Download className="mr-2 size-4" />
+                CSV
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -1070,11 +1344,23 @@ export function ReportsPage() {
 
       <div className="grid gap-4 xl:grid-cols-[1.15fr_1.25fr]">
         <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
-          <CardHeader>
-            <CardTitle>4x1000 segmentado</CardTitle>
-            <CardDescription>
-              Estimacion del GMF sobre movimientos que salen de las cuentas bancarias del negocio.
-            </CardDescription>
+          <CardHeader className="gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div>
+              <CardTitle>4x1000 segmentado</CardTitle>
+              <CardDescription>
+                Estimacion del GMF sobre movimientos que salen de las cuentas bancarias del negocio.
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => exportSectionPdf('GMF')}>
+                <Printer className="mr-2 size-4" />
+                PDF
+              </Button>
+              <Button variant="outline" onClick={() => exportSectionCsv('GMF')}>
+                <Download className="mr-2 size-4" />
+                CSV
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -1219,9 +1505,21 @@ export function ReportsPage() {
 
       <div className="grid gap-4 xl:grid-cols-[1.25fr_1fr]">
         <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
-          <CardHeader>
-            <CardTitle>Stock critico y regular</CardTitle>
-            <CardDescription>Semaforo rojo, amarillo y verde para tomar decisiones rapidas.</CardDescription>
+          <CardHeader className="gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div>
+              <CardTitle>Stock critico y regular</CardTitle>
+              <CardDescription>Semaforo rojo, amarillo y verde para tomar decisiones rapidas.</CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => exportSectionPdf('STOCK')}>
+                <Printer className="mr-2 size-4" />
+                PDF
+              </Button>
+              <Button variant="outline" onClick={() => exportSectionCsv('STOCK')}>
+                <Download className="mr-2 size-4" />
+                CSV
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -1309,9 +1607,21 @@ export function ReportsPage() {
       </div>
 
       <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
-        <CardHeader>
-          <CardTitle>Top de productos vendidos</CardTitle>
-          <CardDescription>Profundizacion sobre lo que mas rota y cuanto factura cada referencia.</CardDescription>
+        <CardHeader className="gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <CardTitle>Top de productos vendidos</CardTitle>
+            <CardDescription>Profundizacion sobre lo que mas rota y cuanto factura cada referencia.</CardDescription>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => exportSectionPdf('PRODUCTOS')}>
+              <Printer className="mr-2 size-4" />
+              PDF
+            </Button>
+            <Button variant="outline" onClick={() => exportSectionCsv('PRODUCTOS')}>
+              <Download className="mr-2 size-4" />
+              CSV
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">

@@ -63,6 +63,11 @@ export class ProductBarcodesController {
     return this.productBarcodesService.remove(id);
   }
 
+  @Patch('codigos-barras/:id/reactivar')
+  reactivate(@Param('id', ParseIntPipe) id: number) {
+    return this.productBarcodesService.reactivate(id);
+  }
+
   @Patch('codigos-barras/:id/principal')
   markPrimary(@Param('id', ParseIntPipe) id: number) {
     return this.productBarcodesService.markPrimary(id);

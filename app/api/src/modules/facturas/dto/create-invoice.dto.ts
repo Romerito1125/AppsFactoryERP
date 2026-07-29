@@ -4,8 +4,10 @@ import {
   IsArray,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsPositive,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { InvoiceSource } from '@prisma/client';
@@ -32,4 +34,10 @@ export class CreateInvoiceDto {
   @IsOptional()
   @IsEnum(InvoiceSource)
   source?: InvoiceSource;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  referralDiscount?: number;
 }

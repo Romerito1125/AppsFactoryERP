@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   Link2,
   Package,
+  ShoppingCart,
   ReceiptText,
   ShieldUser,
   Smartphone,
@@ -127,6 +128,13 @@ export const navigationGroups = [
         allowedRoles: ['ADMIN'],
       },
       {
+        path: '/compras',
+        label: 'Compras',
+        description: 'Ordenes a proveedores',
+        icon: ShoppingCart,
+        allowedRoles: ['ADMIN'],
+      },
+      {
         path: '/cotizaciones',
         label: 'Cotizaciones',
         description: 'Propuestas comerciales',
@@ -197,11 +205,16 @@ export function getNavigationGroupsForRole(role) {
   return navigationGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => !item.allowedRoles || item.allowedRoles.includes(role)),
+      items: group.items.filter(
+        (item) => !item.allowedRoles || item.allowedRoles.includes(role),
+      ),
     }))
     .filter((group) => group.items.length > 0)
 }
 
 export function getNavigationItem(pathname) {
-  return navigationItems.find((item) => pathname.startsWith(item.path)) ?? navigationItems[0]
+  return (
+    navigationItems.find((item) => pathname.startsWith(item.path)) ??
+    navigationItems[0]
+  )
 }

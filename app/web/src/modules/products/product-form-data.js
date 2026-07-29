@@ -50,6 +50,7 @@ export function buildCreateProductFormData(values) {
   return buildProductFormData({
     productTypeId: values.productTypeId,
     providerId: values.providerId,
+    providerIds: values.providerIds,
     name: values.name,
     image: values.image,
     description: values.description,
@@ -86,6 +87,7 @@ export function buildImportedProductFormData(draft, defaults) {
   return buildCreateProductFormData({
     productTypeId: defaults.productTypeId,
     providerId: defaults.providerId,
+    providerIds: [],
     name: draft.name.trim(),
     description: descriptionParts.join(' | '),
     brand,

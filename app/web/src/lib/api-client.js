@@ -125,6 +125,11 @@ export const apiClient = {
       method: 'POST',
       body: withBody(body),
     }),
+  put: (path, body) =>
+    request(path, {
+      method: 'PUT',
+      body: withBody(body),
+    }),
   patch: (path, body) =>
     request(path, {
       method: 'PATCH',
