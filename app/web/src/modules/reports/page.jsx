@@ -68,6 +68,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { apiClient } from '@/lib/api-client'
 import {
   formatClientType,
@@ -698,6 +699,8 @@ export function ReportsPage() {
   const [emailRecipients, setEmailRecipients] = useState('')
   const [emailSubject, setEmailSubject] = useState(() => buildReportEmailSubject(toInputDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1)), toInputDate(new Date())))
   const [selectedEmailSections, setSelectedEmailSections] = useState(() => reportEmailSectionOptions.map((option) => option.value))
+  const [activeTab, setActiveTab] = useState('overview')
+  const [reportSearch, setReportSearch] = useState('')
 
   const reportsQuery = useQuery({
     queryKey: ['reportes-overview'],
@@ -1129,6 +1132,23 @@ export function ReportsPage() {
   ]
   const reportSections = buildReportSectionConfigs({ report, startDate, endDate, transferWindowDays: Number(transferWindowDays) })
   const reportSectionByKey = new Map(reportSections.map((section) => [section.key, section]))
+  const sectionTabMap = {
+    FACTURAS: 'sales',
+    IVA: 'sales',
+    EXOGENAS: 'sales',
+    PRODUCTOS: 'sales',
+    GMF: 'finance',
+    STOCK: 'inventory',
+    STOCK_SEMANAL: 'inventory',
+    TRASLADOS: 'operations',
+  }
+  const filteredReportSections = reportSections.filter((section) => {
+    const search = reportSearch.trim().toLowerCase()
+    if (!search) return true
+    return [section.title, section.description]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(search))
+  })
 
   function openEmailDialog() {
     setEmailSubject(buildReportEmailSubject(startDate, endDate))
@@ -1222,6 +1242,10 @@ export function ReportsPage() {
 
   function exportExogenousReport() {
     exportSectionCsv('EXOGENAS')
+  }
+
+  function openSection(sectionKey) {
+    setActiveTab(sectionTabMap[sectionKey] ?? 'overview')
   }
 
   return (
@@ -1371,47 +1395,64 @@ export function ReportsPage() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {reportSections.map((section) => {
-          const Icon = section.icon
+      <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+        <CardHeader className="gap-4">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+            <div>
+              <CardTitle>Navegacion de reportes</CardTitle>
+              <CardDescription>Busca rapidamente el bloque que necesitas y navega por pestañas del negocio.</CardDescription>
+            </div>
+            <div className="w-full xl:max-w-sm">
+              <Input value={reportSearch} onChange={(event) => setReportSearch(event.target.value)} placeholder="Buscar reporte por nombre o descripcion..." />
+            </div>
+          </div>
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 rounded-2xl p-1.5">
+              <TabsTrigger className="min-w-[120px] flex-none px-4 py-2" value="overview">Resumen</TabsTrigger>
+              <TabsTrigger className="min-w-[120px] flex-none px-4 py-2" value="sales">Ventas</TabsTrigger>
+              <TabsTrigger className="min-w-[120px] flex-none px-4 py-2" value="finance">Finanzas</TabsTrigger>
+              <TabsTrigger className="min-w-[120px] flex-none px-4 py-2" value="inventory">Inventario</TabsTrigger>
+              <TabsTrigger className="min-w-[120px] flex-none px-4 py-2" value="operations">Operacion</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {filteredReportSections.map((section) => {
+              const Icon = section.icon
 
-          return (
-            <Card key={section.key} className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
-              <CardHeader className="gap-3">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <CardTitle className="text-lg">{section.title}</CardTitle>
-                    <CardDescription className="mt-1">{section.description}</CardDescription>
-                  </div>
-                  <div className="rounded-2xl bg-primary/10 p-2 text-primary">
-                    <Icon className="size-5" />
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="grid gap-4">
-                <div className="grid gap-2 text-sm">
-                  {section.metrics.slice(0, 3).map((metric) => (
-                    <div key={metric.label} className="flex items-center justify-between rounded-xl border border-border/70 bg-muted/15 px-3 py-2">
-                      <span className="text-muted-foreground">{metric.label}</span>
-                      <span className="font-medium text-foreground">{metric.value}</span>
+              return (
+                <button
+                  key={`explorer-${section.key}`}
+                  type="button"
+                  onClick={() => openSection(section.key)}
+                  className="rounded-2xl border border-border/70 bg-muted/10 p-4 text-left transition hover:border-primary/35 hover:bg-primary/5"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-foreground">{section.title}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">{section.description}</p>
                     </div>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" onClick={() => exportSectionPdf(section.key)}>
-                    <Printer className="mr-2 size-4" />
-                    Descargar PDF
-                  </Button>
-                  <Button variant="outline" onClick={() => exportSectionCsv(section.key)}>
-                    <Download className="mr-2 size-4" />
-                    Descargar CSV
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )
-        })}
-      </div>
+                    <div className="rounded-xl bg-primary/10 p-2 text-primary">
+                      <Icon className="size-4" />
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={(event) => { event.stopPropagation(); exportSectionPdf(section.key) }}>
+                      <Printer className="mr-2 size-3.5" />
+                      PDF
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={(event) => { event.stopPropagation(); exportSectionCsv(section.key) }}>
+                      <Download className="mr-2 size-3.5" />
+                      CSV
+                    </Button>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
         {summaryCards.map((card) => {
@@ -1436,6 +1477,8 @@ export function ReportsPage() {
         })}
       </div>
 
+      {activeTab === 'overview' ? (
+      <>
       <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
         <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
           <CardHeader>
@@ -1536,7 +1579,11 @@ export function ReportsPage() {
           </CardContent>
         </Card>
       </div>
+      </>
+      ) : null}
 
+      {activeTab === 'sales' ? (
+      <>
       <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
         <CardHeader className="gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
@@ -1712,7 +1759,10 @@ export function ReportsPage() {
           </CardContent>
         </Card>
       </div>
+      </>
+      ) : null}
 
+      {activeTab === 'finance' ? (
       <div className="grid gap-4 xl:grid-cols-[1.15fr_1.25fr]">
         <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
           <CardHeader className="gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -1817,7 +1867,9 @@ export function ReportsPage() {
           </CardContent>
         </Card>
       </div>
+      ) : null}
 
+      {activeTab === 'operations' ? (
       <div className="grid gap-4 xl:grid-cols-3">
         <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
           <CardHeader>
@@ -1873,7 +1925,9 @@ export function ReportsPage() {
           </CardContent>
         </Card>
       </div>
+      ) : null}
 
+      {activeTab === 'inventory' ? (
       <div className="grid gap-4 xl:grid-cols-[1.25fr_1fr]">
         <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
           <CardHeader className="gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -1976,7 +2030,9 @@ export function ReportsPage() {
           </CardContent>
         </Card>
       </div>
+      ) : null}
 
+      {activeTab === 'sales' ? (
       <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
         <CardHeader className="gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
@@ -2041,6 +2097,7 @@ export function ReportsPage() {
           </div>
         </CardContent>
       </Card>
+      ) : null}
 
       <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
         <DialogContent className="sm:max-w-3xl">
