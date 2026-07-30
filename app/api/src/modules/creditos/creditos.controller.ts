@@ -19,6 +19,9 @@ import { CreditosService } from './creditos.service';
 @Controller()
 export class CreditosController {
   constructor(private readonly service: CreditosService) {}
+  @Post('creditos') createDirect(@Body() dto: CreateInvoiceCreditDto) {
+    return this.service.createDirect(dto);
+  }
   @Post('facturas/:id/credito') createForInvoice(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateInvoiceCreditDto,

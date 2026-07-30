@@ -140,6 +140,41 @@ function BankMovementsSkeleton() {
   )
 }
 
+function SearchableBankMovementSelect({ items, value, onChange, placeholder, searchPlaceholder }) {
+  const [query, setQuery] = useState('')
+  const filteredItems = query.trim()
+    ? items.filter((item) => item.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : items
+  const selectedItem = items.find((item) => item.id === value)
+
+  return (
+    <div className="grid gap-3">
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchPlaceholder} />
+      <div className="rounded-xl border border-dashed border-border/70 bg-muted/10 p-3 text-sm">
+        <p className="font-medium text-foreground">{selectedItem?.label ?? placeholder}</p>
+        <p className="mt-1 truncate text-xs text-muted-foreground">{selectedItem?.description ?? 'Busca y selecciona una opcion.'}</p>
+      </div>
+      <div className="max-h-56 overflow-y-auto rounded-xl border border-border/70 p-2">
+        <div className="grid gap-2">
+          {filteredItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onChange(item.id)}
+              className={`rounded-xl border px-3 py-2 text-left transition ${
+                item.id === value ? 'border-primary bg-primary/10 text-foreground' : 'border-border/70 bg-background hover:border-primary/40 hover:bg-primary/5'
+              }`}
+            >
+              <p className="truncate text-sm font-medium text-foreground">{item.label}</p>
+              <p className="truncate text-xs text-muted-foreground">{item.description}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function formatBankMovementType(value) {
   return bankMovementLabels[value] ?? value ?? 'Movimiento'
 }
@@ -210,6 +245,16 @@ function BankMovementDialog({ open, onOpenChange, accounts, invoices, onSubmit, 
   })
 
   const movementType = form.watch('type')
+  const accountOptions = accounts.map((account) => ({
+    id: account.id,
+    label: account.name,
+    description: `${account.bankName} · Saldo ${formatCurrency(account.currentBalance ?? 0)}`,
+  }))
+  const invoiceOptions = invoices.map((invoice) => ({
+    id: invoice.id,
+    label: invoice.consecutive,
+    description: `${invoice.client?.firstName ?? 'Sin cliente'} ${invoice.client?.lastName ?? ''}`.trim() + ` · ${formatCurrency(invoice.total)}`,
+  }))
 
   function closeDialog(nextOpen) {
     onOpenChange(nextOpen)
@@ -264,17 +309,13 @@ function BankMovementDialog({ open, onOpenChange, accounts, invoices, onSubmit, 
                 name="bankAccountId"
                 control={form.control}
                 render={({ field }) => (
-                  <NativeSelect
-                    value={field.value ? String(field.value) : ''}
-                    onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                  >
-                    <option value="">Selecciona una cuenta</option>
-                    {accounts.map((account) => (
-                      <option key={account.id} value={String(account.id)}>
-                        {`${account.name} · ${account.bankName}`}
-                      </option>
-                    ))}
-                  </NativeSelect>
+                  <SearchableBankMovementSelect
+                    items={accountOptions}
+                    value={field.value}
+                    onChange={field.onChange}
+                    placeholder="Selecciona una cuenta"
+                    searchPlaceholder="Buscar cuenta..."
+                  />
                 )}
               />
               {form.formState.errors.bankAccountId ? (
@@ -289,17 +330,13 @@ function BankMovementDialog({ open, onOpenChange, accounts, invoices, onSubmit, 
                   name="toBankAccountId"
                   control={form.control}
                   render={({ field }) => (
-                    <NativeSelect
-                      value={field.value ? String(field.value) : ''}
-                      onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                    >
-                      <option value="">Selecciona la cuenta destino</option>
-                      {accounts.map((account) => (
-                        <option key={account.id} value={String(account.id)}>
-                          {`${account.name} · ${account.bankName}`}
-                        </option>
-                      ))}
-                    </NativeSelect>
+                    <SearchableBankMovementSelect
+                      items={accountOptions.filter((account) => account.id !== form.watch('bankAccountId'))}
+                      value={field.value}
+                      onChange={field.onChange}
+                      placeholder="Selecciona la cuenta destino"
+                      searchPlaceholder="Buscar cuenta destino..."
+                    />
                   )}
                 />
                 {form.formState.errors.toBankAccountId ? (
@@ -341,17 +378,13 @@ function BankMovementDialog({ open, onOpenChange, accounts, invoices, onSubmit, 
                   name="invoiceId"
                   control={form.control}
                   render={({ field }) => (
-                    <NativeSelect
-                      value={field.value ? String(field.value) : 'none'}
-                      onChange={(event) => field.onChange(event.target.value === 'none' ? undefined : Number(event.target.value))}
-                    >
-                      <option value="none">Sin factura asociada</option>
-                      {invoices.map((invoice) => (
-                        <option key={invoice.id} value={String(invoice.id)}>
-                          {`${invoice.consecutive} · ${formatCurrency(invoice.total)}`}
-                        </option>
-                      ))}
-                    </NativeSelect>
+                    <SearchableBankMovementSelect
+                      items={invoiceOptions}
+                      value={field.value}
+                      onChange={field.onChange}
+                      placeholder="Sin factura asociada"
+                      searchPlaceholder="Buscar factura relacionada..."
+                    />
                   )}
                 />
               </div>
@@ -487,7 +520,7 @@ export function BankMovementsPage() {
     },
   ]
 
-  if (movementsQuery.isLoading || (createOpen && (accountsQuery.isLoading || invoicesQuery.isLoading))) {
+  if (movementsQuery.isLoading) {
     return <BankMovementsSkeleton />
   }
 

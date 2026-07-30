@@ -842,22 +842,6 @@ export function PosPage() {
                 </div>
 
                 <div className="grid gap-1.5">
-                  <Label className="text-xs font-semibold text-muted-foreground">Descuento de red</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    max={availableReferralDiscount || undefined}
-                    value={referralDiscount}
-                    onChange={(event) => setReferralDiscount(event.target.value)}
-                    className="h-10 rounded-xl bg-background/50"
-                    placeholder="0"
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    Disponible: {formatCurrency(availableReferralDiscount)}
-                  </p>
-                </div>
-
-                <div className="grid gap-1.5">
                   <Label className="text-xs font-semibold text-muted-foreground">Vendedor / Cajero de la caja</Label>
                   <Select
                     value={selectedUserId ? String(selectedUserId) : undefined}
@@ -936,6 +920,24 @@ export function PosPage() {
                   <div className="grid gap-1.5">
                     <Label className="text-xs font-semibold text-muted-foreground">Estacion</Label>
                     <Input value={operationStation} onChange={(event) => setOperationStation(event.target.value)} className="h-9 rounded-xl bg-background/50 text-xs" placeholder="Caja 1" />
+                  </div>
+                </div>
+
+                <div className="grid gap-1.5 rounded-xl border border-border/50 bg-muted/10 p-3">
+                  <Label className="text-[11px] font-semibold text-muted-foreground">Descuento de red opcional</Label>
+                  <div className="flex items-center gap-3">
+                    <Input
+                      type="number"
+                      min="0"
+                      max={availableReferralDiscount || undefined}
+                      value={referralDiscount}
+                      onChange={(event) => setReferralDiscount(event.target.value)}
+                      className="h-9 rounded-xl bg-background/50 text-xs"
+                      placeholder="0"
+                    />
+                    <p className="text-[11px] text-muted-foreground whitespace-nowrap">
+                      Disponible: {formatCurrency(availableReferralDiscount)}
+                    </p>
                   </div>
                 </div>
               </div>

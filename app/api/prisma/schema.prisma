@@ -66,6 +66,7 @@ model Client {
   referredBy     Referral?     @relation("ReferredClient")
   referralLevel  Int           @default(0)
   quotes         Quote[]
+  credits        InvoiceCredit[]
   referralBenefits ReferralBenefit[] @relation("BenefitRecipient")
   generatedReferralBenefits ReferralBenefit[] @relation("BenefitBuyer")
 
@@ -441,7 +442,8 @@ model Notification {
 
 model InvoiceCredit {
   id          Int          @id @default(autoincrement())
-  invoiceId   Int          @unique
+  invoiceId   Int?         @unique
+  clientId    Int
   dueDate     DateTime
   totalAmount Decimal      @db.Decimal(12, 2)
   paidAmount  Decimal      @default(0) @db.Decimal(12, 2)
@@ -450,9 +452,11 @@ model InvoiceCredit {
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @default(now()) @updatedAt
 
-  invoice  Invoice         @relation(fields: [invoiceId], references: [id])
+  invoice  Invoice?        @relation(fields: [invoiceId], references: [id])
+  client   Client          @relation(fields: [clientId], references: [id])
   payments CreditPayment[]
 
+  @@index([clientId])
   @@index([dueDate])
   @@index([status])
 }

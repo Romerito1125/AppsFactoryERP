@@ -7,7 +7,8 @@ import {
 } from '@/lib/pdf-utils'
 
 function buildReportPdf(reportConfig) {
-  const doc = createPdfDocument()
+  const wideTable = (reportConfig.columns?.length ?? 0) > 10
+  const doc = createPdfDocument({ orientation: wideTable ? 'landscape' : 'portrait' })
   const startY = addDocumentHeader(doc, {
     eyebrow: 'Reporte subdividido',
     title: reportConfig.title,
@@ -22,9 +23,15 @@ function buildReportPdf(reportConfig) {
     subtitle: reportConfig.tableSubtitle,
     startY: metricsY + 4,
     filenameHint: reportConfig.filename,
-    head: [reportConfig.columns.map((column) => column.label)],
+    head: [reportConfig.columns.map((column) => column.pdfLabel ?? column.label)],
     body: reportConfig.rows.map((row) => reportConfig.columns.map((column) => row[column.key] ?? '')),
     columnStyles: reportConfig.columnStyles,
+    styles: wideTable
+      ? {
+          fontSize: 6.5,
+          cellPadding: 1.5,
+        }
+      : undefined,
   })
 
   return doc

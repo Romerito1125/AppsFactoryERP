@@ -58,6 +58,8 @@ const PAGE_SIZE = DEFAULT_ITEMS_PER_PAGE
 
 const createCreditSchema = z.object({
   invoiceId: z.number().int().positive().optional(),
+  clientId: z.number().int().positive().optional(),
+  totalAmount: z.number().positive('Debe ser mayor a cero').optional(),
   dueDate: z.string().min(1, 'La fecha de vencimiento es obligatoria'),
 })
 
@@ -149,11 +151,13 @@ function CreditInvoiceSelector({ invoices, value, onChange, isLoading }) {
   )
 }
 
-function CreateCreditDialog({ open, onOpenChange, invoices, invoicesLoading, onSubmit, isSubmitting }) {
+function CreateCreditDialog({ open, onOpenChange, invoices, invoicesLoading, clients, onSubmit, isSubmitting }) {
   const form = useForm({
     resolver: zodResolver(createCreditSchema),
-    defaultValues: { invoiceId: undefined, dueDate: '' },
+    defaultValues: { invoiceId: undefined, clientId: undefined, totalAmount: undefined, dueDate: '' },
   })
+  const selectedInvoiceId = form.watch('invoiceId')
+  const selectedInvoice = invoices.find((invoice) => invoice.id === selectedInvoiceId)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -173,6 +177,36 @@ function CreateCreditDialog({ open, onOpenChange, invoices, invoicesLoading, onS
                 )}
               />
             </div>
+
+          {!selectedInvoiceId ? (
+            <>
+              <div className="grid gap-2">
+                <Label>Cliente</Label>
+                <Controller
+                  name="clientId"
+                  control={form.control}
+                  render={({ field }) => (
+                    <NativeSelect
+                      value={field.value ? String(field.value) : ''}
+                      onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
+                    >
+                      <option value="">Selecciona un cliente</option>
+                      {clients.map((client) => (
+                        <option key={client.id} value={String(client.id)}>
+                          {`${client.firstName} ${client.lastName} · ${client.identification}`}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                  )}
+                />
+              </div>
+
+              <div className="grid gap-2">
+                <Label>Monto total</Label>
+                <Input type="number" min="1" {...form.register('totalAmount', { setValueAs: (value) => (value ? Number(value) : undefined) })} />
+              </div>
+            </>
+          ) : null}
 
           <div className="grid gap-2">
             <Label>Fecha de vencimiento</Label>
@@ -339,6 +373,11 @@ export function CreditsPage() {
     queryFn: () => apiClient.getAllPages('/facturas'),
     enabled: createOpen,
   })
+  const clientsQuery = useQuery({
+    queryKey: ['creditos-clientes'],
+    queryFn: () => apiClient.getAllPages('/clientes'),
+    enabled: createOpen,
+  })
   const creditedInvoicesQuery = useQuery({
     queryKey: ['creditos-lookup'],
     queryFn: () => apiClient.getAllPages('/creditos'),
@@ -351,7 +390,10 @@ export function CreditsPage() {
   })
 
   const createMutation = useMutation({
-    mutationFn: ({ invoiceId, dueDate }) => apiClient.post(`/facturas/${invoiceId}/credito`, { dueDate }),
+    mutationFn: ({ invoiceId, dueDate, clientId, totalAmount }) =>
+      invoiceId
+        ? apiClient.post(`/facturas/${invoiceId}/credito`, { dueDate })
+        : apiClient.post('/creditos', { dueDate, clientId, totalAmount }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['creditos'] })
       setCreateOpen(false)
@@ -395,6 +437,7 @@ export function CreditsPage() {
   const totalItems = Number(creditsQuery.data?.total ?? 0)
   const totalPages = Math.max(1, Number(creditsQuery.data?.totalPages ?? 1))
   const invoices = invoicesQuery.data ?? []
+  const clients = clientsQuery.data ?? []
   const accounts = accountsQuery.data ?? []
   const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
   const endItem = Math.min(startItem + credits.length - 1, totalItems)
@@ -559,8 +602,8 @@ export function CreditsPage() {
 
                   return (
                     <TableRow key={credit.id}>
-                      <TableCell className="font-medium">{credit.invoice?.consecutive ?? `Factura #${credit.invoiceId}`}</TableCell>
-                      <TableCell>{`${credit.invoice?.client?.firstName ?? ''} ${credit.invoice?.client?.lastName ?? ''}`}</TableCell>
+                      <TableCell className="font-medium">{credit.invoice?.consecutive ?? 'Sin factura'}</TableCell>
+                      <TableCell>{`${credit.client?.firstName ?? credit.invoice?.client?.firstName ?? ''} ${credit.client?.lastName ?? credit.invoice?.client?.lastName ?? ''}`.trim() || 'Sin cliente'}</TableCell>
                       <TableCell>{formatCurrency(credit.totalAmount)}</TableCell>
                       <TableCell>{formatCurrency(credit.paidAmount)}</TableCell>
                       <TableCell>{formatCurrency(credit.balance)}</TableCell>
@@ -616,6 +659,7 @@ export function CreditsPage() {
         onOpenChange={setCreateOpen}
         invoices={availableInvoices}
         invoicesLoading={invoicesQuery.isLoading || creditedInvoicesQuery.isLoading}
+        clients={clients}
         onSubmit={handleCreateCredit}
         isSubmitting={createMutation.isPending}
       />
@@ -641,7 +685,7 @@ export function CreditsPage() {
         open={Boolean(detailCredit)}
         onOpenChange={(open) => !open && setDetailCredit(null)}
         title={detailCredit ? `Credito #${detailCredit.id}` : ''}
-        description={detailCredit?.invoice?.consecutive ?? ''}
+        description={detailCredit?.invoice?.consecutive ?? 'Credito directo'}
         badge={
           detailCredit
             ? {
@@ -659,7 +703,7 @@ export function CreditsPage() {
                 <div>
                   <p className="text-xs text-muted-foreground">Cliente</p>
                   <p className="mt-1 text-sm font-medium text-foreground">
-                    {`${detailCredit.invoice?.client?.firstName ?? ''} ${detailCredit.invoice?.client?.lastName ?? ''}`}
+                    {`${detailCredit.client?.firstName ?? detailCredit.invoice?.client?.firstName ?? ''} ${detailCredit.client?.lastName ?? detailCredit.invoice?.client?.lastName ?? ''}`.trim() || 'Sin cliente'}
                   </p>
                 </div>
                 <div>

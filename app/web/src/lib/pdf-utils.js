@@ -1,13 +1,18 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
-const PAGE_WIDTH = 210
-const PAGE_HEIGHT = 297
 const PAGE_MARGIN = 14
 
-export function createPdfDocument() {
+function getPageDimensions(doc) {
+  return {
+    width: doc.internal.pageSize.getWidth(),
+    height: doc.internal.pageSize.getHeight(),
+  }
+}
+
+export function createPdfDocument(options = {}) {
   return new jsPDF({
-    orientation: 'portrait',
+    orientation: options.orientation ?? 'portrait',
     unit: 'mm',
     format: 'a4',
     compress: true,
@@ -15,6 +20,7 @@ export function createPdfDocument() {
 }
 
 export function addDocumentHeader(doc, { eyebrow, title, subtitle, meta = [] }) {
+  const { width } = getPageDimensions(doc)
   let y = PAGE_MARGIN
 
   if (eyebrow) {
@@ -35,7 +41,7 @@ export function addDocumentHeader(doc, { eyebrow, title, subtitle, meta = [] }) 
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(10)
     doc.setTextColor(71, 85, 105)
-    const lines = doc.splitTextToSize(subtitle, PAGE_WIDTH - PAGE_MARGIN * 2)
+    const lines = doc.splitTextToSize(subtitle, width - PAGE_MARGIN * 2)
     doc.text(lines, PAGE_MARGIN, y)
     y += lines.length * 4.5
   }
@@ -51,7 +57,8 @@ export function addDocumentHeader(doc, { eyebrow, title, subtitle, meta = [] }) 
 }
 
 export function addMetricsGrid(doc, metrics, startY) {
-  const cardWidth = (PAGE_WIDTH - PAGE_MARGIN * 2 - 6) / 2
+  const { width } = getPageDimensions(doc)
+  const cardWidth = (width - PAGE_MARGIN * 2 - 6) / 2
   let currentY = startY
 
   metrics.forEach((metric, index) => {
@@ -89,6 +96,7 @@ export function addMetricsGrid(doc, metrics, startY) {
 }
 
 export function addSectionTitle(doc, title, subtitle, startY) {
+  const { width } = getPageDimensions(doc)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(12)
   doc.setTextColor(15, 23, 42)
@@ -100,7 +108,7 @@ export function addSectionTitle(doc, title, subtitle, startY) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(9)
     doc.setTextColor(100, 116, 139)
-    const lines = doc.splitTextToSize(subtitle, PAGE_WIDTH - PAGE_MARGIN * 2)
+    const lines = doc.splitTextToSize(subtitle, width - PAGE_MARGIN * 2)
     doc.text(lines, PAGE_MARGIN, nextY)
     nextY += lines.length * 4
   }
@@ -109,6 +117,7 @@ export function addSectionTitle(doc, title, subtitle, startY) {
 }
 
 export function addSectionTable(doc, { title, subtitle, head, body, startY, filenameHint, styles, columnStyles }) {
+  const { height } = getPageDimensions(doc)
   const tableStartY = addSectionTitle(doc, title, subtitle, startY)
 
   autoTable(doc, {
@@ -144,7 +153,7 @@ export function addSectionTable(doc, { title, subtitle, head, body, startY, file
         doc.setFont('helvetica', 'normal')
         doc.setFontSize(8)
         doc.setTextColor(148, 163, 184)
-        doc.text(filenameHint, PAGE_MARGIN, PAGE_HEIGHT - 6)
+         doc.text(filenameHint, PAGE_MARGIN, height - 6)
       }
     },
   })
@@ -153,6 +162,7 @@ export function addSectionTable(doc, { title, subtitle, head, body, startY, file
 }
 
 export function addPageNumbers(doc) {
+  const { width, height } = getPageDimensions(doc)
   const pages = doc.getNumberOfPages()
 
   for (let page = 1; page <= pages; page += 1) {
@@ -160,7 +170,7 @@ export function addPageNumbers(doc) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
     doc.setTextColor(148, 163, 184)
-    doc.text(`Pagina ${page} de ${pages}`, PAGE_WIDTH - PAGE_MARGIN, PAGE_HEIGHT - 6, { align: 'right' })
+    doc.text(`Pagina ${page} de ${pages}`, width - PAGE_MARGIN, height - 6, { align: 'right' })
   }
 }
 

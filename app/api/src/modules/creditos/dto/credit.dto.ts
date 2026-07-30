@@ -12,6 +12,18 @@ import { CreditStatus } from '@prisma/client';
 
 export class CreateInvoiceCreditDto {
   @IsDateString() dueDate: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  clientId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  totalAmount?: number;
 }
 
 export class CreateCreditPaymentDto {
