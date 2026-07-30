@@ -95,7 +95,7 @@ export class ProductPricesService {
         data: {
           name: createProductPriceDto.name,
           price: createProductPriceDto.price,
-          unit: createProductPriceDto.unit,
+          unit: createProductPriceDto.unit ?? 'UND',
           quantity: createProductPriceDto.quantity ?? 1,
           productId,
           isActive: data.isActive ?? true,
@@ -282,10 +282,20 @@ export class ProductPricesService {
     dto: CreateProductPriceDto | UpdateProductPriceDto,
     current?: { startsAt: Date | null; endsAt: Date | null },
   ) {
-    const startsAt = dto.startsAt ? new Date(dto.startsAt) : undefined;
-    const endsAt = dto.endsAt ? new Date(dto.endsAt) : undefined;
-    const finalStartsAt = startsAt ?? current?.startsAt ?? undefined;
-    const finalEndsAt = endsAt ?? current?.endsAt ?? undefined;
+    const hasStartsAt = Object.prototype.hasOwnProperty.call(dto, 'startsAt');
+    const hasEndsAt = Object.prototype.hasOwnProperty.call(dto, 'endsAt');
+    const startsAt = hasStartsAt
+      ? dto.startsAt
+        ? new Date(dto.startsAt)
+        : null
+      : undefined;
+    const endsAt = hasEndsAt
+      ? dto.endsAt
+        ? new Date(dto.endsAt)
+        : null
+      : undefined;
+    const finalStartsAt = startsAt === undefined ? current?.startsAt ?? undefined : startsAt;
+    const finalEndsAt = endsAt === undefined ? current?.endsAt ?? undefined : endsAt;
 
     if (finalStartsAt && finalEndsAt && finalEndsAt <= finalStartsAt) {
       throw new BadRequestException(

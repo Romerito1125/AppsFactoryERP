@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ProductImage } from '@/components/product-image'
 import {
   Card,
   CardContent,
@@ -95,7 +96,90 @@ function ProductPricesSkeleton() {
   )
 }
 
-function PriceFormDialog({ open, onOpenChange, mode, price, products, onSubmit, isSubmitting }) {
+function ProductPriceProductSelector({ products, value, onChange, isLoading }) {
+  const [query, setQuery] = useState('')
+  const selectedProduct = products.find((product) => product.id === value)
+  const normalizedQuery = query.trim().toLowerCase()
+  const filteredProducts = normalizedQuery
+    ? products.filter((product) =>
+        [
+          product.name,
+          product.brand,
+          product.productType?.name,
+          product.barcodes?.map((barcode) => barcode.code).join(' '),
+        ]
+          .filter(Boolean)
+          .some((field) => String(field).toLowerCase().includes(normalizedQuery)),
+      )
+    : products
+
+  return (
+    <div className="grid gap-3">
+      <Input
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Buscar por nombre, marca, tipo o codigo..."
+        disabled={isLoading}
+      />
+
+      <div className="rounded-xl border border-dashed border-border/70 bg-muted/10 p-3 text-sm">
+        <p className="font-medium text-foreground">{selectedProduct?.name ?? 'Sin producto seleccionado'}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {selectedProduct
+            ? `${selectedProduct.brand ?? 'Sin marca'} · ${selectedProduct.productType?.name ?? 'Sin tipo'}`
+            : isLoading
+              ? 'Cargando catalogo de productos...'
+              : 'Busca y luego haz clic en un producto para seleccionarlo.'}
+        </p>
+      </div>
+
+      <div className="max-h-72 overflow-y-auto rounded-xl border border-border/70 p-2">
+        <div className="grid gap-2">
+          {isLoading ? (
+            <div className="grid gap-2 p-2">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Skeleton key={index} className="h-16 rounded-xl" />
+              ))}
+            </div>
+          ) : filteredProducts.length ? (
+            filteredProducts.map((product) => {
+              const isSelected = product.id === value
+              const primaryBarcode = product.barcodes?.find((barcode) => barcode.isPrimary) ?? product.barcodes?.[0]
+
+              return (
+                <button
+                  key={product.id}
+                  type="button"
+                  onClick={() => onChange(product.id)}
+                  className={`flex items-center gap-3 rounded-xl border px-3 py-2 text-left transition ${
+                    isSelected
+                      ? 'border-primary bg-primary/10 text-foreground'
+                      : 'border-border/70 bg-background hover:border-primary/40 hover:bg-primary/5'
+                  }`}
+                >
+                  <ProductImage src={product.imageUrl} alt={product.name} className="size-12 rounded-lg shrink-0" iconClassName="size-4" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-foreground">{product.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {product.brand ?? 'Sin marca'} · {product.productType?.name ?? 'Sin tipo'}
+                    </p>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {primaryBarcode?.code ?? 'Sin codigo principal'}
+                    </p>
+                  </div>
+                </button>
+              )
+            })
+          ) : (
+            <p className="px-2 py-3 text-sm text-muted-foreground">No hay resultados para esta busqueda.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PriceFormDialog({ open, onOpenChange, mode, price, products, productsLoading, onSubmit, isSubmitting }) {
   const schema = mode === 'create' ? createPriceSchema : updatePriceSchema
   const formDefaults = useMemo(
     () =>
@@ -156,8 +240,8 @@ function PriceFormDialog({ open, onOpenChange, mode, price, products, onSubmit, 
           onSubmit={form.handleSubmit((values) => {
             const payload = {
               ...values,
-              startsAt: values.startsAt || undefined,
-              endsAt: values.endsAt || undefined,
+              startsAt: values.startsAt || null,
+              endsAt: values.endsAt || null,
               reason: 'reason' in values ? values.reason?.trim() || undefined : undefined,
             }
             onSubmit(payload)
@@ -171,17 +255,12 @@ function PriceFormDialog({ open, onOpenChange, mode, price, products, onSubmit, 
                   name="productId"
                   control={form.control}
                   render={({ field }) => (
-                    <NativeSelect
-                      value={field.value ? String(field.value) : ''}
-                      onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                    >
-                      <option value="">Selecciona un producto</option>
-                      {products.map((product) => (
-                        <option key={product.id} value={String(product.id)}>
-                          {product.name}
-                        </option>
-                      ))}
-                    </NativeSelect>
+                    <ProductPriceProductSelector
+                      products={products}
+                      value={field.value}
+                      onChange={field.onChange}
+                      isLoading={productsLoading}
+                    />
                   )}
                 />
                 {form.formState.errors.productId ? (
@@ -207,16 +286,17 @@ function PriceFormDialog({ open, onOpenChange, mode, price, products, onSubmit, 
             </div>
 
             <div className="grid gap-2">
-              <Label>Fecha inicio</Label>
+              <Label>Fecha inicio opcional</Label>
               <Input type="date" {...form.register('startsAt')} />
             </div>
 
             <div className="grid gap-2">
-              <Label>Fecha fin</Label>
+              <Label>Fecha fin opcional</Label>
               <Input type="date" {...form.register('endsAt')} />
               {form.formState.errors.endsAt ? (
                 <p className="text-xs text-destructive">{String(form.formState.errors.endsAt.message)}</p>
               ) : null}
+              <p className="text-xs text-muted-foreground">Puedes dejar ambas fechas vacias si el precio no tiene vigencia limitada.</p>
             </div>
 
             <div className="grid gap-2">
@@ -453,7 +533,7 @@ export function ProductPricesPage() {
     })
   }
 
-  if (pricesQuery.isLoading || ((createOpen || Boolean(editPrice)) && productsQuery.isLoading)) {
+  if (pricesQuery.isLoading) {
     return <ProductPricesSkeleton />
   }
 
@@ -650,6 +730,7 @@ export function ProductPricesPage() {
         onOpenChange={setCreateOpen}
         mode="create"
         products={products}
+        productsLoading={productsQuery.isLoading}
         onSubmit={handleCreatePrice}
         isSubmitting={createMutation.isPending}
       />
@@ -660,6 +741,7 @@ export function ProductPricesPage() {
         mode="edit"
         price={editPrice}
         products={products}
+        productsLoading={productsQuery.isLoading}
         onSubmit={handleUpdatePrice}
         isSubmitting={updateMutation.isPending}
       />

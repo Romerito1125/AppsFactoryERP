@@ -21,6 +21,7 @@ export class CreateProductPriceDto {
   @IsPositive()
   price: number;
 
+  @IsOptional()
   @IsEnum(UnitType)
   unit: UnitType;
 

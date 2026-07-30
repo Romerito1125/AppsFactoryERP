@@ -67,6 +67,9 @@ const tagsConfig = {
   searchResolver: (record) => [record.name, record.description],
   getSummaryCards: ({ rawRecords }) => {
     const activeCount = rawRecords.filter((record) => record.isActive).length
+    const inUseCount = rawRecords.filter(
+      (record) => Number(record._count?.products ?? 0) > 0 || Number(record._count?.offers ?? 0) > 0,
+    ).length
 
     return [
       {
@@ -89,6 +92,11 @@ const tagsConfig = {
         value: formatNumber(rawRecords.filter((record) => record.description).length),
         help: 'Etiquetas con contexto funcional documentado.',
       },
+      {
+        label: 'Etiquetas en uso',
+        value: formatNumber(inUseCount),
+        help: 'Etiquetas actualmente asociadas a productos u ofertas.',
+      },
     ]
   },
   columns: [
@@ -108,6 +116,16 @@ const tagsConfig = {
       render: (record) => record.description ?? 'Sin descripcion',
     },
     {
+      key: 'usage',
+      label: 'Uso',
+      render: (record) => (
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">{formatNumber(record._count?.products ?? 0)} productos</Badge>
+          <Badge variant="outline">{formatNumber(record._count?.offers ?? 0)} ofertas</Badge>
+        </div>
+      ),
+    },
+    {
       key: 'status',
       label: 'Estado',
       render: (record) => (
@@ -125,12 +143,14 @@ const tagsConfig = {
   getDetailSections: (record) => [
     {
       label: 'Informacion general',
-      items: [
-        { label: 'Nombre', value: record.name },
-        { label: 'Descripcion', value: record.description ?? 'Sin descripcion' },
-        { label: 'Estado', value: getRecordStatus(record) },
-      ],
-    },
+        items: [
+          { label: 'Nombre', value: record.name },
+          { label: 'Descripcion', value: record.description ?? 'Sin descripcion' },
+          { label: 'Productos vinculados', value: formatNumber(record._count?.products ?? 0) },
+          { label: 'Ofertas vinculadas', value: formatNumber(record._count?.offers ?? 0) },
+          { label: 'Estado', value: getRecordStatus(record) },
+        ],
+      },
     {
       label: 'Trazabilidad',
       items: [

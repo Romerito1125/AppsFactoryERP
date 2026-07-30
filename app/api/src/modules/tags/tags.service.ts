@@ -26,7 +26,20 @@ export class TagsService {
     const { page, limit, skip, take } = resolvePagination(filter);
     const [total, data] = await Promise.all([
       this.prisma.tag.count({ where }),
-      this.prisma.tag.findMany({ where, orderBy: { id: 'asc' }, skip, take }),
+      this.prisma.tag.findMany({
+        where,
+        orderBy: { id: 'asc' },
+        skip,
+        take,
+        include: {
+          _count: {
+            select: {
+              products: true,
+              offers: true,
+            },
+          },
+        },
+      }),
     ]);
 
     return buildPaginatedResponse(data, total, page, limit);
@@ -35,7 +48,33 @@ export class TagsService {
   async findOne(id: number) {
     this.ensurePositiveId(id);
 
-    const tag = await this.prisma.tag.findUnique({ where: { id } });
+    const tag = await this.prisma.tag.findUnique({
+      where: { id },
+      include: {
+        _count: {
+          select: {
+            products: true,
+            offers: true,
+          },
+        },
+        products: {
+          take: 6,
+          include: {
+            product: {
+              select: { id: true, name: true, brand: true, isActive: true },
+            },
+          },
+        },
+        offers: {
+          take: 6,
+          include: {
+            offer: {
+              select: { id: true, name: true, isActive: true },
+            },
+          },
+        },
+      },
+    });
 
     if (!tag) {
       throw new NotFoundException('Etiqueta no encontrada');
