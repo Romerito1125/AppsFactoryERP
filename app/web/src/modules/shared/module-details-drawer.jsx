@@ -17,6 +17,7 @@ export function ModuleDetailsDrawer({
   title,
   description,
   badge,
+  actions,
   fields = [],
   children,
 }) {
@@ -26,11 +27,16 @@ export function ModuleDetailsDrawer({
     <Drawer open={open} onOpenChange={onOpenChange} direction={isMobile ? 'bottom' : 'right'}>
       <DrawerContent className={cn(!isMobile && 'ml-auto h-screen max-w-xl border-l')}>
         <DrawerHeader className="border-b border-border/70">
-          <div className="flex items-center gap-2">
-            <DrawerTitle>{title}</DrawerTitle>
-            {badge ? <Badge variant={badge.variant ?? 'outline'}>{badge.label}</Badge> : null}
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
+                <DrawerTitle className="truncate">{title}</DrawerTitle>
+                {badge ? <Badge variant={badge.variant ?? 'outline'}>{badge.label}</Badge> : null}
+              </div>
+              {description ? <DrawerDescription className="truncate">{description}</DrawerDescription> : null}
+            </div>
+            {actions ? <div className="shrink-0">{actions}</div> : null}
           </div>
-          {description ? <DrawerDescription>{description}</DrawerDescription> : null}
         </DrawerHeader>
 
         <ScrollArea className="h-[calc(100vh-8rem)] px-4 py-4">
@@ -44,9 +50,17 @@ export function ModuleDetailsDrawer({
                   <Separator className="my-3" />
                   <div className="grid gap-3 sm:grid-cols-2">
                     {section.items.map((item) => (
-                      <div key={item.label}>
+                      <div key={item.label} className="min-w-0">
                         <p className="text-xs text-muted-foreground">{item.label}</p>
-                        <div className="mt-1 text-sm font-medium text-foreground">{item.value}</div>
+                        <div className="mt-1 min-w-0 text-sm font-medium text-foreground">
+                          {typeof item.value === 'string' ? (
+                            <span className="block truncate" title={item.value}>
+                              {item.value}
+                            </span>
+                          ) : (
+                            item.value
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>

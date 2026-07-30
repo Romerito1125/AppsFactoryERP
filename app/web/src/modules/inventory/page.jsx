@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { ArrowRightLeft, Boxes, ClipboardList, PackagePlus, Search } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { ProductImage } from '@/components/product-image'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -46,6 +47,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { apiClient } from '@/lib/api-client'
 import { formatDate, formatNumber, matchesSearch } from '@/lib/format'
+import { downloadTransferTicketPdf } from '@/modules/inventory/transfer-ticket-pdf'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
 import { LocalPagination, useLocalPagination } from '@/modules/shared/local-pagination'
 
@@ -264,6 +266,7 @@ function buildMovementPayload(values) {
         toWarehouseId: values.toWarehouseId,
         quantity: values.quantity,
         reason: values.reason?.trim() || undefined,
+        supportNote: values.supportNote?.trim() || undefined,
       },
     }
   }
@@ -279,7 +282,109 @@ function buildMovementPayload(values) {
   }
 }
 
-function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onSubmit, isSubmitting }) {
+function SearchableInventoryProductField({ products, value, onChange }) {
+  const [query, setQuery] = useState('')
+  const filteredProducts = query.trim()
+    ? products.filter((product) =>
+        [product.name, product.brand, product.productType?.name]
+          .filter(Boolean)
+          .some((field) => String(field).toLowerCase().includes(query.trim().toLowerCase())),
+      )
+    : products
+  const selectedProduct = products.find((product) => product.id === value)
+
+  return (
+    <div className="grid gap-3">
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar por nombre, marca o tipo..." />
+      <div className="rounded-xl border border-dashed border-border/70 bg-muted/10 p-3 text-sm">
+        <p className="font-medium text-foreground">{selectedProduct?.name ?? 'Sin producto seleccionado'}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {selectedProduct
+            ? `${selectedProduct.brand ?? 'Sin marca'} · stock ${formatNumber(getTotalStock(selectedProduct))}`
+            : 'Busca y selecciona el producto del movimiento.'}
+        </p>
+      </div>
+      <div className="max-h-72 overflow-y-auto rounded-xl border border-border/70 p-2">
+        <div className="grid gap-2">
+          {filteredProducts.map((product) => (
+            <button
+              key={product.id}
+              type="button"
+              onClick={() => onChange(product.id)}
+              className={`flex items-center gap-3 rounded-xl border px-3 py-2 text-left transition ${
+                product.id === value
+                  ? 'border-primary bg-primary/10 text-foreground'
+                  : 'border-border/70 bg-background hover:border-primary/40 hover:bg-primary/5'
+              }`}
+            >
+              <ProductImage src={product.imageUrl} alt={product.name} className="size-12 rounded-lg shrink-0" iconClassName="size-4" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-foreground">{product.name}</p>
+                <p className="truncate text-xs text-muted-foreground">{product.brand} · {product.productType?.name ?? 'Sin tipo'}</p>
+                <p className="truncate text-[11px] text-muted-foreground">Stock total {formatNumber(getTotalStock(product))}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SearchableWarehouseField({ warehouses, value, onChange, inventory, excludeWarehouseId, placeholder }) {
+  const [query, setQuery] = useState('')
+  const availableWarehouses = warehouses.filter((warehouse) => warehouse.id !== excludeWarehouseId)
+  const warehouseStats = new Map(
+    availableWarehouses.map((warehouse) => {
+      const productsInWarehouse = inventory.filter((product) =>
+        (product.warehouses ?? []).some((item) => item.warehouseId === warehouse.id && Number(item.quantity ?? 0) > 0),
+      )
+
+      return [warehouse.id, productsInWarehouse.length]
+    }),
+  )
+  const filteredWarehouses = query.trim()
+    ? availableWarehouses.filter((warehouse) => warehouse.location.toLowerCase().includes(query.trim().toLowerCase()))
+    : availableWarehouses
+  const selectedWarehouse = warehouses.find((warehouse) => warehouse.id === value)
+
+  return (
+    <div className="grid gap-3">
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={placeholder} />
+      <div className="rounded-xl border border-dashed border-border/70 bg-muted/10 p-3 text-sm">
+        <p className="font-medium text-foreground">{selectedWarehouse?.location ?? 'Sin bodega seleccionada'}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {selectedWarehouse
+            ? `${formatNumber(warehouseStats.get(selectedWarehouse.id) ?? 0)} productos con stock visible en esta bodega.`
+            : 'Selecciona la bodega operativa para este movimiento.'}
+        </p>
+      </div>
+      <div className="max-h-64 overflow-y-auto rounded-xl border border-border/70 p-2">
+        <div className="grid gap-2">
+          {filteredWarehouses.map((warehouse) => (
+            <button
+              key={warehouse.id}
+              type="button"
+              onClick={() => onChange(warehouse.id)}
+              className={`rounded-xl border px-3 py-2 text-left transition ${
+                warehouse.id === value
+                  ? 'border-primary bg-primary/10 text-foreground'
+                  : 'border-border/70 bg-background hover:border-primary/40 hover:bg-primary/5'
+              }`}
+            >
+              <p className="truncate text-sm font-medium text-foreground">{warehouse.location}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {formatNumber(warehouseStats.get(warehouse.id) ?? 0)} productos con stock
+              </p>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function InventoryMovementDialog({ open, onOpenChange, products, warehouses, inventory, onSubmit, isSubmitting }) {
   const form = useForm({
     resolver: zodResolver(movementFormSchema),
     defaultValues: {
@@ -295,6 +400,8 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
   })
 
   const movementType = form.watch('type')
+  const fromWarehouseId = form.watch('fromWarehouseId')
+  const toWarehouseId = form.watch('toWarehouseId')
 
   function closeDialog(nextOpen) {
     onOpenChange(nextOpen)
@@ -345,23 +452,13 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
           <div className="grid gap-4 md:grid-cols-2">
             <div className="grid gap-2 md:col-span-2">
               <Label>Producto</Label>
-              <Controller
-                name="productId"
-                control={form.control}
-                render={({ field }) => (
-                  <NativeSelect
-                    value={field.value ? String(field.value) : ''}
-                    onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                  >
-                    <option value="">Selecciona un producto</option>
-                    {products.map((product) => (
-                      <option key={product.id} value={String(product.id)}>
-                        {`${product.name} · stock ${getTotalStock(product)}`}
-                      </option>
-                    ))}
-                  </NativeSelect>
-                )}
-              />
+                <Controller
+                  name="productId"
+                  control={form.control}
+                  render={({ field }) => (
+                    <SearchableInventoryProductField products={products} value={field.value} onChange={field.onChange} />
+                  )}
+                />
               {form.formState.errors.productId ? (
                 <p className="text-xs text-destructive">{String(form.formState.errors.productId.message)}</p>
               ) : null}
@@ -374,17 +471,14 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
                   name="fromWarehouseId"
                   control={form.control}
                   render={({ field }) => (
-                    <NativeSelect
-                      value={field.value ? String(field.value) : ''}
-                      onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                    >
-                      <option value="">Selecciona la bodega origen</option>
-                      {warehouses.map((warehouse) => (
-                        <option key={warehouse.id} value={String(warehouse.id)}>
-                          {warehouse.location}
-                        </option>
-                      ))}
-                    </NativeSelect>
+                    <SearchableWarehouseField
+                      warehouses={warehouses}
+                      inventory={inventory}
+                      value={field.value}
+                      onChange={field.onChange}
+                      excludeWarehouseId={movementType === 'traslado' ? Number(toWarehouseId) || undefined : undefined}
+                      placeholder="Buscar la bodega origen..."
+                    />
                   )}
                 />
                 {form.formState.errors.fromWarehouseId ? (
@@ -400,17 +494,14 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
                   name="toWarehouseId"
                   control={form.control}
                   render={({ field }) => (
-                    <NativeSelect
-                      value={field.value ? String(field.value) : ''}
-                      onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                    >
-                      <option value="">Selecciona la bodega destino</option>
-                      {warehouses.map((warehouse) => (
-                        <option key={warehouse.id} value={String(warehouse.id)}>
-                          {warehouse.location}
-                        </option>
-                      ))}
-                    </NativeSelect>
+                    <SearchableWarehouseField
+                      warehouses={warehouses}
+                      inventory={inventory}
+                      value={field.value}
+                      onChange={field.onChange}
+                      excludeWarehouseId={movementType === 'traslado' ? Number(fromWarehouseId) || undefined : undefined}
+                      placeholder="Buscar la bodega destino..."
+                    />
                   )}
                 />
                 {form.formState.errors.toWarehouseId ? (
@@ -426,17 +517,13 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
                   name="warehouseId"
                   control={form.control}
                   render={({ field }) => (
-                    <NativeSelect
-                      value={field.value ? String(field.value) : ''}
-                      onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                    >
-                      <option value="">Selecciona la bodega</option>
-                      {warehouses.map((warehouse) => (
-                        <option key={warehouse.id} value={String(warehouse.id)}>
-                          {warehouse.location}
-                        </option>
-                      ))}
-                    </NativeSelect>
+                    <SearchableWarehouseField
+                      warehouses={warehouses}
+                      inventory={inventory}
+                      value={field.value}
+                      onChange={field.onChange}
+                      placeholder="Buscar la bodega del ajuste..."
+                    />
                   )}
                 />
                 {form.formState.errors.warehouseId ? (
@@ -980,6 +1067,7 @@ export function InventoryPage() {
         onOpenChange={setCreateOpen}
         products={inventory}
         warehouses={warehouses}
+        inventory={inventory}
         onSubmit={handleCreateMovement}
         isSubmitting={movementMutation.isPending}
       />
@@ -1084,6 +1172,13 @@ export function InventoryPage() {
                 },
               ]
             : []
+        }
+        actions={
+          detailMovement?.transferTicket ? (
+            <Button type="button" variant="outline" size="sm" onClick={() => downloadTransferTicketPdf(detailMovement)}>
+              Descargar soporte
+            </Button>
+          ) : null
         }
       />
     </div>

@@ -1,6 +1,8 @@
+import { Controller } from 'react-hook-form'
 import { z } from 'zod'
 
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { ProductImage } from '@/components/product-image'
 import { apiClient } from '@/lib/api-client'
 import {
@@ -25,6 +27,7 @@ const productTypeSchema = z.object({
   name: z.string().min(2, 'Minimo 2 caracteres'),
   description: z.string().optional(),
   image: optionalImageSchema,
+  clearImage: z.boolean().optional(),
 })
 
 function buildProductTypeFormData(values) {
@@ -33,8 +36,63 @@ function buildProductTypeFormData(values) {
   if (values.name) formData.append('name', values.name)
   if (values.description) formData.append('description', values.description)
   if (values.image instanceof File) formData.append('image', values.image)
+  if (values.clearImage) formData.append('clearImage', 'true')
 
   return formData
+}
+
+function ProductTypeImageField({ field: configField, control, setValue, record }) {
+  return (
+    <Controller
+      name={configField.name}
+      control={control}
+      render={({ field }) => {
+        const hasCurrentImage = Boolean(record?.imageUrl)
+
+        return (
+          <div className="grid gap-3">
+            {hasCurrentImage ? (
+              <div className="flex items-start gap-3 rounded-2xl border border-border/70 bg-muted/20 p-3">
+                <ProductImage src={record.imageUrl} alt={record?.name ?? 'Tipo de producto'} className="size-16 rounded-lg" iconClassName="size-4" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">Imagen actual</p>
+                  <p className="text-xs text-muted-foreground">Puedes reemplazarla o quitarla del tipo de producto.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => {
+                      field.onChange(undefined)
+                      setValue('clearImage', true, { shouldDirty: true, shouldValidate: true })
+                    }}
+                  >
+                    Quitar imagen
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            <input
+              type="file"
+              accept={configField.accept}
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? undefined
+                field.onChange(file)
+                if (file) {
+                  setValue('clearImage', false, { shouldDirty: true, shouldValidate: true })
+                }
+              }}
+            />
+
+            {field.value?.name ? (
+              <p className="text-xs text-muted-foreground">Archivo seleccionado: {field.value.name}</p>
+            ) : null}
+          </div>
+        )
+      }}
+    />
+  )
 }
 
 const productTypesConfig = {
@@ -67,7 +125,7 @@ const productTypesConfig = {
     {
       name: 'image',
       label: 'Imagen',
-      type: 'file',
+      render: ProductTypeImageField,
       accept: 'image/jpeg,image/png,image/webp',
       helpText: 'JPG, PNG o WEBP. Maximo 5 MB.',
       fullWidth: true,
@@ -88,6 +146,7 @@ const productTypesConfig = {
     name: record?.name ?? '',
     description: record?.description ?? '',
     image: undefined,
+    clearImage: false,
   }),
   fetchRecords: ({ status, search, page, limit }) =>
     apiClient.get('/tipos-producto', { estado: toApiStatus(status), q: search, page, limit }),

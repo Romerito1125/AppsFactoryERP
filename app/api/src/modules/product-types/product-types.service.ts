@@ -61,6 +61,8 @@ export class ProductTypesService {
   ) {
     await this.ensureUniqueName(createProductTypeDto.name);
 
+    const { clearImage, ...productTypeData } = createProductTypeDto;
+
     const uploadedImage = image
       ? await this.storage.uploadProductImage(image)
       : null;
@@ -68,7 +70,7 @@ export class ProductTypesService {
     try {
       return await this.prisma.productType.create({
         data: {
-          ...createProductTypeDto,
+          ...productTypeData,
           ...(uploadedImage ? { imageUrl: uploadedImage.url } : {}),
         },
       });
@@ -93,6 +95,8 @@ export class ProductTypesService {
       await this.ensureUniqueName(updateProductTypeDto.name, id);
     }
 
+    const { clearImage, ...productTypeData } = updateProductTypeDto;
+
     const uploadedImage = image
       ? await this.storage.uploadProductImage(image, id)
       : null;
@@ -101,12 +105,13 @@ export class ProductTypesService {
       const updated = await this.prisma.productType.update({
         where: { id },
         data: {
-          ...updateProductTypeDto,
+          ...productTypeData,
           ...(uploadedImage ? { imageUrl: uploadedImage.url } : {}),
+          ...(clearImage && !uploadedImage ? { imageUrl: null } : {}),
         },
       });
 
-      if (uploadedImage?.url && current.imageUrl) {
+      if ((uploadedImage?.url || clearImage) && current.imageUrl) {
         await this.storage.deleteFile(current.imageUrl);
       }
 

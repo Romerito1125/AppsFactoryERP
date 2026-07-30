@@ -1,4 +1,5 @@
-import { IsOptional, IsString, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateProductTypeDto {
   @IsString()
@@ -12,4 +13,9 @@ export class CreateProductTypeDto {
   @IsOptional()
   @IsString()
   imageUrl?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  clearImage?: boolean;
 }

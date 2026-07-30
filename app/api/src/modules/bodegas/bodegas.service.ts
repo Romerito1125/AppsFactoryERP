@@ -25,7 +25,34 @@ export class BodegasService {
     const { page, limit, skip, take } = resolvePagination(filter);
     const [total, data] = await Promise.all([
       this.prisma.warehouse.count({ where }),
-      this.prisma.warehouse.findMany({ where, orderBy: { id: 'asc' }, skip, take }),
+      this.prisma.warehouse.findMany({
+        where,
+        orderBy: { id: 'asc' },
+        skip,
+        take,
+        include: {
+          products: {
+            where: { quantity: { gt: 0 } },
+            take: 6,
+            orderBy: { quantity: 'desc' },
+            include: {
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  brand: true,
+                  isActive: true,
+                },
+              },
+            },
+          },
+          _count: {
+            select: {
+              products: true,
+            },
+          },
+        },
+      }),
     ]);
 
     return buildPaginatedResponse(data, total, page, limit);
@@ -36,7 +63,27 @@ export class BodegasService {
 
     const warehouse = await this.prisma.warehouse.findUnique({
       where: { id },
-      include: { products: true },
+      include: {
+        products: {
+          where: { quantity: { gt: 0 } },
+          orderBy: { quantity: 'desc' },
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                brand: true,
+                isActive: true,
+              },
+            },
+          },
+        },
+        _count: {
+          select: {
+            products: true,
+          },
+        },
+      },
     });
 
     if (!warehouse) {

@@ -58,6 +58,7 @@ const warehousesConfig = {
   searchResolver: (record) => [record.location],
   getSummaryCards: ({ rawRecords }) => {
     const activeCount = rawRecords.filter((record) => record.isActive).length
+    const warehousesWithStock = rawRecords.filter((record) => Number(record._count?.products ?? 0) > 0).length
     const recentlyCreated = rawRecords.filter((record) => {
       const createdAt = new Date(record.createdAt)
       const difference = Date.now() - createdAt.getTime()
@@ -85,6 +86,11 @@ const warehousesConfig = {
         value: formatNumber(recentlyCreated),
         help: 'Nuevas ubicaciones registradas en los ultimos 30 dias.',
       },
+      {
+        label: 'Con productos',
+        value: formatNumber(warehousesWithStock),
+        help: 'Bodegas que hoy tienen productos visibles con stock.',
+      },
     ]
   },
   columns: [
@@ -97,6 +103,11 @@ const warehousesConfig = {
           <p className="text-xs text-muted-foreground">ID #{record.id}</p>
         </div>
       ),
+    },
+    {
+      key: 'usage',
+      label: 'Productos visibles',
+      render: (record) => formatNumber(record._count?.products ?? 0),
     },
     {
       key: 'status',
@@ -116,11 +127,20 @@ const warehousesConfig = {
   getDetailSections: (record) => [
     {
       label: 'Ubicacion',
-      items: [
-        { label: 'Nombre', value: record.location },
-        { label: 'Estado', value: getRecordStatus(record) },
-      ],
-    },
+        items: [
+          { label: 'Nombre', value: record.location },
+          { label: 'Productos visibles', value: formatNumber(record._count?.products ?? 0) },
+          {
+            label: 'Top productos',
+            value: record.products?.length
+              ? record.products
+                  .map((item) => `${item.product?.name ?? `Producto #${item.productId}`} (${formatNumber(item.quantity)})`)
+                  .join(' · ')
+              : 'Sin productos con stock en esta bodega',
+          },
+          { label: 'Estado', value: getRecordStatus(record) },
+        ],
+      },
     {
       label: 'Trazabilidad',
       items: [

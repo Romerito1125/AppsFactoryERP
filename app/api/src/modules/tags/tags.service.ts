@@ -38,6 +38,22 @@ export class TagsService {
               offers: true,
             },
           },
+          products: {
+            take: 4,
+            include: {
+              product: {
+                select: { id: true, name: true, brand: true, isActive: true },
+              },
+            },
+          },
+          offers: {
+            take: 4,
+            include: {
+              offer: {
+                select: { id: true, name: true, isActive: true },
+              },
+            },
+          },
         },
       }),
     ]);
@@ -85,8 +101,25 @@ export class TagsService {
 
   async create(createTagDto: CreateTagDto) {
     await this.ensureUniqueName(createTagDto.name);
+    await this.ensureProductsExist(createTagDto.productIds);
+    await this.ensureOffersExist(createTagDto.offerIds);
 
-    return this.prisma.tag.create({ data: createTagDto });
+    const { productIds, offerIds, ...tagData } = createTagDto;
+
+    return this.prisma.tag.create({
+      data: {
+        ...tagData,
+        products: productIds?.length
+          ? { create: productIds.map((productId) => ({ productId })) }
+          : undefined,
+        offers: offerIds?.length
+          ? { create: offerIds.map((offerId) => ({ offerId })) }
+          : undefined,
+      },
+      include: {
+        _count: { select: { products: true, offers: true } },
+      },
+    });
   }
 
   async update(id: number, updateTagDto: UpdateTagDto) {
@@ -97,7 +130,52 @@ export class TagsService {
       await this.ensureUniqueName(updateTagDto.name, id);
     }
 
-    return this.prisma.tag.update({ where: { id }, data: updateTagDto });
+    await this.ensureProductsExist(updateTagDto.productIds);
+    await this.ensureOffersExist(updateTagDto.offerIds);
+
+    const { productIds, offerIds, ...tagData } = updateTagDto;
+
+    return this.prisma.$transaction(async (tx) => {
+      if (productIds) {
+        await tx.productTag.deleteMany({ where: { tagId: id } });
+      }
+
+      if (offerIds) {
+        await tx.offerTag.deleteMany({ where: { tagId: id } });
+      }
+
+      return tx.tag.update({
+        where: { id },
+        data: {
+          ...tagData,
+          products: productIds
+            ? { create: productIds.map((productId) => ({ productId })) }
+            : undefined,
+          offers: offerIds
+            ? { create: offerIds.map((offerId) => ({ offerId })) }
+            : undefined,
+        },
+        include: {
+          _count: { select: { products: true, offers: true } },
+          products: {
+            take: 6,
+            include: {
+              product: {
+                select: { id: true, name: true, brand: true, isActive: true },
+              },
+            },
+          },
+          offers: {
+            take: 6,
+            include: {
+              offer: {
+                select: { id: true, name: true, isActive: true },
+              },
+            },
+          },
+        },
+      });
+    });
   }
 
   async remove(id: number) {
@@ -132,6 +210,32 @@ export class TagsService {
     if (status === RecordStatusQuery.TODOS) return undefined;
     if (status === RecordStatusQuery.INACTIVOS) return { isActive: false };
     return { isActive: true };
+  }
+
+  private async ensureProductsExist(productIds?: number[]) {
+    if (!productIds?.length) return;
+
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, isActive: true },
+      select: { id: true },
+    });
+
+    if (products.length !== productIds.length) {
+      throw new BadRequestException('Uno o mas productos no existen o estan inactivos');
+    }
+  }
+
+  private async ensureOffersExist(offerIds?: number[]) {
+    if (!offerIds?.length) return;
+
+    const offers = await this.prisma.offer.findMany({
+      where: { id: { in: offerIds }, isActive: true },
+      select: { id: true },
+    });
+
+    if (offers.length !== offerIds.length) {
+      throw new BadRequestException('Una o mas ofertas no existen o estan inactivas');
+    }
   }
 
   private getSearchWhere(search?: string) {
