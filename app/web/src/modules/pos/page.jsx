@@ -210,6 +210,7 @@ export function PosPage() {
   const [cart, setCart] = useState([])
   const [lastSale, setLastSale] = useState(null)
   const [rightTab, setRightTab] = useState('ticket')
+  const [referralDiscount, setReferralDiscount] = useState('0')
 
   // States for updating/creating price
   const [editingPrice, setEditingPrice] = useState(null) // holds { productId, priceId, name, price, product }
@@ -223,6 +224,9 @@ export function PosPage() {
   const [selectedWarehouseId, setSelectedWarehouseId] = useState(null)
 
   const itemsPerPage = 24
+
+  const selectedClientNumericId =
+    selectedClientId && selectedClientId !== 'NO_CLIENT' ? Number(selectedClientId) : null
 
   useEffect(() => {
     setVisibleLimit(24)
@@ -249,6 +253,12 @@ export function PosPage() {
 
       return { productTypes, clients, accounts, invoices, users, products, warehouses }
     },
+  })
+
+  const referralBalanceQuery = useQuery({
+    queryKey: ['pos-cliente-estadisticas-referidos', selectedClientNumericId],
+    queryFn: () => apiClient.get(`/clientes/${selectedClientNumericId}/estadisticas-referidos`),
+    enabled: Boolean(selectedClientNumericId),
   })
 
   const handleSearchChange = (value) => {
@@ -435,6 +445,7 @@ export function PosPage() {
 
       const invoicePayload = {
         clientId: targetClientId,
+        referralDiscount: Number(referralDiscount || 0),
         createdByUserId: selectedUserId ?? undefined,
         warehouseId: selectedWarehouseId ?? undefined,
         source: 'POS',
@@ -479,6 +490,7 @@ export function PosPage() {
       queryClient.invalidateQueries({ queryKey: ['facturas-productos'] })
       setLastSale({ ...invoice, saleMode })
       setCart([])
+      setReferralDiscount('0')
       setRightTab('history')
     },
   })
@@ -524,6 +536,8 @@ export function PosPage() {
     },
     { subtotal: 0, taxes: 0, total: 0, items: 0 },
   )
+
+  const availableReferralDiscount = Number(referralBalanceQuery.data?.descuentoDisponible ?? 0)
 
 
   function addProduct(product) {
@@ -828,6 +842,22 @@ export function PosPage() {
                 </div>
 
                 <div className="grid gap-1.5">
+                  <Label className="text-xs font-semibold text-muted-foreground">Descuento de red</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    max={availableReferralDiscount || undefined}
+                    value={referralDiscount}
+                    onChange={(event) => setReferralDiscount(event.target.value)}
+                    className="h-10 rounded-xl bg-background/50"
+                    placeholder="0"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Disponible: {formatCurrency(availableReferralDiscount)}
+                  </p>
+                </div>
+
+                <div className="grid gap-1.5">
                   <Label className="text-xs font-semibold text-muted-foreground">Vendedor / Cajero de la caja</Label>
                   <Select
                     value={selectedUserId ? String(selectedUserId) : undefined}
@@ -1022,9 +1052,13 @@ export function PosPage() {
                     <span className="text-muted-foreground">IVA</span>
                     <span className="font-medium text-foreground">{formatCurrency(totals.taxes)}</span>
                   </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Descuento red</span>
+                    <span className="font-medium text-foreground">-{formatCurrency(Number(referralDiscount || 0))}</span>
+                  </div>
                   <div className="flex items-center justify-between text-sm border-t border-border/30 pt-2 mt-1">
                     <span className="font-bold text-foreground">Total</span>
-                    <span className="font-extrabold text-base text-primary">{formatCurrency(totals.total)}</span>
+                    <span className="font-extrabold text-base text-primary">{formatCurrency(Math.max(0, totals.total - Number(referralDiscount || 0)))}</span>
                   </div>
                 </div>
 

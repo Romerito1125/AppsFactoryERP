@@ -121,6 +121,43 @@ function QuoteSkeleton() {
   )
 }
 
+function SearchableQuoteSelect({ items, value, onChange, placeholder, searchPlaceholder, descriptionBuilder }) {
+  const [query, setQuery] = useState('')
+  const filteredItems = query.trim()
+    ? items.filter((item) => item.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : items
+  const selectedItem = items.find((item) => item.id === value)
+
+  return (
+    <div className="grid gap-3">
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchPlaceholder} />
+      <div className="rounded-xl border border-dashed border-border/70 bg-muted/10 p-3 text-sm">
+        <p className="font-medium text-foreground">{selectedItem?.label ?? placeholder}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {selectedItem ? descriptionBuilder?.(selectedItem) ?? 'Seleccion actual del formulario.' : 'Busca y selecciona una opcion.'}
+        </p>
+      </div>
+      <div className="max-h-56 overflow-y-auto rounded-xl border border-border/70 p-2">
+        <div className="grid gap-2">
+          {filteredItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onChange(item.id)}
+              className={`rounded-xl border px-3 py-2 text-left transition ${
+                item.id === value ? 'border-primary bg-primary/10 text-foreground' : 'border-border/70 bg-background hover:border-primary/40 hover:bg-primary/5'
+              }`}
+            >
+              <p className="truncate text-sm font-medium text-foreground">{item.label}</p>
+              {descriptionBuilder ? <p className="truncate text-xs text-muted-foreground">{descriptionBuilder(item)}</p> : null}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function CreateQuoteDialog({ open, onOpenChange, clients, products, onSubmit, isSubmitting }) {
   const form = useForm({
     resolver: zodResolver(quoteSchema),
@@ -138,6 +175,14 @@ function CreateQuoteDialog({ open, onOpenChange, clients, products, onSubmit, is
 
   const watchedItems = useWatch({ control: form.control, name: 'items' })
   const productById = useMemo(() => new Map(products.map((product) => [product.id, product])), [products])
+  const clientOptions = useMemo(
+    () => clients.map((client) => ({ id: client.id, label: `${client.firstName} ${client.lastName}`, identification: client.identification })),
+    [clients],
+  )
+  const productOptions = useMemo(
+    () => products.map((product) => ({ id: product.id, label: product.name, description: `${product.brand} · ${product.productType?.name ?? 'Sin tipo'}` })),
+    [products],
+  )
 
   function closeDialog(nextOpen) {
     onOpenChange(nextOpen)
@@ -178,17 +223,14 @@ function CreateQuoteDialog({ open, onOpenChange, clients, products, onSubmit, is
                 name="clientId"
                 control={form.control}
                 render={({ field }) => (
-                  <NativeSelect
-                    value={field.value ? String(field.value) : ''}
-                    onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                  >
-                    <option value="">Selecciona un cliente</option>
-                    {clients.map((client) => (
-                      <option key={client.id} value={String(client.id)}>
-                        {`${client.firstName} ${client.lastName} · ${client.identification}`}
-                      </option>
-                    ))}
-                  </NativeSelect>
+                  <SearchableQuoteSelect
+                    items={clientOptions}
+                    value={field.value}
+                    onChange={field.onChange}
+                    placeholder="Selecciona un cliente"
+                    searchPlaceholder="Buscar cliente por nombre o documento..."
+                    descriptionBuilder={(item) => item.identification ?? 'Sin documento'}
+                  />
                 )}
               />
             </div>
@@ -229,10 +271,10 @@ function CreateQuoteDialog({ open, onOpenChange, clients, products, onSubmit, is
                         name={`items.${index}.productId`}
                         control={form.control}
                         render={({ field }) => (
-                          <NativeSelect
-                            value={field.value ? String(field.value) : ''}
-                            onChange={(event) => {
-                              const nextProductId = event.target.value ? Number(event.target.value) : undefined
+                          <SearchableQuoteSelect
+                            items={productOptions}
+                            value={field.value}
+                            onChange={(nextProductId) => {
                               const product = productById.get(nextProductId)
                               const defaultPrice =
                                 product?.prices?.find((price) => price.isActive && price.isDefault) ??
@@ -243,14 +285,10 @@ function CreateQuoteDialog({ open, onOpenChange, clients, products, onSubmit, is
                                 shouldValidate: true,
                               })
                             }}
-                          >
-                            <option value="">Selecciona un producto</option>
-                            {products.map((product) => (
-                              <option key={product.id} value={String(product.id)}>
-                                {`${product.name} · ${product.brand}`}
-                              </option>
-                            ))}
-                          </NativeSelect>
+                            placeholder="Selecciona un producto"
+                            searchPlaceholder="Buscar producto por nombre o marca..."
+                            descriptionBuilder={(item) => item.description}
+                          />
                         )}
                       />
                     </div>

@@ -186,6 +186,7 @@ function PurchaseFormDialog({
   onSubmit,
   isSubmitting,
 }) {
+  const [step, setStep] = useState('basic')
   const form = useForm({
     resolver: zodResolver(purchaseSchema),
     defaultValues: getDefaultValues(purchase),
@@ -222,7 +223,10 @@ function PurchaseFormDialog({
 
   function closeDialog(nextOpen) {
     onOpenChange(nextOpen)
-    if (!nextOpen) form.reset(getDefaultValues())
+    if (!nextOpen) {
+      form.reset(getDefaultValues())
+      setStep('basic')
+    }
   }
 
   return (
@@ -255,6 +259,13 @@ function PurchaseFormDialog({
               form.reset(getDefaultValues())
             })}
           >
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant={step === 'basic' ? 'default' : 'outline'} onClick={() => setStep('basic')}>1. Datos base</Button>
+              <Button type="button" variant={step === 'items' ? 'default' : 'outline'} onClick={() => setStep('items')}>2. Lineas</Button>
+              <Button type="button" variant={step === 'summary' ? 'default' : 'outline'} onClick={() => setStep('summary')}>3. Resumen</Button>
+            </div>
+
+            {step === 'basic' ? (
             <div className="grid gap-4 rounded-2xl border border-border/70 bg-muted/10 p-4 md:grid-cols-2 xl:grid-cols-4">
               <div className="grid gap-2 md:col-span-2 xl:col-span-1">
                 <Label>Proveedor</Label>
@@ -335,7 +346,9 @@ function PurchaseFormDialog({
                 <FieldError error={form.formState.errors.notes} />
               </div>
             </div>
+            ) : null}
 
+            {step === 'items' ? (
             <div className="grid gap-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -463,7 +476,9 @@ function PurchaseFormDialog({
               })}
               <FieldError error={form.formState.errors.items?.root ?? form.formState.errors.items} />
             </div>
+            ) : null}
 
+            {step === 'summary' ? (
             <div className="grid gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4 sm:grid-cols-3">
               <div>
                 <p className="text-xs text-muted-foreground">Subtotal</p>
@@ -478,11 +493,22 @@ function PurchaseFormDialog({
                 <p className="mt-1 text-lg font-semibold text-primary">{formatCurrency(preview.subtotal + preview.taxes)}</p>
               </div>
             </div>
+            ) : null}
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => closeDialog(false)}>
                 Cancelar
               </Button>
+              {step !== 'basic' ? (
+                <Button type="button" variant="outline" onClick={() => setStep(step === 'summary' ? 'items' : 'basic')}>
+                  Atras
+                </Button>
+              ) : null}
+              {step !== 'summary' ? (
+                <Button type="button" onClick={() => setStep(step === 'basic' ? 'items' : 'summary')}>
+                  Siguiente
+                </Button>
+              ) : null}
               <Button type="submit" disabled={isSubmitting}>
                 {isSubmitting ? 'Guardando...' : mode === 'create' ? 'Crear borrador' : 'Guardar cambios'}
               </Button>

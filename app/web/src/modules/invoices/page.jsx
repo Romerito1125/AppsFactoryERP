@@ -476,7 +476,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
                   </Button>
                 </div>
 
-                <div className="grid gap-3">
+                <div className="grid max-h-[46vh] gap-3 overflow-y-auto pr-2">
                   {fields.map((itemField, index) => {
                     const selectedProduct = productById.get(watchedItems[index]?.productId)
                     const activePrices = getActiveProductPrices(selectedProduct)
