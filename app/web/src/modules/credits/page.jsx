@@ -57,7 +57,7 @@ import { DEFAULT_ITEMS_PER_PAGE, LocalPagination } from '@/modules/shared/local-
 const PAGE_SIZE = DEFAULT_ITEMS_PER_PAGE
 
 const createCreditSchema = z.object({
-  invoiceId: z.number({ message: 'Selecciona una factura' }).int().positive('Selecciona una factura'),
+  invoiceId: z.number().int().positive().optional(),
   dueDate: z.string().min(1, 'La fecha de vencimiento es obligatoria'),
 })
 
@@ -108,7 +108,48 @@ function CreditsSkeleton() {
   )
 }
 
-function CreateCreditDialog({ open, onOpenChange, invoices, onSubmit, isSubmitting }) {
+function CreditInvoiceSelector({ invoices, value, onChange, isLoading }) {
+  const [query, setQuery] = useState('')
+  const filteredInvoices = query.trim()
+    ? invoices.filter((invoice) =>
+        [invoice.consecutive, invoice.client?.firstName, invoice.client?.lastName]
+          .filter(Boolean)
+          .some((field) => String(field).toLowerCase().includes(query.trim().toLowerCase())),
+      )
+    : invoices
+  const selectedInvoice = invoices.find((invoice) => invoice.id === value)
+
+  return (
+    <div className="grid gap-3">
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar factura por consecutivo o cliente..." disabled={isLoading} />
+      <div className="rounded-xl border border-dashed border-border/70 bg-muted/10 p-3 text-sm">
+        <p className="font-medium text-foreground">{selectedInvoice?.consecutive ?? 'Sin factura asociada'}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {selectedInvoice ? formatCurrency(selectedInvoice.total) : 'El backend actual exige factura asociada para crear el credito.'}
+        </p>
+      </div>
+      <div className="max-h-56 overflow-y-auto rounded-xl border border-border/70 p-2">
+        <div className="grid gap-2">
+          {filteredInvoices.map((invoice) => (
+            <button
+              key={invoice.id}
+              type="button"
+              onClick={() => onChange(invoice.id)}
+              className={`rounded-xl border px-3 py-2 text-left transition ${
+                invoice.id === value ? 'border-primary bg-primary/10 text-foreground' : 'border-border/70 bg-background hover:border-primary/40 hover:bg-primary/5'
+              }`}
+            >
+              <p className="truncate text-sm font-medium text-foreground">{invoice.consecutive}</p>
+              <p className="truncate text-xs text-muted-foreground">{invoice.client ? `${invoice.client.firstName} ${invoice.client.lastName}` : 'Sin cliente'} · {formatCurrency(invoice.total)}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CreateCreditDialog({ open, onOpenChange, invoices, invoicesLoading, onSubmit, isSubmitting }) {
   const form = useForm({
     resolver: zodResolver(createCreditSchema),
     defaultValues: { invoiceId: undefined, dueDate: '' },
@@ -128,20 +169,10 @@ function CreateCreditDialog({ open, onOpenChange, invoices, onSubmit, isSubmitti
                 name="invoiceId"
                 control={form.control}
                 render={({ field }) => (
-                <NativeSelect
-                  value={field.value ? String(field.value) : ''}
-                  onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                >
-                  <option value="">Selecciona una factura</option>
-                  {invoices.map((invoice) => (
-                    <option key={invoice.id} value={String(invoice.id)}>
-                      {`${invoice.consecutive} · ${formatCurrency(invoice.total)}`}
-                    </option>
-                  ))}
-                </NativeSelect>
+                  <CreditInvoiceSelector invoices={invoices} value={field.value} onChange={field.onChange} isLoading={invoicesLoading} />
                 )}
               />
-          </div>
+            </div>
 
           <div className="grid gap-2">
             <Label>Fecha de vencimiento</Label>
@@ -347,7 +378,6 @@ export function CreditsPage() {
 
   if (
     creditsQuery.isLoading ||
-    (createOpen && (invoicesQuery.isLoading || creditedInvoicesQuery.isLoading)) ||
     (paymentCredit && accountsQuery.isLoading)
   ) {
     return <CreditsSkeleton />
@@ -585,6 +615,7 @@ export function CreditsPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         invoices={availableInvoices}
+        invoicesLoading={invoicesQuery.isLoading || creditedInvoicesQuery.isLoading}
         onSubmit={handleCreateCredit}
         isSubmitting={createMutation.isPending}
       />

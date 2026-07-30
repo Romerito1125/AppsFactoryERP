@@ -49,16 +49,11 @@ import { DEFAULT_ITEMS_PER_PAGE, LocalPagination } from '@/modules/shared/local-
 
 const PAGE_SIZE = DEFAULT_ITEMS_PER_PAGE
 
-const discountTypeOptions = [
-  { value: 'PORCENTAJE', label: 'Porcentaje' },
-  { value: 'MONTO_FIJO', label: 'Monto fijo' },
-]
-
 const offerSchema = z
   .object({
     name: z.string().min(2, 'Minimo 2 caracteres'),
     description: z.string().optional(),
-    discountType: z.enum(['PORCENTAJE', 'MONTO_FIJO']),
+    discountType: z.enum(['PORCENTAJE']),
     discountValue: z.number({ message: 'Descuento obligatorio' }).positive('Debe ser mayor a cero'),
     startsAt: z.string().optional(),
     endsAt: z.string().optional(),
@@ -111,7 +106,17 @@ function MultiSelectTargetField({ label, items, selectedIds = [], onChange, empt
 
   return (
     <div className="grid gap-2">
-      <Label>{label}</Label>
+      <div className="flex items-center justify-between gap-2">
+        <Label>{label}</Label>
+        <div className="flex gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={() => onChange(items.map((item) => item.id))}>
+            Todos
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => onChange([])}>
+            Limpiar
+          </Button>
+        </div>
+      </div>
       <div className="max-h-40 overflow-y-auto rounded-2xl border border-border/70 bg-muted/15 p-3">
         {items.length ? (
           <div className="flex flex-wrap gap-2">
@@ -141,11 +146,12 @@ function MultiSelectTargetField({ label, items, selectedIds = [], onChange, empt
 }
 
 function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, isSubmitting }) {
+  const [step, setStep] = useState('basic')
   const defaultValues = useMemo(
     () => ({
       name: offer?.name ?? '',
       description: offer?.description ?? '',
-      discountType: offer?.discountType ?? 'PORCENTAJE',
+      discountType: 'PORCENTAJE',
       discountValue: offer?.discountValue ? Number(offer.discountValue) : undefined,
       startsAt: offer?.startsAt ? String(offer.startsAt).slice(0, 10) : '',
       endsAt: offer?.endsAt ? String(offer.endsAt).slice(0, 10) : '',
@@ -175,8 +181,16 @@ function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, i
     form.reset(defaultValues)
   }, [defaultValues, form])
 
+  function closeDialog(nextOpen) {
+    onOpenChange(nextOpen)
+    if (!nextOpen) {
+      setStep('basic')
+      form.reset(defaultValues)
+    }
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>{mode === 'create' ? 'Nueva oferta' : 'Actualizar oferta'}</DialogTitle>
@@ -195,6 +209,19 @@ function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, i
             }),
           )}
         >
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant={step === 'basic' ? 'default' : 'outline'} onClick={() => setStep('basic')}>
+              1. Base
+            </Button>
+            <Button type="button" variant={step === 'rules' ? 'default' : 'outline'} onClick={() => setStep('rules')}>
+              2. Reglas
+            </Button>
+            <Button type="button" variant={step === 'targets' ? 'default' : 'outline'} onClick={() => setStep('targets')}>
+              3. Segmentacion
+            </Button>
+          </div>
+
+          {step === 'basic' ? (
           <div className="grid gap-4 md:grid-cols-2">
             <div className="grid gap-2">
               <Label>Nombre</Label>
@@ -206,36 +233,24 @@ function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, i
 
             <div className="grid gap-2">
               <Label>Tipo de descuento</Label>
-              <Controller
-                name="discountType"
-                control={form.control}
-                render={({ field }) => (
-                  <Select value={field.value} onValueChange={field.onChange}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecciona el tipo" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {discountTypeOptions.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
+              <Input value="Porcentaje" disabled />
             </div>
 
             <div className="grid gap-2 md:col-span-2">
               <Label>Descripcion</Label>
               <Textarea rows={3} {...form.register('description')} placeholder="Descripcion breve de la oferta" />
             </div>
+          </div>
+          ) : null}
 
+          {step === 'rules' ? (
+          <div className="grid gap-4 md:grid-cols-2">
             <div className="grid gap-2">
-              <Label>Valor del descuento</Label>
+              <Label>Valor del descuento %</Label>
               <Input
                 type="number"
                 min="1"
+                max="100"
                 {...form.register('discountValue', { setValueAs: (value) => Number(value) })}
               />
               {form.formState.errors.discountValue ? (
@@ -303,6 +318,11 @@ function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, i
               ) : null}
             </div>
 
+          </div>
+          ) : null}
+
+          {step === 'targets' ? (
+          <div className="grid gap-4 md:grid-cols-2">
             <Controller
               name="clientIds"
               control={form.control}
@@ -359,11 +379,22 @@ function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, i
               )}
             />
           </div>
+          ) : null}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
+            {step !== 'basic' ? (
+              <Button type="button" variant="outline" onClick={() => setStep(step === 'targets' ? 'rules' : 'basic')}>
+                Atras
+              </Button>
+            ) : null}
+            {step !== 'targets' ? (
+              <Button type="button" onClick={() => setStep(step === 'basic' ? 'rules' : 'targets')}>
+                Siguiente
+              </Button>
+            ) : null}
             <Button type="submit" disabled={isSubmitting}>
               {isSubmitting ? 'Guardando...' : mode === 'create' ? 'Crear oferta' : 'Guardar cambios'}
             </Button>
