@@ -8,4 +8,8 @@ export class CreateProductTypeDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsString()
+  imageUrl?: string;
 }

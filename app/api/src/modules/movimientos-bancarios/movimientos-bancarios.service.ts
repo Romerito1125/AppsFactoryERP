@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BankMovementType } from '@prisma/client';
+import { BankMovementType, Prisma } from '@prisma/client';
 import {
   buildPaginatedResponse,
   resolvePagination,
@@ -18,10 +18,13 @@ import { ListBankMovementsQueryDto } from './dto/list-bank-movements-query.dto';
 
 @Injectable()
 export class MovimientosBancariosService {
+  private readonly gmfRate = new Prisma.Decimal('0.004');
+
   constructor(private readonly prisma: PrismaService) {}
   async findAll(query: ListBankMovementsQueryDto) {
     const where = {
       ...this.getTypeWhere(query.movementType),
+      ...(query.appliesGmf === undefined ? {} : { appliesGmf: query.appliesGmf }),
       ...this.getSearchWhere(query.q),
     };
     const { page, limit, skip, take } = resolvePagination(query);
@@ -56,12 +59,18 @@ export class MovimientosBancariosService {
         dto.amount,
         dto.description,
         dto.invoiceId,
+        dto.appliesGmf,
       ),
     );
   }
   expense(bankAccountId: number, dto: BankAmountDto) {
     return this.prisma.$transaction(async (tx) => {
-      await this.ensureBalance(tx, bankAccountId, dto.amount);
+      const amounts = this.buildMovementAmounts(
+        BankMovementType.EGRESO,
+        dto.amount,
+        dto.appliesGmf,
+      );
+      await this.ensureBalance(tx, bankAccountId, Number(amounts.totalAmount));
       return this.createMovement(
         tx,
         bankAccountId,
@@ -69,6 +78,7 @@ export class MovimientosBancariosService {
         dto.amount,
         dto.description,
         dto.invoiceId,
+        dto.appliesGmf,
       );
     });
   }
@@ -76,13 +86,24 @@ export class MovimientosBancariosService {
     if (dto.fromBankAccountId === dto.toBankAccountId)
       throw new BadRequestException('Las cuentas deben ser diferentes');
     return this.prisma.$transaction(async (tx) => {
-      await this.ensureBalance(tx, dto.fromBankAccountId, dto.amount);
+      const outgoing = this.buildMovementAmounts(
+        BankMovementType.TRANSFERENCIA_SALIENTE,
+        dto.amount,
+        dto.appliesGmf,
+      );
+      await this.ensureBalance(
+        tx,
+        dto.fromBankAccountId,
+        Number(outgoing.totalAmount),
+      );
       await this.createMovement(
         tx,
         dto.fromBankAccountId,
         BankMovementType.TRANSFERENCIA_SALIENTE,
         dto.amount,
         dto.description,
+        undefined,
+        dto.appliesGmf,
       );
       return this.createMovement(
         tx,
@@ -90,6 +111,8 @@ export class MovimientosBancariosService {
         BankMovementType.TRANSFERENCIA_ENTRANTE,
         dto.amount,
         dto.description,
+        undefined,
+        false,
       );
     });
   }
@@ -106,6 +129,8 @@ export class MovimientosBancariosService {
           bankAccountId,
           movementType: BankMovementType.AJUSTE,
           amount: Math.abs(difference),
+          baseAmount: Math.abs(difference),
+          totalAmount: Math.abs(difference),
           description: dto.description,
         },
         include: { bankAccount: true, invoice: true },
@@ -119,19 +144,36 @@ export class MovimientosBancariosService {
     amount: number,
     description?: string,
     invoiceId?: number,
+    appliesGmf?: boolean,
   ) {
     await this.ensureActiveAccount(tx, bankAccountId);
+    const normalized = this.buildMovementAmounts(
+      movementType,
+      amount,
+      appliesGmf,
+    );
     const increment =
       movementType === BankMovementType.INGRESO ||
       movementType === BankMovementType.TRANSFERENCIA_ENTRANTE
-        ? amount
-        : -amount;
+        ? Number(normalized.totalAmount)
+        : -Number(normalized.totalAmount);
     await tx.bankAccount.update({
       where: { id: bankAccountId },
       data: { currentBalance: { increment } },
     });
     return tx.bankAccountMovement.create({
-      data: { bankAccountId, movementType, amount, description, invoiceId },
+      data: {
+        bankAccountId,
+        movementType,
+        amount: normalized.baseAmount,
+        baseAmount: normalized.baseAmount,
+        gmfRate: normalized.gmfRate,
+        gmfAmount: normalized.gmfAmount,
+        totalAmount: normalized.totalAmount,
+        appliesGmf: normalized.appliesGmf,
+        description,
+        invoiceId,
+      },
       include: { bankAccount: true, invoice: true },
     });
   }
@@ -166,6 +208,30 @@ export class MovimientosBancariosService {
         { description: { contains: q, mode: 'insensitive' as const } },
         { invoice: { consecutive: { contains: q, mode: 'insensitive' as const } } },
       ],
+    };
+  }
+
+  private buildMovementAmounts(
+    movementType: BankMovementType,
+    amount: number,
+    appliesGmf?: boolean,
+  ) {
+    const baseAmount = new Prisma.Decimal(amount);
+    const supportsGmf =
+      movementType === BankMovementType.EGRESO ||
+      movementType === BankMovementType.TRANSFERENCIA_SALIENTE;
+    const shouldApplyGmf = Boolean(appliesGmf && supportsGmf);
+    const gmfAmount = shouldApplyGmf
+      ? baseAmount.mul(this.gmfRate).toDecimalPlaces(2)
+      : new Prisma.Decimal(0);
+    const totalAmount = baseAmount.plus(gmfAmount).toDecimalPlaces(2);
+
+    return {
+      appliesGmf: shouldApplyGmf,
+      baseAmount,
+      gmfRate: shouldApplyGmf ? this.gmfRate : new Prisma.Decimal(0),
+      gmfAmount,
+      totalAmount,
     };
   }
 }

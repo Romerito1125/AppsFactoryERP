@@ -1,11 +1,11 @@
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsEmail,
   IsEnum,
   IsInt,
   IsOptional,
   IsPositive,
-  IsString,
   MinLength,
 } from 'class-validator';
 import { Role } from '../../../common/enums/role.enum';
@@ -18,9 +18,8 @@ export class UpdateUserDto {
   clientId?: number;
 
   @IsOptional()
-  @IsString()
-  @MinLength(3)
-  username?: string;
+  @IsEmail()
+  email?: string;
 
   @IsOptional()
   @IsString()

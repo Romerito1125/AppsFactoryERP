@@ -5,6 +5,8 @@ export enum ReportEmailSection {
   EXOGENAS = 'EXOGENAS',
   GMF = 'GMF',
   STOCK = 'STOCK',
+  STOCK_SEMANAL = 'STOCK_SEMANAL',
+  TRASLADOS = 'TRASLADOS',
   PRODUCTOS = 'PRODUCTOS',
 }
 

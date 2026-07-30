@@ -22,7 +22,7 @@ export class AuthService {
   async register(registerDto: RegisterDto) {
     await this.ensureUniqueClientAndUsername(
       registerDto.identification,
-      registerDto.username,
+      registerDto.email,
     );
 
     const user = await this.prisma.$transaction(async (tx) => {
@@ -40,7 +40,7 @@ export class AuthService {
       return tx.user.create({
         data: {
           clientId: client.id,
-          username: registerDto.username,
+          username: registerDto.email.trim().toLowerCase(),
           password: this.hashPassword(registerDto.password),
           role: Role.CLIENTE,
         },
@@ -53,7 +53,7 @@ export class AuthService {
 
   async login(loginDto: LoginDto) {
     const user = await this.prisma.user.findUnique({
-      where: { username: loginDto.username },
+      where: { username: loginDto.email.trim().toLowerCase() },
       include: { client: true, employee: true },
     });
 
@@ -98,15 +98,15 @@ export class AuthService {
 
   private async ensureUniqueClientAndUsername(
     identification: string,
-    username: string,
+    email: string,
   ) {
     const [client, user] = await Promise.all([
       this.prisma.client.findUnique({ where: { identification } }),
-      this.prisma.user.findUnique({ where: { username } }),
+      this.prisma.user.findUnique({ where: { username: email.trim().toLowerCase() } }),
     ]);
 
     if (client) throw new ConflictException('La identificación ya existe');
-    if (user) throw new ConflictException('El username ya existe');
+    if (user) throw new ConflictException('El correo ya existe');
   }
 
   private authResponse(user) {

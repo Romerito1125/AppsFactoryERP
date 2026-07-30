@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
-import { Controller, useWatch } from 'react-hook-form'
+import { useEffect, useMemo, useState } from 'react'
+import { Controller, useFieldArray, useWatch } from 'react-hook-form'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { z } from 'zod'
-import { ImageUp, ScanLine, Star } from 'lucide-react'
+import { ImageUp, Plus, ScanLine, Star, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { BarcodeScannerDialog } from '@/components/barcode-scanner-dialog'
@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { apiClient } from '@/lib/api-client'
-import { formatCurrency, formatDate, formatNumber, getRecordStatus, getRecordStatusVariant, toApiStatus } from '@/lib/format'
+import { formatCurrency, formatDate, formatNumber, getRecordStatus, getRecordStatusVariant, toApiStatus, toNumber } from '@/lib/format'
 import { readBarcodeFromImage } from '@/lib/barcode-reader'
 import { barcodeTypeOptions } from '@/lib/barcodes'
 import { cn } from '@/lib/utils'
@@ -23,6 +23,12 @@ import { CrudModulePage } from '@/modules/shared/crud-module-page'
 
 const barcodeTypeValues = barcodeTypeOptions.map((option) => option.value)
 const barcodeTypeLabels = Object.fromEntries(barcodeTypeOptions.map((option) => [option.value, option.label]))
+const packagingProfileSchema = z.object({
+  unitsPerPackage: z.number().int().positive('Debe ser mayor a cero').optional(),
+  packagesPerBox: z.number().int().positive('Debe ser mayor a cero').optional(),
+  saleByUnitOnly: z.boolean().optional(),
+  notes: z.string().optional(),
+})
 
 const optionalImageSchema = z
   .custom(
@@ -45,10 +51,16 @@ const createProductSchema = z
     minimumStock: z.number({ message: 'Stock minimo obligatorio' }).int().min(0, 'No puede ser negativo'),
     maximumStock: z.number().int().min(0, 'No puede ser negativo').optional(),
     image: optionalImageSchema,
-    initialPriceName: z.string().min(2, 'Minimo 2 caracteres'),
-    initialPrice: z.number({ message: 'Precio obligatorio' }).positive('Debe ser mayor a cero'),
+    prices: z.array(
+      z.object({
+        name: z.string().min(2, 'Minimo 2 caracteres'),
+        price: z.number({ message: 'Precio obligatorio' }).positive('Debe ser mayor a cero'),
+        isDefault: z.boolean(),
+      }),
+    ).min(1, 'Agrega al menos un precio'),
     initialWarehouseId: z.number({ message: 'Selecciona una bodega' }).int().positive('Selecciona una bodega'),
     initialQuantity: z.number({ message: 'Cantidad obligatoria' }).int().positive('Debe ser mayor a cero'),
+    packaging: packagingProfileSchema.optional(),
     barcodes: z
       .array(
         z.object({
@@ -62,6 +74,10 @@ const createProductSchema = z
   .refine((values) => values.maximumStock === undefined || values.maximumStock >= values.minimumStock, {
     path: ['maximumStock'],
     message: 'El stock maximo no puede ser menor al minimo',
+  })
+  .refine((values) => (values.prices?.filter((price) => price.isDefault).length ?? 0) <= 1, {
+    path: ['prices'],
+    message: 'Solo puede existir un precio principal por producto',
   })
   .refine((values) => (values.barcodes?.filter((barcode) => barcode.isPrimary).length ?? 0) <= 1, {
     path: ['barcodes'],
@@ -80,6 +96,7 @@ const updateProductSchema = z
     minimumStock: z.number({ message: 'Stock minimo obligatorio' }).int().min(0, 'No puede ser negativo'),
     maximumStock: z.number().int().min(0, 'No puede ser negativo').optional(),
     image: optionalImageSchema,
+    packaging: packagingProfileSchema.optional(),
   })
   .refine((values) => values.maximumStock === undefined || values.maximumStock >= values.minimumStock, {
     path: ['maximumStock'],
@@ -102,10 +119,35 @@ function getAssociatedProviders(product) {
       : []
 }
 
+function getSelectableProviders(lookups) {
+  return (lookups.providers ?? []).filter((provider) => provider.isActive !== false)
+}
+
 function getSecondaryProviderIds(product) {
   return getAssociatedProviders(product)
     .filter((provider) => !provider.isPrimary)
     .map((provider) => provider.id)
+}
+
+function normalizeProductPrices(prices) {
+  const resolved = (prices ?? []).map((price) => ({
+    name: price?.name ?? '',
+    price: price?.price,
+    isDefault: Boolean(price?.isDefault),
+  }))
+
+  if (!resolved.length) {
+    return [{ name: '', price: undefined, isDefault: true }]
+  }
+
+  if (!resolved.some((price) => price.isDefault)) {
+    resolved[0].isDefault = true
+  }
+
+  return resolved.map((price, index) => ({
+    ...price,
+    isDefault: resolved.findIndex((item) => item.isDefault) === index,
+  }))
 }
 
 function matchesProviderAssociation(product, providerId) {
@@ -122,14 +164,14 @@ function formatProviderSummary(product) {
   const primaryProvider = providers.find((provider) => provider.isPrimary) ?? providers[0]
   const additionalCount = Math.max(0, providers.length - 1)
 
-  return additionalCount ? `${primaryProvider.name} · +${additionalCount} asociado(s)` : primaryProvider.name
+  return additionalCount ? `${primaryProvider.name} · +${additionalCount} secundario(s)` : primaryProvider.name
 }
 
 function formatProviderList(product) {
   const providers = getAssociatedProviders(product)
 
   if (!providers.length) {
-    return 'Sin proveedores asociados'
+    return 'Sin proveedores secundarios'
   }
 
   return providers.map((provider) => `${provider.name}${provider.isPrimary ? ' (principal)' : ''}`).join(' · ')
@@ -238,54 +280,62 @@ function filterFavoriteProducts(records, status, filters) {
   })
 }
 
-function ProductProvidersField({ control, lookups }) {
-  const primaryProviderId = useWatch({ control, name: 'providerId' })
-  const activeProviders = (lookups.providers ?? []).filter((provider) => provider.isActive !== false)
+function SearchableSelectField({ field: configField, control }) {
+  const [query, setQuery] = useState('')
+  const options = configField.options ?? []
 
   return (
     <Controller
-      name="providerIds"
+      name={configField.name}
       control={control}
       render={({ field }) => {
-        const value = Array.isArray(field.value) ? field.value : []
-        const availableProviders = activeProviders.filter((provider) => provider.id !== Number(primaryProviderId))
+        const selectedOption = options.find((option) => option.value === field.value)
+        const normalizedQuery = query.trim().toLowerCase()
+        const filteredOptions = normalizedQuery
+          ? options.filter((option) => option.label.toLowerCase().includes(normalizedQuery))
+          : options
 
         return (
           <div className="grid gap-3">
-            <div className="rounded-xl border border-border/70 bg-muted/15 p-3 text-xs text-muted-foreground">
-              {primaryProviderId
-                ? 'Marca aqui los proveedores adicionales que tambien pueden surtir este producto. El proveedor principal siempre se guarda.'
-                : 'Selecciona primero el proveedor principal para luego asociar proveedores adicionales.'}
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={`Buscar ${configField.label.toLowerCase()}...`}
+            />
+
+            <div className="rounded-xl border border-dashed border-border/70 bg-muted/10 p-3 text-sm">
+              <p className="font-medium text-foreground">{selectedOption?.label ?? configField.placeholder ?? 'Sin seleccionar'}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {selectedOption ? 'Seleccion actual del formulario.' : 'Escribe para filtrar y luego haz clic para seleccionar.'}
+              </p>
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-2">
-              {availableProviders.map((provider) => {
-                const checked = value.includes(provider.id)
+            <div className="max-h-56 overflow-y-auto rounded-xl border border-border/70 p-2">
+              <div className="grid gap-2">
+                {filteredOptions.length ? (
+                  filteredOptions.map((option) => {
+                    const isSelected = option.value === field.value
 
-                return (
-                  <label
-                    key={provider.id}
-                    className="flex items-start gap-3 rounded-xl border border-border/70 bg-background px-3 py-2 text-sm"
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={checked}
-                      onChange={(event) => {
-                        const nextValue = event.target.checked
-                          ? [...value, provider.id]
-                          : value.filter((item) => item !== provider.id)
-                        field.onChange(nextValue)
-                      }}
-                      disabled={!primaryProviderId}
-                    />
-                    <div>
-                      <p className="font-medium text-foreground">{provider.name}</p>
-                      <p className="text-xs text-muted-foreground">{provider.description || 'Proveedor adicional para compras y filtros.'}</p>
-                    </div>
-                  </label>
-                )
-              })}
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => field.onChange(option.value)}
+                        className={cn(
+                          'rounded-xl border px-3 py-2 text-left text-sm transition',
+                          isSelected
+                            ? 'border-primary bg-primary/10 text-foreground'
+                            : 'border-border/70 bg-background hover:border-primary/40 hover:bg-primary/5',
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    )
+                  })
+                ) : (
+                  <p className="px-2 py-3 text-sm text-muted-foreground">No hay resultados para esta busqueda.</p>
+                )}
+              </div>
             </div>
           </div>
         )
@@ -294,12 +344,361 @@ function ProductProvidersField({ control, lookups }) {
   )
 }
 
+function ProductProvidersField({ field: configField, control, setValue }) {
+  const primaryProviderId = useWatch({ control, name: 'providerId' })
+  const selectedProviderIds = useWatch({ control, name: configField.name })
+  const options = configField.options ?? []
+  const [candidateProviderId, setCandidateProviderId] = useState('')
+
+  useEffect(() => {
+    const currentValue = Array.isArray(selectedProviderIds) ? selectedProviderIds : []
+
+    if (!primaryProviderId) {
+      if (currentValue.length) {
+        setValue(configField.name, [], { shouldDirty: true, shouldValidate: true })
+      }
+      return
+    }
+
+    const normalizedValue = currentValue.filter((providerId) => providerId !== Number(primaryProviderId))
+
+    if (normalizedValue.length !== currentValue.length) {
+      setValue(configField.name, normalizedValue, { shouldDirty: true, shouldValidate: true })
+    }
+  }, [configField.name, primaryProviderId, selectedProviderIds, setValue])
+
+  useEffect(() => {
+    const currentValue = Array.isArray(selectedProviderIds) ? selectedProviderIds : []
+    const availableProviders = primaryProviderId
+      ? options.filter((provider) => provider.value !== Number(primaryProviderId) && !currentValue.includes(provider.value))
+      : []
+
+    if (!availableProviders.some((provider) => String(provider.value) === candidateProviderId)) {
+      setCandidateProviderId(availableProviders[0] ? String(availableProviders[0].value) : '')
+    }
+  }, [candidateProviderId, options, primaryProviderId, selectedProviderIds])
+
+  return (
+    <Controller
+      name={configField.name}
+      control={control}
+      render={({ field }) => {
+        const value = Array.isArray(field.value) ? field.value : []
+        const availableProviders = primaryProviderId
+          ? options.filter((provider) => provider.value !== Number(primaryProviderId) && !value.includes(provider.value))
+          : []
+        const selectedProviders = options.filter((provider) => value.includes(provider.value))
+
+        return (
+          <div className="grid gap-3">
+            <div className="rounded-xl border border-border/70 bg-muted/15 p-3 text-xs text-muted-foreground">
+              {primaryProviderId
+                ? 'Agrega aqui los proveedores secundarios desde el mismo listado del proveedor principal.'
+                : 'Primero selecciona el proveedor principal para habilitar los proveedores secundarios.'}
+            </div>
+
+            <div className="grid gap-3 rounded-2xl border border-border/70 bg-background/80 p-3">
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                <div className="grid gap-2">
+                  <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Agregar secundario</p>
+                  <Select value={candidateProviderId || undefined} onValueChange={setCandidateProviderId} disabled={!primaryProviderId || !availableProviders.length}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder={primaryProviderId ? 'Selecciona otro proveedor' : 'Selecciona primero el principal'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableProviders.map((provider) => (
+                        <SelectItem key={provider.value} value={String(provider.value)}>
+                          {provider.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Button
+                  type="button"
+                  className="md:min-w-32"
+                  disabled={!primaryProviderId || !candidateProviderId}
+                  onClick={() => {
+                    const nextProviderId = Number(candidateProviderId)
+                    if (!nextProviderId || value.includes(nextProviderId)) {
+                      return
+                    }
+                    field.onChange([...value, nextProviderId])
+                  }}
+                >
+                  <Plus className="mr-2 size-4" />
+                  Agregar
+                </Button>
+              </div>
+
+              <div className="grid gap-2">
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">Seleccionados</p>
+                {selectedProviders.length ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {selectedProviders.map((provider) => (
+                      <div key={provider.value} className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/10 px-3 py-2">
+                        <p className="min-w-0 text-sm font-medium text-foreground">{provider.label}</p>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-8 shrink-0"
+                          onClick={() => field.onChange(value.filter((item) => item !== provider.value))}
+                        >
+                          <X className="size-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border/70 px-3 py-4 text-sm text-muted-foreground">
+                    {primaryProviderId ? 'Todavia no agregaste proveedores secundarios.' : 'Selecciona primero el proveedor principal.'}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      }}
+    />
+  )
+}
+
+function CreateInventoryLayoutField({ field: configField, control, register, errors }) {
+  const warehouseOptions = configField.options ?? []
+  const { fields, append, replace } = useFieldArray({
+    control,
+    name: 'prices',
+  })
+  const prices = useWatch({ control, name: 'prices' }) ?? []
+
+  function handleAddPrice() {
+    append({
+      name: '',
+      price: undefined,
+      isDefault: fields.length === 0,
+    })
+  }
+
+  function handleSetDefaultPrice(targetIndex) {
+    replace(
+      normalizeProductPrices(
+        prices.map((price, index) => ({
+          ...price,
+          isDefault: index === targetIndex,
+        })),
+      ),
+    )
+  }
+
+  function handleRemovePrice(targetIndex) {
+    const nextPrices = normalizeProductPrices(prices.filter((_, index) => index !== targetIndex))
+    replace(nextPrices)
+  }
+
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-4 lg:grid-cols-[minmax(260px,0.9fr)_minmax(0,1.35fr)]">
+        <div className="grid gap-4 rounded-2xl border border-border/70 bg-muted/10 p-4">
+          <div>
+            <p className="text-sm font-semibold text-foreground">Control de stock</p>
+            <p className="mt-1 text-xs text-muted-foreground">Define los rangos operativos y la cantidad con la que arranca el producto.</p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <label htmlFor="minimumStock" className="text-sm font-medium text-foreground">Stock minimo</label>
+              <Input id="minimumStock" type="number" placeholder="10" {...register('minimumStock', { setValueAs: toNumber })} />
+              {errors.minimumStock?.message ? <p className="text-xs text-destructive">{String(errors.minimumStock.message)}</p> : null}
+            </div>
+
+            <div className="grid gap-2">
+              <label htmlFor="maximumStock" className="text-sm font-medium text-foreground">Stock maximo</label>
+              <Input id="maximumStock" type="number" placeholder="100" {...register('maximumStock', { setValueAs: toNumber })} />
+              {errors.maximumStock?.message ? <p className="text-xs text-destructive">{String(errors.maximumStock.message)}</p> : null}
+            </div>
+
+            <div className="grid gap-2 sm:col-span-2">
+              <label htmlFor="initialQuantity" className="text-sm font-medium text-foreground">Stock inicial</label>
+              <Input id="initialQuantity" type="number" placeholder="50" {...register('initialQuantity', { setValueAs: toNumber })} />
+              {errors.initialQuantity?.message ? <p className="text-xs text-destructive">{String(errors.initialQuantity.message)}</p> : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-4 rounded-2xl border border-border/70 bg-background p-4">
+          <div>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Precios iniciales</p>
+                <p className="mt-1 text-xs text-muted-foreground">Crea uno o varios precios desde el arranque y marca uno como principal.</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={handleAddPrice}>
+                <Plus className="mr-2 size-4" />
+                Agregar precio
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <label htmlFor="taxRate" className="text-sm font-medium text-foreground">Impuesto %</label>
+              <Input id="taxRate" type="number" placeholder="19" {...register('taxRate', { setValueAs: toNumber })} />
+              {errors.taxRate?.message ? <p className="text-xs text-destructive">{String(errors.taxRate.message)}</p> : null}
+            </div>
+
+            {fields.length ? (
+              <div className="grid gap-3">
+                {fields.map((item, index) => (
+                  <div key={item.id} className="grid gap-3 rounded-xl border border-border/70 bg-muted/10 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">Precio #{index + 1}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {prices[index]?.isDefault ? 'Principal para ventas y facturacion.' : 'Precio adicional del producto.'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={prices[index]?.isDefault ? 'default' : 'outline'}
+                          onClick={() => handleSetDefaultPrice(index)}
+                        >
+                          <Star className="mr-2 size-4" />
+                          {prices[index]?.isDefault ? 'Principal' : 'Marcar principal'}
+                        </Button>
+                        <Button type="button" size="icon-sm" variant="destructive" onClick={() => handleRemovePrice(index)}>
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_200px]">
+                      <div className="grid gap-2">
+                        <label htmlFor={`prices.${index}.name`} className="text-sm font-medium text-foreground">Nombre del precio</label>
+                        <Input id={`prices.${index}.name`} placeholder="Precio base" {...register(`prices.${index}.name`, { setValueAs: (value) => (typeof value === 'string' ? value.trim() : value) })} />
+                        {errors?.prices?.[index]?.name?.message ? <p className="text-xs text-destructive">{String(errors.prices[index].name.message)}</p> : null}
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label htmlFor={`prices.${index}.price`} className="text-sm font-medium text-foreground">Valor</label>
+                        <Input id={`prices.${index}.price`} type="number" placeholder="25000" {...register(`prices.${index}.price`, { setValueAs: toNumber })} />
+                        {errors?.prices?.[index]?.price?.message ? <p className="text-xs text-destructive">{String(errors.prices[index].price.message)}</p> : null}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {errors?.prices?.message ? <p className="text-xs text-destructive">{String(errors.prices.message)}</p> : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 rounded-2xl border border-border/70 bg-background p-4">
+        <div>
+          <p className="text-sm font-semibold text-foreground">Bodega inicial</p>
+          <p className="mt-1 text-xs text-muted-foreground">Selecciona dónde se registrará el stock de arranque del producto.</p>
+        </div>
+
+        <Controller
+          name="initialWarehouseId"
+          control={control}
+          render={({ field }) => (
+            <Select
+              value={field.value === undefined || field.value === null ? undefined : String(field.value)}
+              onValueChange={(value) => field.onChange(Number(value))}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Selecciona una bodega" />
+              </SelectTrigger>
+              <SelectContent>
+                {warehouseOptions.map((option) => (
+                  <SelectItem key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        />
+        {errors.initialWarehouseId?.message ? <p className="text-xs text-destructive">{String(errors.initialWarehouseId.message)}</p> : null}
+      </div>
+    </div>
+  )
+}
+
+function PackagingProfileField({ control, register, errors }) {
+  const hasPackaging = useWatch({ control, name: 'packaging' })
+
+  return (
+    <div className="grid gap-4 rounded-2xl border border-border/70 bg-background p-4">
+      <div>
+        <p className="text-sm font-semibold text-foreground">Perfil de empaque</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Permite cuadrar cajas, paquetes y unidades en movimientos y reportes del inventario.
+        </p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-2">
+          <label htmlFor="packaging.unitsPerPackage" className="text-sm font-medium text-foreground">Unidades por paquete</label>
+          <Input id="packaging.unitsPerPackage" type="number" placeholder="12" {...register('packaging.unitsPerPackage', { setValueAs: toNumber })} />
+          {errors?.packaging?.unitsPerPackage?.message ? <p className="text-xs text-destructive">{String(errors.packaging.unitsPerPackage.message)}</p> : null}
+        </div>
+
+        <div className="grid gap-2">
+          <label htmlFor="packaging.packagesPerBox" className="text-sm font-medium text-foreground">Paquetes por caja</label>
+          <Input id="packaging.packagesPerBox" type="number" placeholder="6" {...register('packaging.packagesPerBox', { setValueAs: toNumber })} />
+          {errors?.packaging?.packagesPerBox?.message ? <p className="text-xs text-destructive">{String(errors.packaging.packagesPerBox.message)}</p> : null}
+        </div>
+
+        <div className="grid gap-2 md:col-span-2">
+          <label htmlFor="packaging.notes" className="text-sm font-medium text-foreground">Notas de empaque</label>
+          <Input id="packaging.notes" placeholder="Ej. 1 caja = 6 paquetes de 12 unidades" {...register('packaging.notes')} />
+        </div>
+
+        <div className="grid gap-2 md:col-span-2">
+          <label htmlFor="packaging.saleByUnitOnly" className="text-sm font-medium text-foreground">Venta solo por unidad</label>
+          <Controller
+            name="packaging.saleByUnitOnly"
+            control={control}
+            render={({ field }) => (
+              <Select value={String(Boolean(field.value))} onValueChange={(value) => field.onChange(value === 'true')}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="false">No</SelectItem>
+                  <SelectItem value="true">Si</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+          />
+        </div>
+      </div>
+
+      {!hasPackaging?.unitsPerPackage && !hasPackaging?.packagesPerBox && !hasPackaging?.notes ? (
+        <div className="rounded-xl border border-dashed border-border/70 px-3 py-4 text-sm text-muted-foreground">
+          Si no completas este bloque, el producto quedara sin conversion de empaques.
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function createProductsConfig(lookups, barcodeSearch, favorites) {
+  const selectableProviders = getSelectableProviders(lookups)
+
   return {
     key: 'productos',
+    dialogContentClassName: 'sm:max-w-5xl',
     title: 'Productos',
     description:
-      'Gestiona el catalogo real con tipo, proveedor principal, proveedores asociados, codigos de barras, precios iniciales e inventario asociado a bodegas.',
+      'Gestiona el catalogo real con tipo, proveedor principal, proveedores secundarios, codigos de barras, precios iniciales e inventario asociado a bodegas.',
     singularLabel: 'Producto',
     badgeLabel: 'Catalogo · Inventario',
     createButtonLabel: 'Nuevo producto',
@@ -321,6 +720,12 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
     reactivateSuccessLabel: 'Producto reactivado',
     reactivateConfirmationLabel: 'El producto volvera a quedar disponible para facturar y operar.',
     statusFilter: 'api',
+    formSteps: [
+      { id: 'basico', title: 'Basico', description: 'Define el tipo, nombre y marca del producto.' },
+      { id: 'proveedores', title: 'Proveedor', description: 'Selecciona el proveedor principal y luego marca otros proveedores del mismo listado.' },
+      { id: 'catalogo', title: 'Catalogo', description: 'Completa la descripcion, imagen y codigos del producto.' },
+      { id: 'inventario', title: 'Inventario', description: 'Configura impuesto, precio inicial, bodega y stock.' },
+    ],
     getInitialFilters: () => ({
       productTypeId: 'TODOS',
       providerId: 'TODOS',
@@ -464,9 +869,9 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
       {
         name: 'productTypeId',
         label: 'Tipo de producto',
-        type: 'select',
-        valueType: 'number',
+        render: SearchableSelectField,
         placeholder: 'Selecciona un tipo',
+        stepId: 'basico',
         options: lookups.productTypes.map((item) => ({
           value: item.id,
           label: item.name,
@@ -475,22 +880,27 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
       {
         name: 'providerId',
         label: 'Proveedor principal',
-        type: 'select',
-        valueType: 'number',
+        render: SearchableSelectField,
         placeholder: 'Selecciona un proveedor principal',
-        options: lookups.providers.map((item) => ({
+        stepId: 'proveedores',
+        options: selectableProviders.map((item) => ({
           value: item.id,
           label: item.name,
         })),
       },
       {
         name: 'providerIds',
-        label: 'Proveedores asociados',
+        label: 'Otros proveedores',
         render: ProductProvidersField,
         fullWidth: true,
+        stepId: 'proveedores',
+        options: selectableProviders.map((item) => ({
+          value: item.id,
+          label: item.name,
+        })),
       },
-      { name: 'name', label: 'Nombre', placeholder: 'Cafe premium' },
-      { name: 'brand', label: 'Marca', placeholder: 'Marca propia' },
+      { name: 'name', label: 'Nombre', placeholder: 'Cafe premium', stepId: 'basico' },
+      { name: 'brand', label: 'Marca', placeholder: 'Marca propia', stepId: 'basico' },
       {
         name: 'image',
         label: 'Imagen del producto',
@@ -499,6 +909,7 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
         helpText: 'JPG, PNG o WEBP. Maximo 5 MB.',
         fullWidth: true,
         getPreviewValue: (record) => record?.imageUrl,
+        stepId: 'catalogo',
       },
       {
         name: 'description',
@@ -507,6 +918,7 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
         placeholder: 'Descripcion corta del producto',
         rows: 3,
         fullWidth: true,
+        stepId: 'catalogo',
       },
       {
         name: 'barcodes',
@@ -514,80 +926,129 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
         render: ProductBarcodesField,
         fullWidth: true,
         hiddenOnEdit: true,
+        stepId: 'catalogo',
+      },
+      {
+        name: 'packaging',
+        label: 'Perfil de empaque',
+        render: PackagingProfileField,
+        fullWidth: true,
+        hideLabel: true,
+        stepId: 'catalogo',
+      },
+      {
+        name: 'inventorySetup',
+        label: 'Inventario inicial',
+        render: CreateInventoryLayoutField,
+        fullWidth: true,
+        hideLabel: true,
+        hiddenOnEdit: true,
+        stepId: 'inventario',
+        options: lookups.warehouses.map((item) => ({
+          value: item.id,
+          label: item.location,
+        })),
       },
       {
         name: 'taxRate',
         label: 'Impuesto %',
         type: 'number',
         placeholder: '19',
+        hiddenOnCreate: true,
+        stepId: 'inventario',
       },
       {
         name: 'minimumStock',
         label: 'Stock minimo',
         type: 'number',
         placeholder: '10',
+        hiddenOnCreate: true,
+        stepId: 'inventario',
       },
       {
         name: 'maximumStock',
         label: 'Stock maximo',
         type: 'number',
         placeholder: '100',
+        hiddenOnCreate: true,
+        stepId: 'inventario',
       },
       {
         name: 'initialPriceName',
         label: 'Nombre del precio inicial',
         placeholder: 'Precio base',
+        hiddenOnCreate: true,
         hiddenOnEdit: true,
+        stepId: 'inventario',
       },
       {
         name: 'initialPrice',
         label: 'Precio inicial',
         type: 'number',
         placeholder: '25000',
+        hiddenOnCreate: true,
         hiddenOnEdit: true,
+        stepId: 'inventario',
       },
       {
         name: 'initialWarehouseId',
         label: 'Bodega inicial',
-        type: 'select',
-        valueType: 'number',
+        render: SearchableSelectField,
         placeholder: 'Selecciona una bodega',
         options: lookups.warehouses.map((item) => ({
           value: item.id,
           label: item.location,
         })),
+        hiddenOnCreate: true,
         hiddenOnEdit: true,
+        stepId: 'inventario',
       },
       {
         name: 'initialQuantity',
         label: 'Stock inicial',
         type: 'number',
         placeholder: '50',
+        hiddenOnCreate: true,
         hiddenOnEdit: true,
+        stepId: 'inventario',
       },
     ],
     createSchema: createProductSchema,
     updateSchema: updateProductSchema,
-    getDefaultValues: (_, record) => ({
-      productTypeId: record?.productTypeId ?? undefined,
-      providerId: record?.providerId ?? undefined,
-      providerIds: getSecondaryProviderIds(record),
-      name: record?.name ?? '',
+      getDefaultValues: (_, record) => ({
+        productTypeId: record?.productTypeId ?? undefined,
+        providerId: record?.providerId ?? undefined,
+        providerIds: getSecondaryProviderIds(record),
+        name: record?.name ?? '',
       description: record?.description ?? '',
       brand: record?.brand ?? '',
-      image: undefined,
-      taxRate: Number(record?.taxRate ?? 0),
-      minimumStock: Number(record?.minimumStock ?? 0),
-      maximumStock: record && record.maximumStock !== null && record.maximumStock !== undefined ? Number(record.maximumStock) : undefined,
-      initialPriceName: 'Precio base',
-      initialPrice: undefined,
-      initialWarehouseId: undefined,
-      initialQuantity: undefined,
-      barcodes: [],
-    }),
+        image: undefined,
+        taxRate: Number(record?.taxRate ?? 0),
+        minimumStock: Number(record?.minimumStock ?? 0),
+        maximumStock: record && record.maximumStock !== null && record.maximumStock !== undefined ? Number(record.maximumStock) : undefined,
+        packaging: record?.packagingProfile
+          ? {
+              unitsPerPackage: record.packagingProfile.unitsPerPackage ? Number(record.packagingProfile.unitsPerPackage) : undefined,
+              packagesPerBox: record.packagingProfile.packagesPerBox ? Number(record.packagingProfile.packagesPerBox) : undefined,
+              saleByUnitOnly: Boolean(record.packagingProfile.saleByUnitOnly),
+              notes: record.packagingProfile.notes ?? '',
+            }
+          : undefined,
+        prices: [{ name: 'Precio base', price: undefined, isDefault: true }],
+        initialWarehouseId: undefined,
+        initialQuantity: undefined,
+        barcodes: [],
+      }),
     prepareValues: (mode, values) => {
+      const normalizedValues = { ...values }
+
+      if (normalizedValues.packaging && !normalizedValues.packaging.unitsPerPackage && !normalizedValues.packaging.packagesPerBox && !normalizedValues.packaging.notes && !normalizedValues.packaging.saleByUnitOnly) {
+        normalizedValues.packaging = undefined
+      }
+
       if (mode === 'edit') {
-        const payload = { ...values }
+        const payload = { ...normalizedValues }
+        delete payload.prices
         delete payload.initialPriceName
         delete payload.initialPrice
         delete payload.initialWarehouseId
@@ -596,7 +1057,7 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
         return buildProductFormData(payload)
       }
 
-      return buildCreateProductFormData(values)
+      return buildCreateProductFormData(normalizedValues)
     },
     renderHeaderActions: ({ invalidateRecords }) => <InvoiceOcrImportAction lookups={lookups} onImported={invalidateRecords} />,
     fetchRecords: ({ status, search, page, limit, filters }) => {
@@ -783,6 +1244,12 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
             { label: 'Todos los proveedores', value: formatProviderList(record) },
             { label: 'Marca', value: record.brand },
             { label: 'IVA', value: `${record.taxRate}%` },
+            {
+              label: 'Perfil de empaque',
+              value: record.packagingProfile
+                ? `Paquete: ${record.packagingProfile.unitsPerPackage ?? 'N/D'} unidad(es) · Caja: ${record.packagingProfile.packagesPerBox ?? 'N/D'} paquete(s)`
+                : 'Sin perfil de empaque',
+            },
           ],
         },
         {
@@ -806,6 +1273,12 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
               ),
             },
             { label: 'Bodegas', value: formatWarehouseStock(record) },
+            {
+              label: 'Conversion actual',
+              value: record.packagingSummary
+                ? `${record.packagingSummary.boxes} caja(s) · ${record.packagingSummary.packages} paquete(s) · ${record.packagingSummary.units} unidad(es)`
+                : 'Sin conversion disponible',
+            },
           ],
         },
         {

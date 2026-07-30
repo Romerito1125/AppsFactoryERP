@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { Role } from '../../../common/enums/role.enum';
 
 export class CreateEmployeeDto {
@@ -22,9 +22,8 @@ export class CreateEmployeeDto {
   @IsString()
   address?: string;
 
-  @IsString()
-  @MinLength(3)
-  username: string;
+  @IsEmail()
+  email: string;
 
   @IsString()
   @MinLength(6)

@@ -74,6 +74,11 @@ export class InventoryTransferDto extends InventoryExitDto {
   @IsInt()
   @IsPositive()
   toWarehouseId: number;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  supportNote?: string;
 }
 
 export class InventoryAdjustmentDto {

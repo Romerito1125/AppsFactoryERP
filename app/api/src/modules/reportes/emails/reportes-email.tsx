@@ -26,6 +26,8 @@ interface ReportesEmailProps {
   exogenousRows?: ReportEmailTableRow[];
   gmfRows?: ReportEmailTableRow[];
   lowStockRows?: ReportEmailTableRow[];
+  weeklyStockRows?: ReportEmailTableRow[];
+  transferRows?: ReportEmailTableRow[];
   topProductRows?: ReportEmailTableRow[];
 }
 
@@ -154,6 +156,8 @@ export function ReportesEmail(props: ReportesEmailProps) {
   const exogenousRows = normalizeRows(props.exogenousRows as Array<Record<string, unknown>>);
   const gmfRows = normalizeRows(props.gmfRows as Array<Record<string, unknown>>);
   const lowStockRows = normalizeRows(props.lowStockRows as Array<Record<string, unknown>>);
+  const weeklyStockRows = normalizeRows(props.weeklyStockRows as Array<Record<string, unknown>>);
+  const transferRows = normalizeRows(props.transferRows as Array<Record<string, unknown>>);
   const topProductRows = normalizeRows(props.topProductRows as Array<Record<string, unknown>>);
   const preview = `${props.subject} · Corte ${props.startDate} a ${props.endDate}`;
 
@@ -259,6 +263,22 @@ export function ReportesEmail(props: ReportesEmailProps) {
                 title="Stock critico y regular"
                 description="Productos que requieren seguimiento o reposicion a la fecha de corte."
                 rows={lowStockRows}
+              />
+            ) : null}
+
+            {props.sections.includes(ReportEmailSection.STOCK_SEMANAL) ? (
+              <DataTable
+                title="Stock semanal con corte dominical"
+                description="Snapshot reconstruido para el ultimo corte semanal en domingo."
+                rows={weeklyStockRows}
+              />
+            ) : null}
+
+            {props.sections.includes(ReportEmailSection.TRASLADOS) ? (
+              <DataTable
+                title="Traslados entre bodegas"
+                description="Movimientos recientes entre bodegas con ticket y soporte asociado."
+                rows={transferRows}
               />
             ) : null}
 

@@ -37,6 +37,8 @@ export class ReportesService {
         exogenousRows: this.normalizeRows(payload.exogenousRows),
         gmfRows: this.normalizeRows(payload.gmfRows),
         lowStockRows: this.normalizeRows(payload.lowStockRows),
+        weeklyStockRows: this.normalizeRows(payload.weeklyStockRows),
+        transferRows: this.normalizeRows(payload.transferRows),
         topProductRows: this.normalizeRows(payload.topProductRows),
       }),
     );

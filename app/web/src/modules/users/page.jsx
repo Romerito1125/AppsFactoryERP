@@ -23,7 +23,7 @@ const roleOptions = [
 
 const createSchema = z.object({
   clientId: z.number().int().nonnegative('Selecciona un cliente valido').optional(),
-  username: z.string().min(3, 'Minimo 3 caracteres'),
+  email: z.string().email('Ingresa un correo valido'),
   password: z.string().min(6, 'Minimo 6 caracteres'),
   role: z.enum(['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR']),
   isActive: z.boolean(),
@@ -31,7 +31,7 @@ const createSchema = z.object({
 
 const updateSchema = z.object({
   clientId: z.number().int().nonnegative('Selecciona un cliente valido').optional(),
-  username: z.string().min(3, 'Minimo 3 caracteres'),
+  email: z.string().email('Ingresa un correo valido'),
   password: z.string().optional(),
   role: z.enum(['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR']),
   isActive: z.boolean(),
@@ -46,19 +46,19 @@ function createUsersConfig(clients) {
     key: 'usuarios',
     title: 'Usuarios del sistema',
     description:
-      'Gestiona accesos internos por categoria operativa y, si aplica, vinculalos con clientes existentes.',
+      'Gestiona accesos internos por categoria operativa usando correo como credencial de ingreso.',
     singularLabel: 'Usuario',
     badgeLabel: 'Seguridad · Roles',
     createButtonLabel: 'Nuevo usuario',
     createTitle: 'Crear usuario',
     editTitle: 'Actualizar usuario',
-    createDescription: 'Registra un nuevo acceso interno para el administrador web.',
-    editDescription: 'Ajusta cliente asociado, credenciales, rol operativo o estado del usuario.',
+    createDescription: 'Registra un nuevo acceso interno usando correo como inicio de sesion.',
+    editDescription: 'Ajusta cliente asociado, correo, clave, rol operativo o estado del usuario.',
     submitCreateLabel: 'Crear usuario',
     submitEditLabel: 'Guardar cambios',
     tableTitle: 'Directorio de accesos',
     tableDescription: 'Vista centralizada de usuarios, categorias, cliente relacionado y disponibilidad.',
-    searchPlaceholder: 'Buscar por username, rol o cliente...',
+    searchPlaceholder: 'Buscar por correo, rol o cliente...',
     emptyTitle: 'No hay usuarios para mostrar',
     emptyDescription: 'Crea el primer usuario para empezar a operar el sistema.',
     archiveLoadingLabel: 'Desactivando usuario...',
@@ -86,10 +86,10 @@ function createUsersConfig(clients) {
         ],
       },
       {
-        name: 'username',
-        label: 'Username',
-        placeholder: 'admin-general',
-        autoComplete: 'username',
+        name: 'email',
+        label: 'Correo',
+        placeholder: 'admin@empresa.com',
+        autoComplete: 'email',
       },
       {
         name: 'password',
@@ -117,7 +117,7 @@ function createUsersConfig(clients) {
     updateSchema,
     getDefaultValues: (_, record) => ({
       clientId: record?.clientId ?? 0,
-      username: record?.username ?? '',
+      email: record?.username ?? '',
       password: '',
       role: record?.role ?? 'CAJERO',
       isActive: record?.isActive ?? true,
@@ -142,8 +142,8 @@ function createUsersConfig(clients) {
     archiveRecord: (id) => apiClient.delete(`/usuarios/${id}`),
     reactivateRecord: (id) => apiClient.patch(`/usuarios/${id}`, { isActive: true }),
     searchResolver: (record) => [
-      record.username,
-      formatRole(record.role),
+        record.username,
+        formatRole(record.role),
       clientsMap.get(record.clientId),
       record.clientId ? null : 'interno sin cliente',
       String(record.clientId),
@@ -178,8 +178,8 @@ function createUsersConfig(clients) {
     },
     columns: [
       {
-        key: 'username',
-        label: 'Usuario',
+        key: 'email',
+        label: 'Correo',
         render: (record) => (
           <div>
             <p className="font-medium text-foreground">{record.username}</p>
@@ -216,7 +216,7 @@ function createUsersConfig(clients) {
       {
         label: 'Informacion general',
         items: [
-          { label: 'Username', value: record.username },
+          { label: 'Correo', value: record.username },
           {
             label: 'Cliente',
             value: clientsMap.get(record.clientId) ?? (record.clientId ? `Cliente #${record.clientId}` : 'Interno sin cliente'),

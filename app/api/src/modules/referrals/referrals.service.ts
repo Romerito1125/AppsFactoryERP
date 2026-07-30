@@ -9,6 +9,8 @@ import {
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateReferralDto } from './dto/create-referral.dto';
 import { ListReferralsQueryDto } from './dto/list-referrals-query.dto';
 import { ValidateReferralDto } from './dto/validate-referral.dto';
@@ -16,7 +18,10 @@ import { UpdateReferralProfitPolicyDto } from './dto/update-referral-profit-poli
 
 @Injectable()
 export class ReferralsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async findAll(query: ListReferralsQueryDto) {
     const where = this.getSearchWhere(query.q);
@@ -166,15 +171,25 @@ export class ReferralsService {
     }
   }
 
-  findProfitPolicies() {
+  async findProfitPolicies() {
+    await this.ensureDefaultProfitPolicies();
     return this.prisma.referralProfitPolicy.findMany({
       orderBy: { generation: 'asc' },
     });
   }
 
-  async updateProfitPolicies(policies: UpdateReferralProfitPolicyDto[]) {
+  async updateProfitPolicies(
+    policies: UpdateReferralProfitPolicyDto[],
+    actor: AuthUser,
+  ) {
     if (!Array.isArray(policies) || !policies.length) {
       throw new BadRequestException('Debe enviar al menos una política');
+    }
+
+    if (policies.length !== 4) {
+      throw new BadRequestException(
+        'La politica de referidos debe definir exactamente 4 generaciones',
+      );
     }
 
     const generations = new Set<number>();
@@ -239,7 +254,53 @@ export class ReferralsService {
       ),
     );
 
-    return this.findProfitPolicies();
+    await this.prisma.referralProfitPolicy.updateMany({
+      where: { generation: { gt: 4 } },
+      data: { isActive: false },
+    });
+
+    const result = await this.findProfitPolicies();
+
+    await this.auditLogService.log({
+      actor,
+      module: 'REFERIDOS',
+      action: 'UPDATE_PROFIT_POLICY',
+      entityType: 'ReferralProfitPolicy',
+      description:
+        'Actualizo la politica de utilidad de referidos a 4 generaciones',
+      metadata: {
+        policies: result.map((policy) => ({
+          generation: policy.generation,
+          percentage: Number(policy.percentage),
+          isActive: policy.isActive,
+        })),
+      },
+    });
+
+    return result;
+  }
+
+  private async ensureDefaultProfitPolicies() {
+    const defaultPolicies = [
+      { generation: 1, percentage: 10 },
+      { generation: 2, percentage: 10 },
+      { generation: 3, percentage: 5 },
+      { generation: 4, percentage: 5 },
+    ];
+
+    await this.prisma.$transaction(
+      defaultPolicies.map((policy) =>
+        this.prisma.referralProfitPolicy.upsert({
+          where: { generation: policy.generation },
+          create: {
+            generation: policy.generation,
+            percentage: policy.percentage,
+            isActive: true,
+          },
+          update: {},
+        }),
+      ),
+    );
   }
 
   private getSearchWhere(search?: string) {

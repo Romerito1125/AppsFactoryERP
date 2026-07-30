@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsInt,
   IsNumber,
   IsOptional,
@@ -28,6 +29,7 @@ export class BankAmountDto {
   @Type(() => Number) @IsNumber() @IsPositive() amount: number;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @Type(() => Number) @IsInt() @IsPositive() invoiceId?: number;
+  @IsOptional() @IsBoolean() appliesGmf?: boolean;
 }
 
 export class BankTransferDto {
@@ -35,6 +37,7 @@ export class BankTransferDto {
   @Type(() => Number) @IsInt() @IsPositive() toBankAccountId: number;
   @Type(() => Number) @IsNumber() @IsPositive() amount: number;
   @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsBoolean() appliesGmf?: boolean;
 }
 
 export class BankAdjustmentDto {

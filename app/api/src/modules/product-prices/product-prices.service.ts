@@ -8,13 +8,18 @@ import {
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateProductPriceDto } from './dto/create-product-price.dto';
 import { FilterProductPricesDto } from './dto/filter-product-prices.dto';
 import { UpdateProductPriceDto } from './dto/update-product-price.dto';
 
 @Injectable()
 export class ProductPricesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async findAll(query: FilterProductPricesDto) {
     const where = {
@@ -65,6 +70,7 @@ export class ProductPricesService {
   async create(
     productId: number,
     createProductPriceDto: CreateProductPriceDto,
+    actor: AuthUser,
   ) {
     this.ensurePositiveId(productId);
     await this.ensureProductExists(productId);
@@ -77,7 +83,7 @@ export class ProductPricesService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const price = await this.prisma.$transaction(async (tx) => {
       if (data.isDefault) {
         await tx.productPrice.updateMany({
           where: { productId },
@@ -99,10 +105,33 @@ export class ProductPricesService {
         },
         include: { product: true },
       });
+
     });
+
+    await this.auditLogService.log({
+      actor,
+      module: 'PRECIOS_PRODUCTO',
+      action: 'CREATE_PRICE',
+      entityType: 'ProductPrice',
+      entityId: price.id,
+      entityLabel: `${price.product.name} · ${price.name}`,
+      description: `Creo un precio para ${price.product.name}`,
+      metadata: {
+        productId,
+        priceId: price.id,
+        price: Number(price.price),
+        isDefault: price.isDefault,
+      },
+    });
+
+    return price;
   }
 
-  async update(id: number, updateProductPriceDto: UpdateProductPriceDto) {
+  async update(
+    id: number,
+    updateProductPriceDto: UpdateProductPriceDto,
+    actor: AuthUser,
+  ) {
     const current = await this.findOne(id);
     const { reason, ...updateData } = updateProductPriceDto;
     const data = this.normalizeDates(updateData, current);
@@ -117,7 +146,7 @@ export class ProductPricesService {
       data.isDefault = false;
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const price = await this.prisma.$transaction(async (tx) => {
       if (data.isDefault) {
         await tx.productPrice.updateMany({
           where: { productId: current.productId, id: { not: id } },
@@ -145,19 +174,54 @@ export class ProductPricesService {
         include: { product: true },
       });
     });
+
+    await this.auditLogService.log({
+      actor,
+      module: 'PRECIOS_PRODUCTO',
+      action:
+        updateProductPriceDto.price !== undefined &&
+        Number(updateProductPriceDto.price) !== Number(current.price)
+          ? 'CHANGE_PRICE'
+          : 'UPDATE_PRICE',
+      entityType: 'ProductPrice',
+      entityId: price.id,
+      entityLabel: `${price.product.name} · ${price.name}`,
+      description: `Actualizo el precio ${price.name} de ${price.product.name}`,
+      metadata: {
+        priceId: price.id,
+        productId: price.productId,
+        previousPrice: Number(current.price),
+        nextPrice: Number(price.price),
+        changedFields: Object.keys(updateProductPriceDto),
+        reason,
+      },
+    });
+
+    return price;
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, actor: AuthUser) {
+    const current = await this.findOne(id);
 
-    return this.prisma.productPrice.update({
+    const price = await this.prisma.productPrice.update({
       where: { id },
       data: { isActive: false, isDefault: false },
       include: { product: true },
     });
+    await this.auditLogService.log({
+      actor,
+      module: 'PRECIOS_PRODUCTO',
+      action: 'DEACTIVATE_PRICE',
+      entityType: 'ProductPrice',
+      entityId: price.id,
+      entityLabel: `${price.product.name} · ${price.name}`,
+      description: `Desactivo el precio ${price.name} de ${price.product.name}`,
+      metadata: { priceId: price.id, previousStatus: current.isActive },
+    });
+    return price;
   }
 
-  async markDefault(id: number) {
+  async markDefault(id: number, actor: AuthUser) {
     const productPrice = await this.findOne(id);
 
     if (!productPrice.isActive) {
@@ -166,7 +230,7 @@ export class ProductPricesService {
       );
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    const price = await this.prisma.$transaction(async (tx) => {
       await tx.productPrice.updateMany({
         where: { productId: productPrice.productId, id: { not: id } },
         data: { isDefault: false },
@@ -178,6 +242,19 @@ export class ProductPricesService {
         include: { product: true },
       });
     });
+
+    await this.auditLogService.log({
+      actor,
+      module: 'PRECIOS_PRODUCTO',
+      action: 'SET_DEFAULT_PRICE',
+      entityType: 'ProductPrice',
+      entityId: price.id,
+      entityLabel: `${price.product.name} · ${price.name}`,
+      description: `Marco como principal el precio ${price.name} de ${price.product.name}`,
+      metadata: { priceId: price.id, productId: price.productId },
+    });
+
+    return price;
   }
 
   async history(id: number) {

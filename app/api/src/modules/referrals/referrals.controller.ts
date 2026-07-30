@@ -6,19 +6,24 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Req,
   Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '../../common/enums/role.enum';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { CreateReferralDto } from './dto/create-referral.dto';
 import { ListReferralsQueryDto } from './dto/list-referrals-query.dto';
 import { UpdateReferralProfitPolicyDto } from './dto/update-referral-profit-policy.dto';
 import { ValidateReferralDto } from './dto/validate-referral.dto';
 import { ReferralsService } from './referrals.service';
+
+type AuthRequest = Request & { user: AuthUser };
 
 @Controller('referidos')
 export class ReferralsController {
@@ -39,15 +44,21 @@ export class ReferralsController {
   @Put('politicas-utilidad')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
-  replaceProfitPolicies(@Body() policies: UpdateReferralProfitPolicyDto[]) {
-    return this.referralsService.updateProfitPolicies(policies);
+  replaceProfitPolicies(
+    @Body() policies: UpdateReferralProfitPolicyDto[],
+    @Req() request: AuthRequest,
+  ) {
+    return this.referralsService.updateProfitPolicies(policies, request.user);
   }
 
   @Patch('politicas-utilidad')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
-  updateProfitPolicies(@Body() policies: UpdateReferralProfitPolicyDto[]) {
-    return this.referralsService.updateProfitPolicies(policies);
+  updateProfitPolicies(
+    @Body() policies: UpdateReferralProfitPolicyDto[],
+    @Req() request: AuthRequest,
+  ) {
+    return this.referralsService.updateProfitPolicies(policies, request.user);
   }
 
   @Get(':id')

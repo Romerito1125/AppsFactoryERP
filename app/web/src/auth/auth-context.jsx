@@ -5,11 +5,11 @@ const AUTH_STORAGE_KEY = 'mmm-auth-session'
 const AuthContext = createContext(null)
 
 export const demoCredentials = {
-  'santiago.admin': 'Admin123*',
-  'laura.cajero': 'Cajero123*',
-  'valentina.ventas': 'Ventas123*',
-  'diego.bodega': 'Bodega123*',
-  'camila.conta': 'Conta123*',
+  'santiago.admin@appsfactory.local': 'Admin123*',
+  'laura.cajero@appsfactory.local': 'Cajero123*',
+  'valentina.ventas@appsfactory.local': 'Ventas123*',
+  'diego.bodega@appsfactory.local': 'Bodega123*',
+  'camila.conta@appsfactory.local': 'Conta123*',
 }
 
 export function getStoredSession() {

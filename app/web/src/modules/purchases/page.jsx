@@ -951,6 +951,56 @@ export function PurchasesPage() {
 
       <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
         <CardHeader>
+          <CardTitle>Productos comprados por proveedor</CardTitle>
+          <CardDescription>
+            Cruce directo para ver a quién le compras cada producto, cuántas unidades recibiste y cuánto dinero has movido con ese proveedor.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Proveedor</TableHead>
+                <TableHead>Producto</TableHead>
+                <TableHead>Lineas</TableHead>
+                <TableHead>Pedido</TableHead>
+                <TableHead>Recibido</TableHead>
+                <TableHead>Costo promedio</TableHead>
+                <TableHead>Total comprado</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {report?.byProductProvider?.length ? (
+                report.byProductProvider.map((item) => (
+                  <TableRow key={`${item.provider?.id ?? 'p'}-${item.product?.id ?? 'x'}`}>
+                    <TableCell className="font-medium">{item.provider?.name ?? 'Proveedor'}</TableCell>
+                    <TableCell>
+                      <div>
+                        <p className="font-medium text-foreground">{item.product?.name ?? 'Producto'}</p>
+                        <p className="text-xs text-muted-foreground">{item.product?.brand ?? item.product?.unit ?? 'Sin marca'}</p>
+                      </div>
+                    </TableCell>
+                    <TableCell>{formatNumber(item.orderLines)}</TableCell>
+                    <TableCell>{formatNumber(item.orderedQuantity)}</TableCell>
+                    <TableCell>{formatNumber(item.receivedQuantity)}</TableCell>
+                    <TableCell>{formatCurrency(item.averageUnitCost)}</TableCell>
+                    <TableCell className="font-medium">{formatCurrency(item.total)}</TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
+                    Todavia no hay compras recibidas para construir la relacion producto-proveedor.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+        <CardHeader>
           <CardTitle>Operacion de compras</CardTitle>
           <CardDescription>Filtra por estado, proveedor, bodega o fecha y controla cada etapa de abastecimiento.</CardDescription>
         </CardHeader>

@@ -341,6 +341,7 @@ export class ComprasService {
       summary,
       providerGroups,
       productGroups,
+      productProviderLines,
       timeRows,
     ] = await Promise.all([
       this.prisma.purchaseOrder.aggregate({
@@ -368,6 +369,28 @@ export class ComprasService {
         where: { purchaseOrder: where },
         _count: { _all: true },
         _sum: { quantity: true, receivedQuantity: true, total: true },
+      }),
+      this.prisma.purchaseOrderItem.findMany({
+        where: { purchaseOrder: where },
+        select: {
+          productId: true,
+          quantity: true,
+          receivedQuantity: true,
+          unitCost: true,
+          subtotal: true,
+          total: true,
+          product: {
+            select: { id: true, name: true, brand: true, unit: true },
+          },
+          purchaseOrder: {
+            select: {
+              providerId: true,
+              provider: {
+                select: { id: true, name: true },
+              },
+            },
+          },
+        },
       }),
       this.prisma.purchaseOrder.findMany({
         where,
@@ -429,6 +452,9 @@ export class ComprasService {
       }))
       .sort((a, b) => Number(b.total) - Number(a.total))
       .slice(0, query.topProducts ?? 10);
+    const byProductProvider = this.buildProductProviderBreakdown(
+      productProviderLines,
+    );
 
     return {
       totalPurchases: allSummary._count._all,
@@ -458,10 +484,77 @@ export class ComprasService {
         query.granularity ?? PurchaseReportGranularity.MES,
       ),
       topProducts,
+      byProductProvider,
     };
   }
 
   private readonly zero = new Prisma.Decimal(0);
+
+  private buildProductProviderBreakdown(
+    rows: Array<{
+      productId: number;
+      quantity: number;
+      receivedQuantity: number;
+      unitCost: Prisma.Decimal;
+      subtotal: Prisma.Decimal;
+      total: Prisma.Decimal;
+      product: { id: number; name: string; brand: string; unit: string };
+      purchaseOrder: {
+        providerId: number;
+        provider: { id: number; name: string };
+      };
+    }>,
+  ) {
+    const grouped = new Map<
+      string,
+      {
+        provider: { id: number; name: string };
+        product: { id: number; name: string; brand: string; unit: string };
+        orderLines: number;
+        orderedQuantity: number;
+        receivedQuantity: number;
+        subtotal: Prisma.Decimal;
+        total: Prisma.Decimal;
+        unitCostWeighted: Prisma.Decimal;
+      }
+    >();
+
+    for (const row of rows) {
+      const key = `${row.purchaseOrder.providerId}:${row.productId}`;
+      const current = grouped.get(key) ?? {
+        provider: row.purchaseOrder.provider,
+        product: row.product,
+        orderLines: 0,
+        orderedQuantity: 0,
+        receivedQuantity: 0,
+        subtotal: this.zero,
+        total: this.zero,
+        unitCostWeighted: this.zero,
+      };
+
+      current.orderLines += 1;
+      current.orderedQuantity += row.quantity;
+      current.receivedQuantity += row.receivedQuantity;
+      current.subtotal = current.subtotal.plus(row.subtotal);
+      current.total = current.total.plus(row.total);
+      current.unitCostWeighted = current.unitCostWeighted.plus(
+        row.unitCost.mul(row.receivedQuantity || row.quantity),
+      );
+      grouped.set(key, current);
+    }
+
+    return [...grouped.values()]
+      .map((item) => ({
+        ...item,
+        averageUnitCost:
+          item.receivedQuantity > 0
+            ? item.unitCostWeighted.div(item.receivedQuantity).toDecimalPlaces(2)
+            : item.orderedQuantity > 0
+              ? item.unitCostWeighted.div(item.orderedQuantity).toDecimalPlaces(2)
+              : this.zero,
+      }))
+      .sort((a, b) => Number(b.total) - Number(a.total));
+  }
 
   private averageLeadDays(
     rows: Array<{ orderedAt: Date; receivedAt: Date | null }>,

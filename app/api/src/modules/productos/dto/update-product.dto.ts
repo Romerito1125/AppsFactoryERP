@@ -14,6 +14,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { ProductPackagingProfileDto } from './create-product.dto';
 
 export class UpdateProductDto {
   @IsOptional()
@@ -84,6 +85,11 @@ export class UpdateProductDto {
   @ValidateNested({ each: true })
   @Type(() => UpdateProductBarcodeDto)
   barcodes?: UpdateProductBarcodeDto[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ProductPackagingProfileDto)
+  packaging?: ProductPackagingProfileDto;
 }
 
 export class UpdateProductBarcodeDto {

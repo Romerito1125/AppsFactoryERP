@@ -53,6 +53,28 @@ export class CreateInitialProductPriceDto {
   endsAt?: string;
 }
 
+export class ProductPackagingProfileDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  unitsPerPackage?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  packagesPerBox?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  saleByUnitOnly?: boolean;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
 export class CreateProductDto {
   @Type(() => Number)
   @IsInt()
@@ -128,6 +150,11 @@ export class CreateProductDto {
   @ValidateNested({ each: true })
   @Type(() => CreateProductBarcodeDto)
   barcodes?: CreateProductBarcodeDto[];
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ProductPackagingProfileDto)
+  packaging?: ProductPackagingProfileDto;
 }
 
 export class CreateProductBarcodeDto {

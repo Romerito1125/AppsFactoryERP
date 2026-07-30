@@ -57,6 +57,7 @@ import {
 } from '@/components/ui/chart'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { NativeSelect } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -117,6 +118,57 @@ function createDateRange(startDate, endDate) {
   }
 }
 
+function getLastSunday(referenceDate) {
+  const date = new Date(referenceDate)
+  date.setHours(0, 0, 0, 0)
+  const day = date.getDay()
+  date.setDate(date.getDate() - day)
+  return date
+}
+
+function getWeeklySundayCutoff(referenceDate) {
+  const sunday = getLastSunday(referenceDate)
+  const start = new Date(sunday)
+  start.setDate(start.getDate() - 6)
+  start.setHours(0, 0, 0, 0)
+
+  const end = new Date(sunday)
+  end.setHours(23, 59, 59, 999)
+
+  return { start, end }
+}
+
+function getTotalStockAtDate(product, movements, cutoffEnd) {
+  let total = getTotalStock(product)
+
+  for (const movement of movements) {
+    const movementDate = new Date(movement.createdAt)
+
+    if (movementDate <= cutoffEnd || movement.productId !== product.id) {
+      continue
+    }
+
+    const quantity = Number(movement.quantity ?? 0)
+
+    if (movement.movementType === 'ENTRADA') {
+      total -= quantity
+      continue
+    }
+
+    if (movement.movementType === 'SALIDA') {
+      total += quantity
+      continue
+    }
+
+    if (movement.movementType === 'AJUSTE') {
+      total += movement.fromWarehouseId ? quantity : 0
+      total -= movement.toWarehouseId ? quantity : 0
+    }
+  }
+
+  return Math.max(0, total)
+}
+
 function isWithinRange(value, range) {
   if (!value) return false
 
@@ -136,6 +188,10 @@ function formatShortDate(value) {
 
 function formatPercent(value) {
   return `${Number(value ?? 0).toFixed(2)}%`
+}
+
+function formatSaleMode(value) {
+  return value === 'CREDITO' ? 'Credito' : 'Contado'
 }
 
 function getTotalStock(product) {
@@ -227,8 +283,10 @@ const reportEmailSectionOptions = [
   { value: 'FACTURAS', label: 'Facturas', description: 'Detalle operativo de facturacion por documento.' },
   { value: 'IVA', label: 'IVA', description: 'Consolidado del impuesto por tarifa.' },
   { value: 'EXOGENAS', label: 'Exogenas', description: 'Base consolidada por cliente.' },
-  { value: 'GMF', label: '4x1000', description: 'Impacto estimado por cuenta bancaria.' },
+  { value: 'GMF', label: '4x1000', description: 'Impacto segmentado por cuenta bancaria.' },
   { value: 'STOCK', label: 'Stock critico', description: 'Productos en seguimiento o reposicion.' },
+  { value: 'STOCK_SEMANAL', label: 'Stock semanal', description: 'Corte dominical reconstruido desde movimientos.' },
+  { value: 'TRASLADOS', label: 'Traslados', description: 'Traslados recientes entre bodegas con ticket.' },
   { value: 'PRODUCTOS', label: 'Top productos', description: 'Mayor rotacion y facturacion del periodo.' },
 ]
 
@@ -276,12 +334,21 @@ function buildReportEmailPayload({ report, summaryCards, startDate, endDate, sec
       Fecha: formatDate(row.createdAt),
       Numero: row.consecutive,
       Cliente: row.clientName,
+      Usuario: row.sellerName,
+      Deposito: row.warehouseName,
+      Ciudad: row.city,
+      Zona: row.zone,
+      Estacion: row.station,
+      Operacion: `${row.source} · ${formatSaleMode(row.saleMode)}`,
       Estado: formatInvoiceStatus(row.status),
       Neto: formatCurrency(row.subtotal),
       Contado: formatCurrency(row.contado),
       Credito: formatCurrency(row.credito),
       IVA: formatCurrency(row.taxes),
       Total: formatCurrency(row.total),
+      Costo: formatCurrency(row.cost),
+      Utilidad: formatCurrency(row.profit),
+      '% Utilidad': formatPercent(row.profitPercentage),
     })),
     ivaRows: report.ivaRows.slice(0, 20).map((row) => ({
       Tarifa: formatPercent(row.rate),
@@ -318,6 +385,22 @@ function buildReportEmailPayload({ report, summaryCards, startDate, endDate, sec
           : `Min ${formatNumber(product.minimumStock)} · Max libre`,
       Semaforo: product.signal.label,
     })),
+    weeklyStockRows: report.weeklyStockRows.slice(0, 20).map((product) => ({
+      Producto: product.name,
+      Marca: product.brand,
+      'Stock corte domingo': formatNumber(product.totalStockAtCutoff),
+      'Movimientos semana': formatNumber(product.weeklyMovements),
+      Estado: product.signal.label,
+    })),
+    transferRows: report.transferDigestRows.slice(0, 25).map((row) => ({
+      Ticket: row.ticketNumber,
+      Producto: row.productName,
+      Origen: row.fromWarehouse,
+      Destino: row.toWarehouse,
+      Cantidad: formatNumber(row.quantity),
+      Soporte: row.supportNote,
+      Fecha: formatDate(row.createdAt),
+    })),
     topProductRows: report.productSales.slice(0, 20).map((product) => ({
       Producto: product.name,
       Categoria: product.productTypeName,
@@ -330,7 +413,7 @@ function buildReportEmailPayload({ report, summaryCards, startDate, endDate, sec
   }
 }
 
-function buildReportSectionConfigs({ report, startDate, endDate }) {
+function buildReportSectionConfigs({ report, startDate, endDate, transferWindowDays }) {
   const periodLabel = `${startDate} a ${endDate}`
 
   return [
@@ -344,30 +427,48 @@ function buildReportSectionConfigs({ report, startDate, endDate }) {
       metrics: [
         { label: 'Facturas en corte', value: formatNumber(report.invoiceRows.length), help: periodLabel },
         { label: 'Neto', value: formatCurrency(report.totals.subtotal), help: 'Base de facturacion activa.' },
-        { label: 'IVA', value: formatCurrency(report.totals.taxes), help: 'Impuesto acumulado.' },
-        { label: 'Total', value: formatCurrency(report.totals.total), help: 'Valor total del corte.' },
+        { label: 'Costo', value: formatCurrency(report.totals.cost), help: 'Costo historico registrado en items.' },
+        { label: 'Utilidad', value: formatCurrency(report.totals.profit), help: 'Utilidad calculada del corte.' },
       ],
       columns: [
         { key: 'fecha', label: 'Fecha' },
         { key: 'consecutivo', label: 'Consecutivo' },
         { key: 'cliente', label: 'Cliente' },
+        { key: 'usuario', label: 'Usuario' },
+        { key: 'deposito', label: 'Deposito' },
+        { key: 'ciudad', label: 'Ciudad' },
+        { key: 'zona', label: 'Zona' },
+        { key: 'estacion', label: 'Estacion' },
+        { key: 'operacion', label: 'Operacion' },
         { key: 'estado', label: 'Estado' },
         { key: 'neto', label: 'Neto' },
         { key: 'contado', label: 'Contado' },
         { key: 'credito', label: 'Credito' },
         { key: 'iva', label: 'IVA' },
         { key: 'total', label: 'Total' },
+        { key: 'costo', label: 'Costo' },
+        { key: 'utilidad', label: 'Utilidad' },
+        { key: 'porcentaje', label: '% Utilidad' },
       ],
       rows: report.invoiceRows.map((row) => ({
         fecha: formatDate(row.createdAt),
         consecutivo: row.consecutive,
         cliente: row.clientName,
+        usuario: row.sellerName,
+        deposito: row.warehouseName,
+        ciudad: row.city,
+        zona: row.zone,
+        estacion: row.station,
+        operacion: `${row.source} · ${formatSaleMode(row.saleMode)}`,
         estado: formatInvoiceStatus(row.status),
         neto: formatCurrency(row.subtotal),
         contado: formatCurrency(row.contado),
         credito: formatCurrency(row.credito),
         iva: formatCurrency(row.taxes),
         total: formatCurrency(row.total),
+        costo: formatCurrency(row.cost),
+        utilidad: formatCurrency(row.profit),
+        porcentaje: formatPercent(row.profitPercentage),
       })),
     },
     {
@@ -433,14 +534,14 @@ function buildReportSectionConfigs({ report, startDate, endDate }) {
     {
       key: 'GMF',
       title: '4x1000 bancario',
-      description: 'Impacto estimado sobre egresos y transferencias salientes.',
+      description: 'Impacto persistido sobre egresos y transferencias salientes con 4x1000.',
       icon: Landmark,
       filename: `reporte-4x1000-${startDate}-${endDate}.pdf`,
       csvFilename: `reporte-4x1000-${startDate}-${endDate}.csv`,
       metrics: [
         { label: 'Cuentas impactadas', value: formatNumber(report.gmfByAccount.length), help: periodLabel },
         { label: 'Base gravable', value: formatCurrency(report.gmfMovements.reduce((sum, item) => sum + item.base, 0)), help: 'Movimientos salientes.' },
-        { label: 'GMF estimado', value: formatCurrency(report.gmfMovements.reduce((sum, item) => sum + item.tax, 0)), help: 'Calculo referencial.' },
+        { label: 'GMF segmentado', value: formatCurrency(report.gmfMovements.reduce((sum, item) => sum + item.tax, 0)), help: 'Valor persistido por movimiento.' },
       ],
       columns: [
         { key: 'cuenta', label: 'Cuenta' },
@@ -490,6 +591,64 @@ function buildReportSectionConfigs({ report, startDate, endDate }) {
       })),
     },
     {
+      key: 'STOCK_SEMANAL',
+      title: 'Stock semanal con corte dominical',
+      description: `Snapshot reconstruido para la semana cerrada el ${report.weeklyStockCutoffLabel}.`,
+      icon: PackageSearch,
+      filename: `reporte-stock-semanal-${report.weeklyStockCutoffDate}.pdf`,
+      csvFilename: `reporte-stock-semanal-${report.weeklyStockCutoffDate}.csv`,
+      metrics: [
+        { label: 'Semana cerrada', value: report.weeklyStockCutoffLabel, help: 'Corte automatico al domingo.' },
+        { label: 'Criticos', value: formatNumber(report.weeklyStockRows.filter((product) => product.signal.tone === 'critical').length), help: 'Productos bajo minimo al cierre.' },
+        { label: 'Movimientos', value: formatNumber(report.weeklyStockRows.reduce((sum, product) => sum + product.weeklyMovements, 0)), help: 'Movimientos detectados en la semana.' },
+      ],
+      columns: [
+        { key: 'producto', label: 'Producto' },
+        { key: 'marca', label: 'Marca' },
+        { key: 'stock', label: 'Stock corte domingo' },
+        { key: 'movimientos', label: 'Movimientos semana' },
+        { key: 'semaforo', label: 'Semaforo' },
+      ],
+      rows: report.weeklyStockRows.map((product) => ({
+        producto: product.name,
+        marca: product.brand,
+        stock: formatNumber(product.totalStockAtCutoff),
+        movimientos: formatNumber(product.weeklyMovements),
+        semaforo: product.signal.label,
+      })),
+    },
+    {
+      key: 'TRASLADOS',
+      title: 'Traslados entre bodegas',
+      description: `Resumen operativo de los ultimos ${transferWindowDays} dia(s).`,
+      icon: PackageSearch,
+      filename: `reporte-traslados-${transferWindowDays}d-${endDate}.pdf`,
+      csvFilename: `reporte-traslados-${transferWindowDays}d-${endDate}.csv`,
+      metrics: [
+        { label: 'Tickets', value: formatNumber(report.transferDigestRows.length), help: 'Traslados aprobados en la ventana.' },
+        { label: 'Unidades', value: formatNumber(report.transferDigestRows.reduce((sum, row) => sum + row.quantity, 0)), help: 'Cantidad movilizada.' },
+        { label: 'Ventana', value: `${transferWindowDays} dia(s)`, help: 'Periodo movil configurable.' },
+      ],
+      columns: [
+        { key: 'ticket', label: 'Ticket' },
+        { key: 'producto', label: 'Producto' },
+        { key: 'origen', label: 'Origen' },
+        { key: 'destino', label: 'Destino' },
+        { key: 'cantidad', label: 'Cantidad' },
+        { key: 'soporte', label: 'Soporte' },
+        { key: 'fecha', label: 'Fecha' },
+      ],
+      rows: report.transferDigestRows.map((row) => ({
+        ticket: row.ticketNumber,
+        producto: row.productName,
+        origen: row.fromWarehouse,
+        destino: row.toWarehouse,
+        cantidad: formatNumber(row.quantity),
+        soporte: row.supportNote,
+        fecha: formatDate(row.createdAt),
+      })),
+    },
+    {
       key: 'PRODUCTOS',
       title: 'Top productos vendidos',
       description: 'Rotacion por referencia, categoria y proveedor principal.',
@@ -527,6 +686,14 @@ export function ReportsPage() {
   const { user } = useAuth()
   const [startDate, setStartDate] = useState(() => toInputDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
   const [endDate, setEndDate] = useState(() => toInputDate(new Date()))
+  const [transferWindowDays, setTransferWindowDays] = useState('3')
+  const [operationTypeFilter, setOperationTypeFilter] = useState('TODOS')
+  const [clientFilter, setClientFilter] = useState('TODOS')
+  const [sellerFilter, setSellerFilter] = useState('TODOS')
+  const [warehouseFilter, setWarehouseFilter] = useState('TODOS')
+  const [zoneFilter, setZoneFilter] = useState('')
+  const [cityFilter, setCityFilter] = useState('')
+  const [stationFilter, setStationFilter] = useState('')
   const [emailDialogOpen, setEmailDialogOpen] = useState(false)
   const [emailRecipients, setEmailRecipients] = useState('')
   const [emailSubject, setEmailSubject] = useState(() => buildReportEmailSubject(toInputDate(new Date(new Date().getFullYear(), new Date().getMonth(), 1)), toInputDate(new Date())))
@@ -535,7 +702,7 @@ export function ReportsPage() {
   const reportsQuery = useQuery({
     queryKey: ['reportes-overview'],
     queryFn: async () => {
-      const [invoices, credits, accounts, bankMovements, products, inventoryMovements, clients] = await Promise.all([
+      const [invoices, credits, accounts, bankMovements, products, inventoryMovements, clients, users, warehouses] = await Promise.all([
         apiClient.getAllPages('/facturas'),
         apiClient.getAllPages('/creditos'),
         apiClient.getAllPages('/cuentas-bancarias', { estado: 'todos' }),
@@ -543,9 +710,11 @@ export function ReportsPage() {
         apiClient.getAllPages('/productos', { estado: 'todos' }),
         apiClient.getAllPages('/inventario/movimientos'),
         apiClient.getAllPages('/clientes', { estado: 'todos' }),
+        apiClient.getAllPages('/usuarios', { estado: 'todos' }),
+        apiClient.getAllPages('/bodegas', { estado: 'todos' }),
       ])
 
-      return { invoices, credits, accounts, bankMovements, products, inventoryMovements, clients }
+      return { invoices, credits, accounts, bankMovements, products, inventoryMovements, clients, users, warehouses }
     },
   })
 
@@ -565,28 +734,88 @@ export function ReportsPage() {
     const productsById = new Map(source.products.map((product) => [product.id, product]))
     const creditsByInvoiceId = new Map(source.credits.map((credit) => [credit.invoiceId, credit]))
 
-    const rangedInvoices = source.invoices.filter((invoice) => isWithinRange(invoice.createdAt, range))
+    const rangedInvoicesBase = source.invoices.filter((invoice) => isWithinRange(invoice.createdAt, range))
+    const normalizedZoneFilter = zoneFilter.trim().toLowerCase()
+    const normalizedCityFilter = cityFilter.trim().toLowerCase()
+    const normalizedStationFilter = stationFilter.trim().toLowerCase()
+    const rangedInvoices = rangedInvoicesBase.filter((invoice) => {
+      const operationType = `${invoice.source ?? 'ADMIN'}-${invoice.saleMode ?? 'CONTADO'}`
+
+      if (operationTypeFilter !== 'TODOS' && operationType !== operationTypeFilter) {
+        return false
+      }
+
+      if (clientFilter !== 'TODOS' && invoice.clientId !== Number(clientFilter)) {
+        return false
+      }
+
+      if (sellerFilter !== 'TODOS' && invoice.createdByUserId !== Number(sellerFilter)) {
+        return false
+      }
+
+      if (warehouseFilter !== 'TODOS' && invoice.warehouseId !== Number(warehouseFilter)) {
+        return false
+      }
+
+      if (normalizedZoneFilter && !String(invoice.zone ?? '').toLowerCase().includes(normalizedZoneFilter)) {
+        return false
+      }
+
+      if (normalizedCityFilter && !String(invoice.city ?? '').toLowerCase().includes(normalizedCityFilter)) {
+        return false
+      }
+
+      if (normalizedStationFilter && !String(invoice.station ?? '').toLowerCase().includes(normalizedStationFilter)) {
+        return false
+      }
+
+      return true
+    })
     const activeInvoices = rangedInvoices.filter((invoice) => invoice.status === 'ACTIVA')
     const rangedBankMovements = source.bankMovements.filter((movement) => isWithinRange(movement.createdAt, range))
     const rangedInventoryMovements = source.inventoryMovements.filter((movement) => isWithinRange(movement.createdAt, range))
+    const weeklyStockRange = getWeeklySundayCutoff(range.end ?? new Date())
+    const weeklyStockCutoffDate = toInputDate(weeklyStockRange.end)
+    const weeklyStockCutoffLabel = formatDate(weeklyStockRange.end)
+    const weeklyMovementRows = source.inventoryMovements.filter((movement) => isWithinRange(movement.createdAt, weeklyStockRange))
+    const transferWindowRange = createDateRange(
+      toInputDate(new Date((range.end ?? new Date()).getTime() - (Number(transferWindowDays) - 1) * 24 * 60 * 60 * 1000)),
+      toInputDate(range.end ?? new Date()),
+    )
 
     const invoiceRows = rangedInvoices.map((invoice) => {
       const linkedCredit = creditsByInvoiceId.get(invoice.id)
       const total = Number(invoice.total ?? 0)
 
-      return {
-        id: invoice.id,
-        consecutive: invoice.consecutive,
-        clientName: `${invoice.client?.firstName ?? ''} ${invoice.client?.lastName ?? ''}`.trim(),
-        status: invoice.status,
-        createdAt: invoice.createdAt,
-        subtotal: Number(invoice.subtotal ?? 0),
-        taxes: Number(invoice.taxes ?? 0),
-        total,
-        contado: linkedCredit ? 0 : total,
-        credito: linkedCredit ? total : 0,
-      }
-    })
+        const itemCost = invoice.items.reduce((sum, item) => sum + Number(item.unitCost ?? 0) * Number(item.quantity ?? 0), 0)
+        const itemProfit = invoice.items.reduce((sum, item) => sum + Number(item.profitAmount ?? 0), 0)
+
+        return {
+          id: invoice.id,
+          consecutive: invoice.consecutive,
+          clientName: `${invoice.client?.firstName ?? ''} ${invoice.client?.lastName ?? ''}`.trim(),
+          clientId: invoice.clientId,
+          status: invoice.status,
+          createdAt: invoice.createdAt,
+          source: invoice.source,
+          saleMode: invoice.saleMode ?? (linkedCredit ? 'CREDITO' : 'CONTADO'),
+          sellerName: invoice.createdByUsername ?? 'Sistema',
+          sellerId: invoice.createdByUserId ?? null,
+          warehouseName: invoice.warehouse?.location ?? 'Sin deposito',
+          warehouseId: invoice.warehouseId ?? null,
+          zone: invoice.zone ?? 'Sin zona',
+          city: invoice.city ?? 'Sin ciudad',
+          station: invoice.station ?? 'Sin estacion',
+          subtotal: Number(invoice.subtotal ?? 0),
+          taxes: Number(invoice.taxes ?? 0),
+          total,
+          contado: linkedCredit ? 0 : total,
+          credito: linkedCredit ? total : 0,
+          cost: itemCost,
+          profit: itemProfit,
+          profitPercentage: itemCost > 0 ? (itemProfit / itemCost) * 100 : 0,
+        }
+      })
 
     const totals = activeInvoices.reduce(
       (accumulator, invoice) => {
@@ -594,9 +823,11 @@ export function ReportsPage() {
         accumulator.taxes += Number(invoice.taxes ?? 0)
         accumulator.total += Number(invoice.total ?? 0)
         accumulator.items += invoice.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0)
+        accumulator.cost += invoice.items.reduce((sum, item) => sum + Number(item.unitCost ?? 0) * Number(item.quantity ?? 0), 0)
+        accumulator.profit += invoice.items.reduce((sum, item) => sum + Number(item.profitAmount ?? 0), 0)
         return accumulator
       },
-      { subtotal: 0, taxes: 0, total: 0, items: 0 },
+      { subtotal: 0, taxes: 0, total: 0, items: 0, cost: 0, profit: 0 },
     )
 
     const salesTimeline = Array.from(
@@ -680,18 +911,13 @@ export function ReportsPage() {
     ).sort((left, right) => right.total - left.total)
 
     const gmfMovements = rangedBankMovements
-      .filter((movement) => GMF_TYPES.has(movement.movementType))
-      .map((movement) => {
-        const base = Number(movement.amount ?? 0)
-        const tax = base * GMF_RATE
-
-        return {
-          ...movement,
-          base,
-          tax,
-          impact: base + tax,
-        }
-      })
+      .filter((movement) => movement.appliesGmf || GMF_TYPES.has(movement.movementType))
+      .map((movement) => ({
+        ...movement,
+        base: Number(movement.baseAmount ?? movement.amount ?? 0),
+        tax: Number(movement.gmfAmount ?? 0),
+        impact: Number(movement.totalAmount ?? movement.amount ?? 0),
+      }))
 
     const gmfByAccount = Array.from(
       gmfMovements.reduce((map, movement) => {
@@ -758,6 +984,21 @@ export function ReportsPage() {
       signal: getStockSignal(product),
     }))
 
+    const weeklyStockRows = activeProducts
+      .map((product) => {
+        const totalStockAtCutoff = getTotalStockAtDate(product, source.inventoryMovements, weeklyStockRange.end)
+        const signal = getStockSignal({ ...product, warehouses: [{ quantity: totalStockAtCutoff }] })
+
+        return {
+          ...product,
+          totalStockAtCutoff,
+          weeklyMovements: weeklyMovementRows.filter((movement) => movement.productId === product.id).length,
+          signal,
+        }
+      })
+      .filter((product) => product.signal.tone !== 'good' || product.weeklyMovements > 0)
+      .sort((left, right) => left.totalStockAtCutoff - right.totalStockAtCutoff)
+
     const stockHealth = {
       critical: stockRows.filter((product) => product.signal.tone === 'critical').length,
       warning: stockRows.filter((product) => product.signal.tone === 'warning').length,
@@ -769,6 +1010,20 @@ export function ReportsPage() {
       .sort((left, right) => left.totalStock - right.totalStock)
 
     const transfers = rangedInventoryMovements.filter((movement) => movement.movementType === 'TRASLADO')
+    const transferDigestRows = source.inventoryMovements
+      .filter((movement) => movement.movementType === 'TRASLADO')
+      .filter((movement) => isWithinRange(movement.createdAt, transferWindowRange))
+      .map((movement) => ({
+        id: movement.id,
+        ticketNumber: movement.transferTicket?.ticketNumber ?? `MOV-${movement.id}`,
+        productName: movement.product?.name ?? `Producto #${movement.productId}`,
+        fromWarehouse: movement.fromWarehouse?.location ?? 'N/A',
+        toWarehouse: movement.toWarehouse?.location ?? 'N/A',
+        quantity: Number(movement.quantity ?? 0),
+        supportNote: movement.transferTicket?.supportNote ?? movement.reason ?? 'Sin soporte',
+        createdAt: movement.createdAt,
+      }))
+      .sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt))
 
     return {
       rangedInvoices,
@@ -790,9 +1045,24 @@ export function ReportsPage() {
       stockRows,
       stockHealth,
       lowStockProducts,
+      weeklyStockCutoffDate,
+      weeklyStockCutoffLabel,
+      weeklyStockRows,
       transfers,
+      transferDigestRows,
     }
-  }, [range, reportsQuery.data])
+  }, [
+    range,
+    reportsQuery.data,
+    transferWindowDays,
+    operationTypeFilter,
+    clientFilter,
+    sellerFilter,
+    warehouseFilter,
+    zoneFilter,
+    cityFilter,
+    stationFilter,
+  ])
 
   if (reportsQuery.isLoading) {
     return <ReportsSkeleton />
@@ -840,7 +1110,7 @@ export function ReportsPage() {
     {
       label: '4x1000 estimado',
       value: formatCurrency(report.gmfMovements.reduce((sum, item) => sum + item.tax, 0)),
-      help: 'Calculado sobre egresos y transferencias salientes del corte.',
+      help: 'Persistido en movimientos marcados con 4x1000.',
       icon: FileSpreadsheet,
     },
   ]
@@ -849,12 +1119,15 @@ export function ReportsPage() {
   const topCategories = rankRows(report.salesByCategory.slice(0, 5), (item) => item.label)
   const topProviders = rankRows(report.salesByProvider.slice(0, 5), (item) => item.label)
   const topClients = rankRows(report.salesByClient.slice(0, 5), (item) => item.label)
+  const clients = reportsQuery.data?.clients ?? []
+  const users = reportsQuery.data?.users ?? []
+  const warehouses = reportsQuery.data?.warehouses ?? []
   const stockDistribution = [
     { name: 'critical', label: 'Falta stock', value: report.stockHealth.critical, fill: chartConfig.critical.color },
     { name: 'warning', label: 'Stock regular', value: report.stockHealth.warning, fill: chartConfig.warning.color },
     { name: 'good', label: 'Buen stock', value: report.stockHealth.good, fill: chartConfig.good.color },
   ]
-  const reportSections = buildReportSectionConfigs({ report, startDate, endDate })
+  const reportSections = buildReportSectionConfigs({ report, startDate, endDate, transferWindowDays: Number(transferWindowDays) })
   const reportSectionByKey = new Map(reportSections.map((section) => [section.key, section]))
 
   function openEmailDialog() {
@@ -995,10 +1268,92 @@ export function ReportsPage() {
               <span className="text-sm font-medium text-foreground">Hasta</span>
               <Input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
             </div>
+            <div className="grid gap-2 md:col-span-2">
+              <span className="text-sm font-medium text-foreground">Ventana traslados</span>
+              <select
+                value={transferWindowDays}
+                onChange={(event) => setTransferWindowDays(event.target.value)}
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="1">Ultimo dia</option>
+                <option value="3">Ultimos 3 dias</option>
+              </select>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+          <div className="grid gap-4">
+            <div className="grid gap-3 xl:grid-cols-4">
+              <div className="grid gap-2">
+                <span className="text-sm font-medium text-foreground">Tipo operacion</span>
+                <NativeSelect value={operationTypeFilter} onChange={(event) => setOperationTypeFilter(event.target.value)}>
+                  <option value="TODOS">Todos</option>
+                  <option value="ADMIN-CONTADO">Admin contado</option>
+                  <option value="ADMIN-CREDITO">Admin credito</option>
+                  <option value="POS-CONTADO">POS contado</option>
+                  <option value="POS-CREDITO">POS credito</option>
+                  <option value="APP_MOVIL-CONTADO">App movil contado</option>
+                  <option value="APP_MOVIL-CREDITO">App movil credito</option>
+                </NativeSelect>
+              </div>
+              <div className="grid gap-2">
+                <span className="text-sm font-medium text-foreground">Cliente</span>
+                <NativeSelect value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}>
+                  <option value="TODOS">Todos</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={String(client.id)}>{`${client.firstName} ${client.lastName}`}</option>
+                  ))}
+                </NativeSelect>
+              </div>
+              <div className="grid gap-2">
+                <span className="text-sm font-medium text-foreground">Usuario / vendedor</span>
+                <NativeSelect value={sellerFilter} onChange={(event) => setSellerFilter(event.target.value)}>
+                  <option value="TODOS">Todos</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={String(u.id)}>{u.username}</option>
+                  ))}
+                </NativeSelect>
+              </div>
+              <div className="grid gap-2">
+                <span className="text-sm font-medium text-foreground">Deposito</span>
+                <NativeSelect value={warehouseFilter} onChange={(event) => setWarehouseFilter(event.target.value)}>
+                  <option value="TODOS">Todos</option>
+                  {warehouses.map((warehouse) => (
+                    <option key={warehouse.id} value={String(warehouse.id)}>{warehouse.location}</option>
+                  ))}
+                </NativeSelect>
+              </div>
+            </div>
+
+            <div className="grid gap-3 xl:grid-cols-4">
+              <div className="grid gap-2">
+                <span className="text-sm font-medium text-foreground">Zona</span>
+                <Input value={zoneFilter} onChange={(event) => setZoneFilter(event.target.value)} placeholder="Centro" />
+              </div>
+              <div className="grid gap-2">
+                <span className="text-sm font-medium text-foreground">Ciudad</span>
+                <Input value={cityFilter} onChange={(event) => setCityFilter(event.target.value)} placeholder="Cartagena" />
+              </div>
+              <div className="grid gap-2">
+                <span className="text-sm font-medium text-foreground">Estacion</span>
+                <Input value={stationFilter} onChange={(event) => setStationFilter(event.target.value)} placeholder="Caja 1" />
+              </div>
+              <div className="flex items-end">
+                <Button variant="outline" className="w-full" onClick={() => {
+                  setOperationTypeFilter('TODOS')
+                  setClientFilter('TODOS')
+                  setSellerFilter('TODOS')
+                  setWarehouseFilter('TODOS')
+                  setZoneFilter('')
+                  setCityFilter('')
+                  setStationFilter('')
+                }}>
+                  Limpiar filtros del cierre
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
             <span>
               Facturas en corte: <span className="font-medium text-foreground">{formatNumber(report.rangedInvoices.length)}</span>
             </span>
@@ -1008,6 +1363,10 @@ export function ReportsPage() {
             <span>
               Traslados inventario: <span className="font-medium text-foreground">{formatNumber(report.transfers.length)}</span>
             </span>
+            <span>
+              Corte stock semanal: <span className="font-medium text-foreground">{report.weeklyStockCutoffLabel}</span>
+            </span>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -1171,7 +1530,7 @@ export function ReportsPage() {
                 <span className="font-medium">Alcance actual</span>
               </div>
               <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                La API actual no expone costos, utilidad, vendedor ni bodega por item facturado. Este modulo profundiza en ventas, impuestos, cartera, bancos y stock con los datos disponibles hoy.
+                Este corte ya cruza usuario, deposito, ciudad, zona, estacion, costos historicos, utilidad y porcentaje de utilidad sobre las transacciones procesadas en el periodo.
               </p>
             </div>
           </CardContent>
@@ -1181,8 +1540,8 @@ export function ReportsPage() {
       <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
         <CardHeader className="gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div>
-            <CardTitle>Reporte de facturas</CardTitle>
-            <CardDescription>Lectura operativa con neto, contado, credito, impuestos y total por factura.</CardDescription>
+            <CardTitle>Transacciones procesadas</CardTitle>
+            <CardDescription>Lectura operativa con neto, contado, credito, impuestos, total, costo, utilidad y porcentaje por factura.</CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => exportSectionPdf('FACTURAS')}>
@@ -1203,11 +1562,17 @@ export function ReportsPage() {
                   <TableHead>Fecha</TableHead>
                   <TableHead>Numero</TableHead>
                   <TableHead>Cliente</TableHead>
+                  <TableHead>Usuario</TableHead>
+                  <TableHead>Deposito</TableHead>
+                  <TableHead>Operacion</TableHead>
                   <TableHead>Monto neto</TableHead>
                   <TableHead>Contado</TableHead>
                   <TableHead>Credito</TableHead>
                   <TableHead>Impuestos</TableHead>
                   <TableHead>Total</TableHead>
+                  <TableHead>Costo</TableHead>
+                  <TableHead>Utilidad</TableHead>
+                  <TableHead>% Utilidad</TableHead>
                   <TableHead>Estado</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1218,11 +1583,17 @@ export function ReportsPage() {
                       <TableCell>{formatDate(row.createdAt)}</TableCell>
                       <TableCell className="font-medium">{row.consecutive}</TableCell>
                       <TableCell>{row.clientName}</TableCell>
+                      <TableCell>{row.sellerName}</TableCell>
+                      <TableCell>{row.warehouseName}</TableCell>
+                      <TableCell>{`${row.source} · ${formatSaleMode(row.saleMode)}`}</TableCell>
                       <TableCell>{formatCurrency(row.subtotal)}</TableCell>
                       <TableCell>{formatCurrency(row.contado)}</TableCell>
                       <TableCell>{formatCurrency(row.credito)}</TableCell>
                       <TableCell>{formatCurrency(row.taxes)}</TableCell>
                       <TableCell>{formatCurrency(row.total)}</TableCell>
+                      <TableCell>{formatCurrency(row.cost)}</TableCell>
+                      <TableCell>{formatCurrency(row.profit)}</TableCell>
+                      <TableCell>{formatPercent(row.profitPercentage)}</TableCell>
                       <TableCell>
                         <Badge variant={row.status === 'ACTIVA' ? 'default' : 'secondary'}>
                           {formatInvoiceStatus(row.status)}
@@ -1232,7 +1603,7 @@ export function ReportsPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={9} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={15} className="py-12 text-center text-muted-foreground">
                       No hay facturas en el rango seleccionado.
                     </TableCell>
                   </TableRow>
@@ -1348,7 +1719,7 @@ export function ReportsPage() {
             <div>
               <CardTitle>4x1000 segmentado</CardTitle>
               <CardDescription>
-                Estimacion del GMF sobre movimientos que salen de las cuentas bancarias del negocio.
+                Segmentacion real del GMF sobre movimientos que salen de las cuentas bancarias del negocio.
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1398,7 +1769,7 @@ export function ReportsPage() {
               </Table>
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
-              Referencia de calculo: por cada {formatCurrency(1000000)} debitado, el impacto estimado es {formatCurrency(1000000 * GMF_RATE)} adicionales de GMF.
+              Referencia: por cada {formatCurrency(1000000)} con 4x1000 aplicado, el sistema registra {formatCurrency(1000000 * GMF_RATE)} de GMF y {formatCurrency(1000000 * (1 + GMF_RATE))} de salida total.
             </p>
           </CardContent>
         </Card>

@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InventoryMovementType, Prisma, UnitType } from '@prisma/client';
+import { buildPackagingBreakdown } from '../../common/utils/packaging.util';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
 import {
   buildPaginatedResponse,
@@ -12,6 +13,8 @@ import {
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { BarcodeFormatService } from '../../shared/products/barcode-format.service';
 import { R2StorageService } from '../../shared/storage/r2-storage.service';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import {
   FilterProductsDto,
@@ -25,6 +28,7 @@ export class ProductosService {
     private readonly prisma: PrismaService,
     private readonly storage: R2StorageService,
     private readonly barcodeFormat: BarcodeFormatService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findAll(filter: FilterProductsDto) {
@@ -75,9 +79,17 @@ export class ProductosService {
   async create(
     createProductDto: CreateProductDto,
     image?: Express.Multer.File,
+    actor?: AuthUser,
   ) {
-    const { tagIds, prices, warehouses, barcodes, providerIds, ...productData } =
-      createProductDto;
+    const {
+      tagIds,
+      prices,
+      warehouses,
+      barcodes,
+      providerIds,
+      packaging,
+      ...productData
+    } = createProductDto;
     const relatedProviderIds = this.resolveProviderIds(
       productData.providerId,
       providerIds,
@@ -105,6 +117,11 @@ export class ProductosService {
           data: {
             ...productData,
             imageUrl: uploadedImage?.url,
+            packagingProfile: packaging
+              ? {
+                  create: this.normalizePackagingProfile(packaging),
+                }
+              : undefined,
             tags: tagIds?.length
               ? { create: tagIds.map((tagId) => ({ tagId })) }
               : undefined,
@@ -150,7 +167,26 @@ export class ProductosService {
         });
       });
 
-      return this.formatProduct(product);
+      const formattedProduct = this.formatProduct(product);
+
+      if (actor) {
+        await this.auditLogService.log({
+          actor,
+          module: 'PRODUCTOS',
+          action: 'CREATE',
+          entityType: 'Product',
+          entityId: formattedProduct.id,
+          entityLabel: formattedProduct.name,
+          description: `Creo el producto ${formattedProduct.name}`,
+          metadata: {
+            productId: formattedProduct.id,
+            providerId: formattedProduct.providerId,
+            packaging: formattedProduct.packagingProfile,
+          },
+        });
+      }
+
+      return formattedProduct;
     } catch (error) {
       await this.safeDeleteImage(uploadedImage?.url);
       throw error;
@@ -161,11 +197,13 @@ export class ProductosService {
     id: number,
     updateProductDto: UpdateProductDto,
     image?: Express.Multer.File,
+    actor?: AuthUser,
   ) {
     this.ensurePositiveId(id);
     const currentProduct = await this.getExistingProduct(id);
 
-    const { tagIds, barcodes, providerIds, ...productData } = updateProductDto;
+    const { tagIds, barcodes, providerIds, packaging, ...productData } =
+      updateProductDto;
     const resolvedProviderIds =
       providerIds || productData.providerId
         ? this.resolveProviderIds(
@@ -232,6 +270,15 @@ export class ProductosService {
           data: {
             ...productData,
             imageUrl: uploadedImage?.url,
+            packagingProfile:
+              packaging !== undefined
+                ? {
+                    upsert: {
+                      create: this.normalizePackagingProfile(packaging),
+                      update: this.normalizePackagingProfile(packaging),
+                    },
+                  }
+                : undefined,
             tags: tagIds
               ? { create: tagIds.map((tagId) => ({ tagId })) }
               : undefined,
@@ -251,7 +298,26 @@ export class ProductosService {
         await this.safeDeleteImage(currentProduct.imageUrl);
       }
 
-      return this.formatProduct(product);
+      const formattedProduct = this.formatProduct(product);
+
+      if (actor) {
+        await this.auditLogService.log({
+          actor,
+          module: 'PRODUCTOS',
+          action: 'UPDATE',
+          entityType: 'Product',
+          entityId: formattedProduct.id,
+          entityLabel: formattedProduct.name,
+          description: `Actualizo el producto ${formattedProduct.name}`,
+          metadata: {
+            productId: formattedProduct.id,
+            changedFields: Object.keys(updateProductDto),
+            packaging: formattedProduct.packagingProfile,
+          },
+        });
+      }
+
+      return formattedProduct;
     } catch (error) {
       await this.safeDeleteImage(uploadedImage?.url);
       throw error;
@@ -302,7 +368,7 @@ export class ProductosService {
     return this.formatProduct(product);
   }
 
-  async remove(id: number) {
+  async remove(id: number, actor?: AuthUser) {
     this.ensurePositiveId(id);
     await this.findOne(id);
 
@@ -312,10 +378,25 @@ export class ProductosService {
       include: this.productInclude,
     });
 
-    return this.formatProduct(product);
+    const formattedProduct = this.formatProduct(product);
+
+    if (actor) {
+      await this.auditLogService.log({
+        actor,
+        module: 'PRODUCTOS',
+        action: 'DEACTIVATE',
+        entityType: 'Product',
+        entityId: formattedProduct.id,
+        entityLabel: formattedProduct.name,
+        description: `Desactivo el producto ${formattedProduct.name}`,
+        metadata: { productId: formattedProduct.id },
+      });
+    }
+
+    return formattedProduct;
   }
 
-  async reactivate(id: number) {
+  async reactivate(id: number, actor?: AuthUser) {
     this.ensurePositiveId(id);
     await this.findOne(id);
 
@@ -325,7 +406,22 @@ export class ProductosService {
       include: this.productInclude,
     });
 
-    return this.formatProduct(product);
+    const formattedProduct = this.formatProduct(product);
+
+    if (actor) {
+      await this.auditLogService.log({
+        actor,
+        module: 'PRODUCTOS',
+        action: 'REACTIVATE',
+        entityType: 'Product',
+        entityId: formattedProduct.id,
+        entityLabel: formattedProduct.name,
+        description: `Reactivo el producto ${formattedProduct.name}`,
+        metadata: { productId: formattedProduct.id },
+      });
+    }
+
+    return formattedProduct;
   }
 
   async findByBarcode(code: string) {
@@ -346,6 +442,7 @@ export class ProductosService {
   private readonly productInclude: Prisma.ProductInclude = {
     productType: true,
     primaryProvider: true,
+    packagingProfile: true,
     providers: {
       include: { provider: true },
       orderBy: { providerId: 'asc' },
@@ -390,15 +487,43 @@ export class ProductosService {
 
   // La tabla pivote ProductTag es un detalle interno; la API responde tags planos.
   private formatProduct(product) {
-    const providers = (product.providers ?? []).map((item) => ({
-      ...item.provider,
-      isPrimary: item.providerId === product.providerId,
-    }));
+    const providersById = new Map<
+      number,
+      { id: number; isPrimary: boolean; [key: string]: unknown }
+    >();
+
+    if (product.primaryProvider) {
+      providersById.set(product.primaryProvider.id, {
+        ...product.primaryProvider,
+        isPrimary: true,
+      });
+    }
+
+    for (const item of product.providers ?? []) {
+      providersById.set(item.providerId, {
+        ...item.provider,
+        isPrimary: item.providerId === product.providerId,
+      });
+    }
+
+    const providers = Array.from(providersById.values()).sort((left, right) =>
+      Number(right.isPrimary) - Number(left.isPrimary) || Number(left.id) - Number(right.id),
+    );
+
+    const totalStock = (product.warehouses ?? []).reduce(
+      (sum, item) => sum + Number(item.quantity ?? 0),
+      0,
+    );
+    const packagingSummary = buildPackagingBreakdown(
+      totalStock,
+      product.packagingProfile,
+    );
 
     return {
       ...product,
       provider: product.primaryProvider,
       providers,
+      packagingSummary,
       tags: product.tags.map((productTag) => productTag.tag),
       warehouses: product.warehouses.map((item) => ({
         warehouseId: item.warehouseId,
@@ -490,6 +615,19 @@ export class ProductosService {
       type: barcode.type,
       isPrimary: barcode.isPrimary ?? (primaryCount === 0 && index === 0),
     }));
+  }
+
+  private normalizePackagingProfile(packaging?: CreateProductDto['packaging']) {
+    if (!packaging) {
+      return {};
+    }
+
+    return {
+      unitsPerPackage: this.normalizePositiveInteger(packaging.unitsPerPackage),
+      packagesPerBox: this.normalizePositiveInteger(packaging.packagesPerBox),
+      saleByUnitOnly: packaging.saleByUnitOnly ?? false,
+      notes: packaging.notes?.trim() || null,
+    };
   }
 
   private async ensureProductTypeExists(id: number) {
@@ -662,11 +800,14 @@ export class ProductosService {
 
     if (filter.providerId) {
       conditions.push(Prisma.sql`
-        EXISTS (
-          SELECT 1
-          FROM "ProductProvider" pp_filter
-          WHERE pp_filter."productId" = p."id"
-            AND pp_filter."providerId" = ${filter.providerId}
+        (
+          p."providerId" = ${filter.providerId}
+          OR EXISTS (
+            SELECT 1
+            FROM "ProductProvider" pp_filter
+            WHERE pp_filter."productId" = p."id"
+              AND pp_filter."providerId" = ${filter.providerId}
+          )
         )
       `);
     }
@@ -748,5 +889,13 @@ export class ProductosService {
     );
 
     return [...new Set(relatedProviderIds)];
+  }
+
+  private normalizePositiveInteger(value?: number | null) {
+    if (!Number.isInteger(value) || Number(value) <= 0) {
+      return null;
+    }
+
+    return Number(value);
   }
 }

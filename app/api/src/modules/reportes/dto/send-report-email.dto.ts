@@ -66,5 +66,13 @@ export class SendReportEmailDto {
 
   @IsOptional()
   @IsArray()
+  weeklyStockRows?: Array<Record<string, unknown>>;
+
+  @IsOptional()
+  @IsArray()
+  transferRows?: Array<Record<string, unknown>>;
+
+  @IsOptional()
+  @IsArray()
   topProductRows?: Array<Record<string, unknown>>;
 }

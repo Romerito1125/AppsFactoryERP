@@ -82,6 +82,7 @@ const bankMovementSchema = z
     amount: z.number().positive('Debe ser mayor a cero').optional(),
     balance: z.number().positive('Debe ser mayor a cero').optional(),
     invoiceId: z.number().int().positive().optional(),
+    appliesGmf: z.boolean().optional(),
     description: z.string().optional(),
   })
   .superRefine((values, context) => {
@@ -152,6 +153,7 @@ function buildBankMovementPayload(values) {
         amount: values.amount,
         description: values.description?.trim() || undefined,
         invoiceId: values.invoiceId,
+        appliesGmf: values.appliesGmf ?? false,
       },
     }
   }
@@ -164,6 +166,7 @@ function buildBankMovementPayload(values) {
         amount: values.amount,
         description: values.description?.trim() || undefined,
         invoiceId: values.invoiceId,
+        appliesGmf: values.appliesGmf ?? false,
       },
     }
   }
@@ -176,6 +179,7 @@ function buildBankMovementPayload(values) {
         toBankAccountId: values.toBankAccountId,
         amount: values.amount,
         description: values.description?.trim() || undefined,
+        appliesGmf: values.appliesGmf ?? false,
       },
     }
   }
@@ -198,10 +202,11 @@ function BankMovementDialog({ open, onOpenChange, accounts, invoices, onSubmit, 
       bankAccountId: undefined,
       toBankAccountId: undefined,
       amount: undefined,
-      balance: undefined,
-      invoiceId: undefined,
-      description: '',
-    },
+        balance: undefined,
+        invoiceId: undefined,
+        appliesGmf: false,
+        description: '',
+      },
   })
 
   const movementType = form.watch('type')
@@ -214,10 +219,11 @@ function BankMovementDialog({ open, onOpenChange, accounts, invoices, onSubmit, 
         bankAccountId: undefined,
         toBankAccountId: undefined,
         amount: undefined,
-        balance: undefined,
-        invoiceId: undefined,
-        description: '',
-      })
+          balance: undefined,
+          invoiceId: undefined,
+          appliesGmf: false,
+          description: '',
+        })
     }
   }
 
@@ -348,6 +354,30 @@ function BankMovementDialog({ open, onOpenChange, accounts, invoices, onSubmit, 
                     </NativeSelect>
                   )}
                 />
+              </div>
+            ) : null}
+
+            {movementType === 'egreso' || movementType === 'transferencia' ? (
+              <div className="grid gap-2 md:col-span-2">
+                <Label>Aplica 4x1000</Label>
+                <Controller
+                  name="appliesGmf"
+                  control={form.control}
+                  render={({ field }) => (
+                    <Select value={String(Boolean(field.value))} onValueChange={(value) => field.onChange(value === 'true')}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="false">No</SelectItem>
+                        <SelectItem value="true">Si, recalcular con 4x1000</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Si aplica, el sistema registra base, GMF y total debitado. Ejemplo: 1.000.000 genera salida total de 1.004.000.
+                </p>
               </div>
             ) : null}
 
@@ -635,7 +665,10 @@ export function BankMovementsPage() {
                   label: 'Movimiento',
                   items: [
                     { label: 'Cuenta', value: detailMovement.bankAccount?.name ?? `Cuenta #${detailMovement.bankAccountId}` },
-                    { label: 'Monto', value: formatCurrency(detailMovement.amount) },
+                    { label: 'Base', value: formatCurrency(detailMovement.baseAmount ?? detailMovement.amount) },
+                    { label: '4x1000', value: formatCurrency(detailMovement.gmfAmount ?? 0) },
+                    { label: 'Total', value: formatCurrency(detailMovement.totalAmount ?? detailMovement.amount) },
+                    { label: 'Aplica 4x1000', value: detailMovement.appliesGmf ? 'Si' : 'No' },
                     { label: 'Factura', value: detailMovement.invoice?.consecutive ?? 'Sin factura' },
                     { label: 'Descripcion', value: detailMovement.description ?? 'Sin descripcion' },
                   ],

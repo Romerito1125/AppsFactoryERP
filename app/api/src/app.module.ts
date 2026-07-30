@@ -26,6 +26,7 @@ import { NotificacionesModule } from './modules/notificaciones/notificaciones.mo
 import { ReportesModule } from './modules/reportes/reportes.module';
 import { TiendaModule } from './modules/tienda/tienda.module';
 import { ComprasModule } from './modules/compras/compras.module';
+import { AuditLogModule } from './modules/audit-log/audit-log.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { ComprasModule } from './modules/compras/compras.module';
     ProductBarcodesModule,
     ComprasModule,
     TiendaModule,
+    AuditLogModule,
   ],
   controllers: [AppController],
   providers: [AppService],

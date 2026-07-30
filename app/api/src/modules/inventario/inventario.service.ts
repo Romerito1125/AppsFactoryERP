@@ -4,12 +4,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InventoryMovementType } from '@prisma/client';
+import { buildPackagingBreakdown } from '../../common/utils/packaging.util';
 import {
   buildPaginatedResponse,
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { ProductResolverService } from '../../shared/products/product-resolver.service';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import {
   InventoryAdjustmentDto,
   InventoryEntryDto,
@@ -23,6 +26,7 @@ export class InventarioService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly productResolver: ProductResolverService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findAll(query: ListInventoryQueryDto) {
@@ -38,6 +42,7 @@ export class InventarioService {
         include: {
           productType: true,
           primaryProvider: true,
+          packagingProfile: true,
           providers: {
             include: { provider: true },
             orderBy: { providerId: 'asc' },
@@ -71,6 +76,7 @@ export class InventarioService {
           include: {
             productType: true,
             primaryProvider: true,
+            packagingProfile: true,
             providers: { include: { provider: true }, orderBy: { providerId: 'asc' } },
           },
         },
@@ -95,6 +101,7 @@ export class InventarioService {
           include: {
             productType: true,
             primaryProvider: true,
+            packagingProfile: true,
             providers: { include: { provider: true }, orderBy: { providerId: 'asc' } },
           },
         },
@@ -109,10 +116,16 @@ export class InventarioService {
     }));
   }
 
-  entry(dto: InventoryEntryDto) {
-    return this.prisma.$transaction(async (tx) => {
-      const product = await this.productResolver.resolve(dto, tx);
+  async entry(dto: InventoryEntryDto, actor: AuthUser) {
+    const movement = await this.prisma.$transaction(async (tx) => {
+      const product = await this.productResolver.resolve(dto, tx, {
+        packagingProfile: true,
+      });
       await this.ensureActiveWarehouse(dto.toWarehouseId, tx);
+      const packaging = buildPackagingBreakdown(
+        dto.quantity,
+        product.packagingProfile,
+      );
       await tx.productWarehouse.upsert({
         where: {
           productId_warehouseId: {
@@ -131,19 +144,49 @@ export class InventarioService {
         data: {
           productId: product.id,
           toWarehouseId: dto.toWarehouseId,
+          createdByUserId: actor.sub,
+          approvedByUserId: actor.sub,
           quantity: dto.quantity,
           movementType: InventoryMovementType.ENTRADA,
           reason: dto.reason,
+          approvedAt: new Date(),
+          packagingBoxes: packaging?.boxes,
+          packagingPackages: packaging?.packages,
+          packagingUnits: packaging?.units,
         },
         include: this.movementInclude,
       });
     });
+
+    await this.auditLogService.log({
+      actor,
+      module: 'INVENTARIO',
+      action: 'ENTRY',
+      entityType: 'InventoryMovement',
+      entityId: movement.id,
+      entityLabel: movement.product?.name,
+      description: `Registro una entrada de inventario para ${movement.product?.name}`,
+      metadata: {
+        movementId: movement.id,
+        productId: movement.productId,
+        toWarehouseId: movement.toWarehouseId,
+        quantity: movement.quantity,
+      },
+    });
+
+    return movement;
   }
 
-  exit(dto: InventoryExitDto) {
-    return this.prisma.$transaction(async (tx) => {
-      const product = await this.productResolver.resolve(dto, tx);
+  async exit(dto: InventoryExitDto, actor: AuthUser) {
+    const movement = await this.prisma.$transaction(async (tx) => {
+      const product = await this.productResolver.resolve(dto, tx, {
+        packagingProfile: true,
+      });
       await this.ensureActiveWarehouse(dto.fromWarehouseId, tx);
+      const packaging = buildPackagingBreakdown(
+        dto.quantity,
+        product.packagingProfile,
+      );
       await this.decrementStock(
         tx,
         product.id,
@@ -154,24 +197,54 @@ export class InventarioService {
         data: {
           productId: product.id,
           fromWarehouseId: dto.fromWarehouseId,
+          createdByUserId: actor.sub,
+          approvedByUserId: actor.sub,
           quantity: dto.quantity,
           movementType: InventoryMovementType.SALIDA,
           reason: dto.reason,
+          approvedAt: new Date(),
+          packagingBoxes: packaging?.boxes,
+          packagingPackages: packaging?.packages,
+          packagingUnits: packaging?.units,
         },
         include: this.movementInclude,
       });
     });
+
+    await this.auditLogService.log({
+      actor,
+      module: 'INVENTARIO',
+      action: 'EXIT',
+      entityType: 'InventoryMovement',
+      entityId: movement.id,
+      entityLabel: movement.product?.name,
+      description: `Registro una salida de inventario para ${movement.product?.name}`,
+      metadata: {
+        movementId: movement.id,
+        productId: movement.productId,
+        fromWarehouseId: movement.fromWarehouseId,
+        quantity: movement.quantity,
+      },
+    });
+
+    return movement;
   }
 
-  transfer(dto: InventoryTransferDto) {
+  async transfer(dto: InventoryTransferDto, actor: AuthUser) {
     if (dto.fromWarehouseId === dto.toWarehouseId)
       throw new BadRequestException(
         'La bodega origen y destino no pueden ser iguales',
       );
-    return this.prisma.$transaction(async (tx) => {
-      const product = await this.productResolver.resolve(dto, tx);
+    const movement = await this.prisma.$transaction(async (tx) => {
+      const product = await this.productResolver.resolve(dto, tx, {
+        packagingProfile: true,
+      });
       await this.ensureActiveWarehouse(dto.fromWarehouseId, tx);
       await this.ensureActiveWarehouse(dto.toWarehouseId, tx);
+      const packaging = buildPackagingBreakdown(
+        dto.quantity,
+        product.packagingProfile,
+      );
       await this.decrementStock(
         tx,
         product.id,
@@ -192,23 +265,68 @@ export class InventarioService {
           quantity: dto.quantity,
         },
       });
-      return tx.inventoryMovement.create({
+      const createdMovement = await tx.inventoryMovement.create({
         data: {
           productId: product.id,
           fromWarehouseId: dto.fromWarehouseId,
           toWarehouseId: dto.toWarehouseId,
+          createdByUserId: actor.sub,
+          approvedByUserId: actor.sub,
           quantity: dto.quantity,
           movementType: InventoryMovementType.TRASLADO,
           reason: dto.reason,
+          approvedAt: new Date(),
+          packagingBoxes: packaging?.boxes,
+          packagingPackages: packaging?.packages,
+          packagingUnits: packaging?.units,
         },
+      });
+
+      await tx.inventoryTransferTicket.create({
+        data: {
+          movementId: createdMovement.id,
+          ticketNumber: this.generateTransferTicketNumber(),
+          status: 'APROBADO',
+          supportNote: dto.supportNote?.trim() || dto.reason?.trim() || null,
+          createdByUserId: actor.sub,
+          approvedByUserId: actor.sub,
+          approvedAt: new Date(),
+        },
+      });
+
+      return tx.inventoryMovement.findUniqueOrThrow({
+        where: { id: createdMovement.id },
         include: this.movementInclude,
       });
     });
+
+    await this.auditLogService.log({
+      actor,
+      module: 'INVENTARIO',
+      action: 'APPROVE_TRANSFER',
+      entityType: 'InventoryTransferTicket',
+      entityId: movement.transferTicket?.id ?? movement.id,
+      entityLabel: movement.transferTicket?.ticketNumber ?? movement.product?.name,
+      description: `Aprobo el traslado ${movement.transferTicket?.ticketNumber ?? ''}`.trim(),
+      metadata: {
+        movementId: movement.id,
+        ticketNumber: movement.transferTicket?.ticketNumber,
+        productId: movement.productId,
+        fromWarehouseId: movement.fromWarehouseId,
+        toWarehouseId: movement.toWarehouseId,
+        quantity: movement.quantity,
+        supportNote: movement.transferTicket?.supportNote,
+      },
+    });
+
+    return movement;
   }
 
-  adjustment(dto: InventoryAdjustmentDto) {
-    return this.prisma.$transaction(async (tx) => {
-      const product = await this.productResolver.resolve(dto, tx);
+  async adjustment(dto: InventoryAdjustmentDto, actor: AuthUser) {
+    const movement = await this.prisma.$transaction(async (tx) => {
+      const product = await this.productResolver.resolve(dto, tx, {
+        packagingProfile: true,
+      });
       await this.ensureActiveWarehouse(dto.warehouseId, tx);
       const current = await tx.productWarehouse.findUnique({
         where: {
@@ -233,18 +351,48 @@ export class InventarioService {
         },
       });
       const difference = dto.quantity - (current?.quantity ?? 0);
+      const packaging = buildPackagingBreakdown(
+        Math.abs(difference),
+        product.packagingProfile,
+      );
+
       return tx.inventoryMovement.create({
         data: {
           productId: product.id,
           fromWarehouseId: difference < 0 ? dto.warehouseId : undefined,
           toWarehouseId: difference >= 0 ? dto.warehouseId : undefined,
+          createdByUserId: actor.sub,
+          approvedByUserId: actor.sub,
           quantity: Math.abs(difference),
           movementType: InventoryMovementType.AJUSTE,
           reason: dto.reason,
+          approvedAt: new Date(),
+          packagingBoxes: packaging?.boxes,
+          packagingPackages: packaging?.packages,
+          packagingUnits: packaging?.units,
         },
         include: this.movementInclude,
       });
     });
+
+    await this.auditLogService.log({
+      actor,
+      module: 'INVENTARIO',
+      action: 'ADJUSTMENT',
+      entityType: 'InventoryMovement',
+      entityId: movement.id,
+      entityLabel: movement.product?.name,
+      description: `Registro un ajuste de inventario para ${movement.product?.name}`,
+      metadata: {
+        movementId: movement.id,
+        productId: movement.productId,
+        warehouseId: dto.warehouseId,
+        quantity: movement.quantity,
+        reason: movement.reason,
+      },
+    });
+
+    return movement;
   }
 
   async findMovements(query: ListInventoryQueryDto) {
@@ -275,10 +423,64 @@ export class InventarioService {
     return movement;
   }
 
+  async findTransferTickets(query: ListInventoryQueryDto) {
+    const where = this.getTransferTicketSearchWhere(query.q);
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.inventoryTransferTicket.count({ where }),
+      this.prisma.inventoryTransferTicket.findMany({
+        where,
+        include: this.transferTicketInclude,
+        orderBy: { id: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
+  }
+
+  async findTransferTicket(id: number) {
+    this.ensurePositiveId(id);
+
+    const ticket = await this.prisma.inventoryTransferTicket.findUnique({
+      where: { id },
+      include: this.transferTicketInclude,
+    });
+
+    if (!ticket) {
+      throw new NotFoundException('Ticket de traslado no encontrado');
+    }
+
+    return ticket;
+  }
+
   private readonly movementInclude = {
-    product: true,
+    product: { include: { packagingProfile: true } },
     fromWarehouse: true,
     toWarehouse: true,
+    createdByUser: {
+      select: { id: true, username: true, role: true },
+    },
+    approvedByUser: {
+      select: { id: true, username: true, role: true },
+    },
+    transferTicket: {
+      select: {
+        id: true,
+        ticketNumber: true,
+        status: true,
+        supportNote: true,
+        approvedAt: true,
+        createdAt: true,
+      },
+    },
+  } as const;
+
+  private readonly transferTicketInclude = {
+    movement: { include: this.movementInclude },
+    createdByUser: { select: { id: true, username: true, role: true } },
+    approvedByUser: { select: { id: true, username: true, role: true } },
   } as const;
 
   private async decrementStock(
@@ -332,6 +534,14 @@ export class InventarioService {
   }
 
   private formatProduct(product) {
+    const packaging = buildPackagingBreakdown(
+      (product.warehouses ?? []).reduce(
+        (sum, item) => sum + Number(item.quantity ?? 0),
+        0,
+      ),
+      product.packagingProfile,
+    );
+
     return {
       ...product,
       provider: product.primaryProvider,
@@ -339,6 +549,7 @@ export class InventarioService {
         ...item.provider,
         isPrimary: item.providerId === product.providerId,
       })),
+      packagingSummary: packaging,
     };
   }
 
@@ -353,7 +564,58 @@ export class InventarioService {
         { fromWarehouse: { location: { contains: q, mode: 'insensitive' as const } } },
         { toWarehouse: { location: { contains: q, mode: 'insensitive' as const } } },
         { reason: { contains: q, mode: 'insensitive' as const } },
+        {
+          transferTicket: {
+            ticketNumber: { contains: q, mode: 'insensitive' as const },
+          },
+        },
       ],
     };
+  }
+
+  private getTransferTicketSearchWhere(search?: string) {
+    const q = search?.trim();
+
+    if (!q) return undefined;
+
+    return {
+      OR: [
+        { ticketNumber: { contains: q, mode: 'insensitive' as const } },
+        { supportNote: { contains: q, mode: 'insensitive' as const } },
+        {
+          movement: {
+            product: { name: { contains: q, mode: 'insensitive' as const } },
+          },
+        },
+        {
+          movement: {
+            fromWarehouse: {
+              location: { contains: q, mode: 'insensitive' as const },
+            },
+          },
+        },
+        {
+          movement: {
+            toWarehouse: {
+              location: { contains: q, mode: 'insensitive' as const },
+            },
+          },
+        },
+      ],
+    };
+  }
+
+  private generateTransferTicketNumber() {
+    const now = new Date();
+    const datePart = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(
+      2,
+      '0',
+    )}${String(now.getDate()).padStart(2, '0')}`;
+    const timePart = `${String(now.getHours()).padStart(2, '0')}${String(
+      now.getMinutes(),
+    ).padStart(2, '0')}${String(now.getSeconds()).padStart(2, '0')}`;
+    const suffix = Math.floor(Math.random() * 900 + 100);
+
+    return `TRS-${datePart}-${timePart}-${suffix}`;
   }
 }

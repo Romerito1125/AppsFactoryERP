@@ -92,6 +92,18 @@ export class FacturasService {
         );
       }
 
+      if (createInvoiceDto.warehouseId) {
+        const warehouse = await tx.warehouse.findUnique({
+          where: { id: createInvoiceDto.warehouseId },
+        });
+
+        if (!warehouse || !warehouse.isActive) {
+          throw new BadRequestException(
+            'La bodega seleccionada no existe o está inactiva',
+          );
+        }
+      }
+
       const resolvedItems: Array<{
         productId: number;
         productPriceId?: number;
@@ -265,10 +277,15 @@ export class FacturasService {
         data: {
           consecutive: this.generateConsecutive(),
           clientId: createInvoiceDto.clientId,
+          warehouseId: createInvoiceDto.warehouseId,
           createdByUserId: creatorId,
           createdByRole: creatorRole,
           createdByUsername: creatorUsername,
           source: createInvoiceDto.source ?? InvoiceSource.ADMIN,
+          saleMode: createInvoiceDto.saleMode ?? 'CONTADO',
+          zone: createInvoiceDto.zone?.trim() || null,
+          city: createInvoiceDto.city?.trim() || null,
+          station: createInvoiceDto.station?.trim() || null,
           subtotal,
           taxes,
           total,
@@ -381,6 +398,7 @@ export class FacturasService {
 
   private readonly invoiceInclude = {
     client: true,
+    warehouse: true,
     createdByUser: {
       select: {
         id: true,

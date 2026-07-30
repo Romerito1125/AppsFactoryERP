@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import { Badge } from '@/components/ui/badge'
+import { ProductImage } from '@/components/product-image'
 import { apiClient } from '@/lib/api-client'
 import {
   formatDate,
@@ -14,6 +15,7 @@ import { CrudModulePage } from '@/modules/shared/crud-module-page'
 const productTypeSchema = z.object({
   name: z.string().min(2, 'Minimo 2 caracteres'),
   description: z.string().optional(),
+  imageUrl: z.string().optional(),
 })
 
 const productTypesConfig = {
@@ -43,6 +45,7 @@ const productTypesConfig = {
   statusFilter: 'api',
   fields: [
     { name: 'name', label: 'Nombre', placeholder: 'Lacteos' },
+    { name: 'imageUrl', label: 'URL de imagen', placeholder: 'https://...' },
     {
       name: 'description',
       label: 'Descripcion',
@@ -57,6 +60,7 @@ const productTypesConfig = {
   getDefaultValues: (_, record) => ({
     name: record?.name ?? '',
     description: record?.description ?? '',
+    imageUrl: record?.imageUrl ?? '',
   }),
   fetchRecords: ({ status, search, page, limit }) =>
     apiClient.get('/tipos-producto', { estado: toApiStatus(status), q: search, page, limit }),
@@ -64,7 +68,7 @@ const productTypesConfig = {
   updateRecord: (id, payload) => apiClient.patch(`/tipos-producto/${id}`, payload),
   archiveRecord: (id) => apiClient.delete(`/tipos-producto/${id}`),
   reactivateRecord: (id) => apiClient.patch(`/tipos-producto/${id}/reactivar`),
-  searchResolver: (record) => [record.name, record.description],
+  searchResolver: (record) => [record.name, record.description, record.imageUrl],
   getSummaryCards: ({ rawRecords }) => {
     const activeCount = rawRecords.filter((record) => record.isActive).length
 
@@ -92,16 +96,19 @@ const productTypesConfig = {
     ]
   },
   columns: [
-    {
-      key: 'name',
-      label: 'Tipo',
-      render: (record) => (
-        <div>
-          <p className="font-medium text-foreground">{record.name}</p>
-          <p className="text-xs text-muted-foreground">ID #{record.id}</p>
-        </div>
-      ),
-    },
+      {
+        key: 'name',
+        label: 'Tipo',
+        render: (record) => (
+          <div className="flex items-center gap-3">
+            <ProductImage src={record.imageUrl} alt={record.name} className="size-12 rounded-lg" iconClassName="size-4" />
+            <div>
+            <p className="font-medium text-foreground">{record.name}</p>
+            <p className="text-xs text-muted-foreground">ID #{record.id}</p>
+            </div>
+          </div>
+        ),
+      },
     {
       key: 'description',
       label: 'Descripcion',
@@ -125,11 +132,12 @@ const productTypesConfig = {
   getDetailSections: (record) => [
     {
       label: 'Informacion general',
-      items: [
-        { label: 'Nombre', value: record.name },
-        { label: 'Descripcion', value: record.description ?? 'Sin descripcion' },
-        { label: 'Estado', value: getRecordStatus(record) },
-      ],
+        items: [
+          { label: 'Nombre', value: record.name },
+          { label: 'Imagen', value: <ProductImage src={record.imageUrl} alt={record.name} className="size-20 rounded-xl" iconClassName="size-5" /> },
+          { label: 'Descripcion', value: record.description ?? 'Sin descripcion' },
+          { label: 'Estado', value: getRecordStatus(record) },
+        ],
     },
     {
       label: 'Trazabilidad',

@@ -1,11 +1,11 @@
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsEmail,
   IsEnum,
   IsInt,
   IsOptional,
   IsPositive,
-  IsString,
   MinLength,
 } from 'class-validator';
 import { Role } from '../../../common/enums/role.enum';
@@ -17,9 +17,8 @@ export class CreateUserDto {
   @IsPositive()
   clientId?: number;
 
-  @IsString()
-  @MinLength(3)
-  username: string;
+  @IsEmail()
+  email: string;
 
   @IsString()
   @MinLength(6)

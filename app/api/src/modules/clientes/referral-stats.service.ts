@@ -207,7 +207,7 @@ export class ReferralStatsService {
     let generation = 1;
     const visited = new Set<number>([clientId]);
 
-    while (currentClientIds.length) {
+    while (currentClientIds.length && generation <= 4) {
       const referrals = await this.prisma.referral.findMany({
         where: { referrerClientId: { in: currentClientIds } },
         include: {

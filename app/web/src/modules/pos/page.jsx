@@ -199,6 +199,9 @@ export function PosPage() {
   const [selectedClientId, setSelectedClientId] = useState('NO_CLIENT')
   const [selectedAccountId, setSelectedAccountId] = useState(null)
   const [selectedUserId, setSelectedUserId] = useState(() => user?.sub ?? null)
+  const [operationZone, setOperationZone] = useState('')
+  const [operationCity, setOperationCity] = useState('')
+  const [operationStation, setOperationStation] = useState('')
   const [creditDueDate, setCreditDueDate] = useState(() => {
     const due = new Date()
     due.setDate(due.getDate() + 15)
@@ -433,7 +436,12 @@ export function PosPage() {
       const invoicePayload = {
         clientId: targetClientId,
         createdByUserId: selectedUserId ?? undefined,
+        warehouseId: selectedWarehouseId ?? undefined,
         source: 'POS',
+        saleMode: saleMode === 'credito' ? 'CREDITO' : 'CONTADO',
+        zone: operationZone.trim() || undefined,
+        city: operationCity.trim() || undefined,
+        station: operationStation.trim() || undefined,
         items: cart.map((item) => ({
           productId: item.productId,
           productPriceId: item.productPriceId,
@@ -884,6 +892,21 @@ export function PosPage() {
                       />
                     </div>
                   )}
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div className="grid gap-1.5">
+                    <Label className="text-xs font-semibold text-muted-foreground">Zona</Label>
+                    <Input value={operationZone} onChange={(event) => setOperationZone(event.target.value)} className="h-9 rounded-xl bg-background/50 text-xs" placeholder="Centro" />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label className="text-xs font-semibold text-muted-foreground">Ciudad</Label>
+                    <Input value={operationCity} onChange={(event) => setOperationCity(event.target.value)} className="h-9 rounded-xl bg-background/50 text-xs" placeholder="Cartagena" />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label className="text-xs font-semibold text-muted-foreground">Estacion</Label>
+                    <Input value={operationStation} onChange={(event) => setOperationStation(event.target.value)} className="h-9 rounded-xl bg-background/50 text-xs" placeholder="Caja 1" />
+                  </div>
                 </div>
               </div>
 

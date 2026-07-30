@@ -55,7 +55,7 @@ export function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { login } = useAuth()
-  const [username, setUsername] = useState('santiago.admin')
+  const [email, setEmail] = useState('santiago.admin@appsfactory.local')
   const [password, setPassword] = useState('Admin123*')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -106,7 +106,7 @@ export function LoginPage() {
 
     try {
       const authResponse = await apiClient.post('/auth/login', {
-        username: username.trim(),
+        email: email.trim().toLowerCase(),
         password,
       })
 
@@ -177,17 +177,18 @@ export function LoginPage() {
           {/* Form */}
           <form className="space-y-4" onSubmit={handleSubmit}>
             <div className="space-y-1.5">
-              <Label htmlFor="username" className="text-xs font-semibold text-muted-foreground">
-                Usuario
+              <Label htmlFor="email" className="text-xs font-semibold text-muted-foreground">
+                Correo
               </Label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground/85" />
                 <Input
-                  id="username"
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  placeholder="santiago.admin"
-                  autoComplete="username"
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="correo@ejemplo.com"
+                  autoComplete="email"
                   className="pl-9 h-10.5 rounded-xl border-border/70 bg-background/50 focus-visible:bg-background/80 transition-all"
                   required
                 />
@@ -252,13 +253,13 @@ export function LoginPage() {
 
               <div className="grid grid-cols-2 gap-2">
                 {demoAccess.map((item) => {
-                  const isActive = username === item.username
+                  const isActive = email === item.username
                   return (
                     <button
                       key={item.username}
                       type="button"
                       onClick={() => {
-                        setUsername(item.username)
+                        setEmail(item.username)
                         setPassword(item.password)
                         toast.info(`Credenciales de ${item.label.split(' ')[0]} cargadas`)
                       }}

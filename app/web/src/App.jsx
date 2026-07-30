@@ -12,6 +12,9 @@ const DashboardPage = lazy(() =>
 const UsersPage = lazy(() =>
   import('@/modules/users/page').then((module) => ({ default: module.UsersPage })),
 )
+const AuditLogPage = lazy(() =>
+  import('@/modules/audit-log/page').then((module) => ({ default: module.AuditLogPage })),
+)
 const ClientsPage = lazy(() =>
   import('@/modules/clients/page').then((module) => ({ default: module.ClientsPage })),
 )
@@ -134,6 +137,7 @@ function App() {
               <Route path="/" element={<RoleHomeRedirect />} />
               <Route path="/dashboard" element={<ProtectedRoute allowedRoles={['ADMIN']}><DashboardPage /></ProtectedRoute>} />
               <Route path="/usuarios" element={<ProtectedRoute allowedRoles={['ADMIN']}><UsersPage /></ProtectedRoute>} />
+              <Route path="/auditoria" element={<ProtectedRoute allowedRoles={['ADMIN']}><AuditLogPage /></ProtectedRoute>} />
               <Route path="/clientes" element={<ProtectedRoute allowedRoles={['ADMIN']}><ClientsPage /></ProtectedRoute>} />
               <Route path="/productos" element={<ProtectedRoute allowedRoles={['ADMIN']}><ProductsPage /></ProtectedRoute>} />
               <Route path="/codigos-barras" element={<ProtectedRoute allowedRoles={['ADMIN']}><ProductBarcodesPage /></ProtectedRoute>} />

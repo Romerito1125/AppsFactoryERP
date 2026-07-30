@@ -20,6 +20,31 @@ export function normalizeBarcodePayload(barcodes) {
   return resolved
 }
 
+export function normalizePricePayload(prices) {
+  const resolved = (prices ?? [])
+    .map((price) => ({
+      name: price?.name?.trim() ?? '',
+      price: Number(price?.price ?? 0),
+      isDefault: Boolean(price?.isDefault),
+    }))
+    .filter((price) => price.name && price.price > 0)
+
+  if (!resolved.length) {
+    return []
+  }
+
+  if (!resolved.some((price) => price.isDefault)) {
+    resolved[0].isDefault = true
+  }
+
+  const defaultIndex = resolved.findIndex((price) => price.isDefault)
+
+  return resolved.map((price, index) => ({
+    ...price,
+    isDefault: index === defaultIndex,
+  }))
+}
+
 function appendFormValue(formData, key, value) {
   if (value === undefined || value === null || value === '') {
     return
@@ -47,6 +72,16 @@ export function buildProductFormData(values) {
 }
 
 export function buildCreateProductFormData(values) {
+  const resolvedPrices = values.prices?.length
+    ? normalizePricePayload(values.prices)
+    : normalizePricePayload([
+        {
+          name: values.initialPriceName,
+          price: values.initialPrice,
+          isDefault: true,
+        },
+      ])
+
   return buildProductFormData({
     productTypeId: values.productTypeId,
     providerId: values.providerId,
@@ -58,13 +93,7 @@ export function buildCreateProductFormData(values) {
     taxRate: values.taxRate,
     minimumStock: values.minimumStock,
     maximumStock: values.maximumStock,
-    prices: [
-      {
-        name: values.initialPriceName,
-        price: values.initialPrice,
-        isDefault: true,
-      },
-    ],
+    prices: resolvedPrices,
     warehouses: [
       {
         warehouseId: values.initialWarehouseId,
@@ -72,6 +101,7 @@ export function buildCreateProductFormData(values) {
       },
     ],
     barcodes: normalizeBarcodePayload(values.barcodes),
+    packaging: values.packaging,
   })
 }
 
@@ -94,8 +124,13 @@ export function buildImportedProductFormData(draft, defaults) {
     taxRate: Number(draft.taxRate ?? defaults.taxRate ?? 0),
     minimumStock: Number(defaults.minimumStock ?? 0),
     maximumStock: undefined,
-    initialPriceName: defaults.priceName?.trim() || 'Precio factura',
-    initialPrice: Number(draft.unitPrice ?? 0),
+    prices: [
+      {
+        name: defaults.priceName?.trim() || 'Precio factura',
+        price: Number(draft.unitPrice ?? 0),
+        isDefault: true,
+      },
+    ],
     initialWarehouseId: defaults.warehouseId,
     initialQuantity: quantity,
     barcodes: draft.code
@@ -107,5 +142,6 @@ export function buildImportedProductFormData(draft, defaults) {
           },
         ]
       : [],
+    packaging: undefined,
   })
 }

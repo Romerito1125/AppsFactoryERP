@@ -88,6 +88,7 @@ const movementFormSchema = z
     toWarehouseId: z.number().int().positive().optional(),
     warehouseId: z.number().int().positive().optional(),
     reason: z.string().optional(),
+    supportNote: z.string().optional(),
   })
   .superRefine((values, context) => {
     if (values.type === 'entrada' && !values.toWarehouseId) {
@@ -113,6 +114,10 @@ const movementFormSchema = z
         values.fromWarehouseId === values.toWarehouseId
       ) {
         context.addIssue({ code: z.ZodIssueCode.custom, path: ['toWarehouseId'], message: 'Origen y destino no pueden ser iguales' })
+      }
+
+      if (!values.supportNote || values.supportNote.trim().length < 3) {
+        context.addIssue({ code: z.ZodIssueCode.custom, path: ['supportNote'], message: 'Describe el soporte del retiro o traslado' })
       }
     }
 
@@ -233,6 +238,7 @@ function buildMovementPayload(values) {
         toWarehouseId: values.toWarehouseId,
         quantity: values.quantity,
         reason: values.reason?.trim() || undefined,
+        supportNote: values.supportNote?.trim() || undefined,
       },
     }
   }
@@ -279,12 +285,13 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
     defaultValues: {
       type: 'entrada',
       productId: undefined,
-      quantity: 1,
-      fromWarehouseId: undefined,
-      toWarehouseId: undefined,
-      warehouseId: undefined,
-      reason: '',
-    },
+        quantity: 1,
+        fromWarehouseId: undefined,
+        toWarehouseId: undefined,
+        warehouseId: undefined,
+        reason: '',
+        supportNote: '',
+      },
   })
 
   const movementType = form.watch('type')
@@ -295,13 +302,14 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
       form.reset({
         type: 'entrada',
         productId: undefined,
-        quantity: 1,
-        fromWarehouseId: undefined,
-        toWarehouseId: undefined,
-        warehouseId: undefined,
-        reason: '',
-      })
-    }
+          quantity: 1,
+          fromWarehouseId: undefined,
+          toWarehouseId: undefined,
+          warehouseId: undefined,
+          reason: '',
+          supportNote: '',
+        })
+      }
   }
 
   return (
@@ -460,6 +468,20 @@ function InventoryMovementDialog({ open, onOpenChange, products, warehouses, onS
                 <p className="text-xs text-destructive">{String(form.formState.errors.reason.message)}</p>
               ) : null}
             </div>
+
+            {movementType === 'traslado' ? (
+              <div className="grid gap-2 md:col-span-2">
+                <Label>Soporte del retiro</Label>
+                <Textarea
+                  rows={3}
+                  placeholder="Describe el soporte, responsable o condicion del traslado"
+                  {...form.register('supportNote')}
+                />
+                {form.formState.errors.supportNote ? (
+                  <p className="text-xs text-destructive">{String(form.formState.errors.supportNote.message)}</p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <DialogFooter>
@@ -901,6 +923,7 @@ export function InventoryPage() {
                   <TableHead>Tipo</TableHead>
                   <TableHead>Producto</TableHead>
                   <TableHead>Cantidad</TableHead>
+                  <TableHead>Ticket</TableHead>
                   <TableHead>Origen / Destino</TableHead>
                   <TableHead>Motivo</TableHead>
                   <TableHead>Fecha</TableHead>
@@ -917,6 +940,7 @@ export function InventoryPage() {
                       </TableCell>
                       <TableCell>{movement.product?.name ?? `Producto #${movement.productId}`}</TableCell>
                       <TableCell>{formatNumber(movement.quantity)}</TableCell>
+                      <TableCell>{movement.transferTicket?.ticketNumber ?? 'N/A'}</TableCell>
                       <TableCell>
                         <div className="text-sm text-muted-foreground">
                           <p>Origen: {movement.fromWarehouse?.location ?? 'N/A'}</p>
@@ -929,7 +953,7 @@ export function InventoryPage() {
                   ))
                 ) : (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-12 text-center text-muted-foreground">
+                    <TableCell colSpan={7} className="py-12 text-center text-muted-foreground">
                       No hay movimientos que coincidan con la busqueda actual.
                     </TableCell>
                   </TableRow>
@@ -1035,6 +1059,7 @@ export function InventoryPage() {
                   items: [
                     { label: 'Producto', value: detailMovement.product?.name ?? `Producto #${detailMovement.productId}` },
                     { label: 'Cantidad', value: formatNumber(detailMovement.quantity) },
+                    { label: 'Ticket', value: detailMovement.transferTicket?.ticketNumber ?? 'N/A' },
                     { label: 'Origen', value: detailMovement.fromWarehouse?.location ?? 'N/A' },
                     { label: 'Destino', value: detailMovement.toWarehouse?.location ?? 'N/A' },
                   ],
@@ -1045,6 +1070,16 @@ export function InventoryPage() {
                     { label: 'Motivo', value: detailMovement.reason ?? 'Sin motivo' },
                     { label: 'Fecha', value: formatDate(detailMovement.createdAt) },
                     { label: 'Tipo', value: formatMovementType(detailMovement.movementType) },
+                    { label: 'Creado por', value: detailMovement.createdByUser?.username ?? 'Sin dato' },
+                    { label: 'Aprobado por', value: detailMovement.approvedByUser?.username ?? 'Sin dato' },
+                    { label: 'Soporte', value: detailMovement.transferTicket?.supportNote ?? 'Sin soporte' },
+                    {
+                      label: 'Desglose empaque',
+                      value:
+                        detailMovement.packagingBoxes !== null && detailMovement.packagingBoxes !== undefined
+                          ? `${formatNumber(detailMovement.packagingBoxes)} caja(s) · ${formatNumber(detailMovement.packagingPackages ?? 0)} paquete(s) · ${formatNumber(detailMovement.packagingUnits ?? 0)} unidad(es)`
+                          : 'Sin conversion registrada',
+                    },
                   ],
                 },
               ]

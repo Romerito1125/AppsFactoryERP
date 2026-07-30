@@ -16,6 +16,7 @@ import {
   ShoppingCart,
   ReceiptText,
   ShieldUser,
+  ScrollText,
   Smartphone,
   Tag,
   Users,
@@ -38,6 +39,13 @@ export const navigationGroups = [
         label: 'Usuarios',
         description: 'Accesos y roles',
         icon: ShieldUser,
+        allowedRoles: ['ADMIN'],
+      },
+      {
+        path: '/auditoria',
+        label: 'Auditoria',
+        description: 'Historial de acciones',
+        icon: ScrollText,
         allowedRoles: ['ADMIN'],
       },
       {

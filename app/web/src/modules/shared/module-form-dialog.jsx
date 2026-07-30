@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 
@@ -58,6 +58,9 @@ export function ModuleFormDialog({
     handleSubmit,
     control,
     reset,
+    setValue,
+    getValues,
+    trigger,
     formState: { errors },
   } = useForm({
     resolver: zodResolver(schema),
@@ -79,10 +82,52 @@ export function ModuleFormDialog({
 
     return true
   })
+  const formSteps = useMemo(
+    () =>
+      (config.formSteps ?? []).filter((step) =>
+        fields.some((field) => field.stepId === step.id),
+      ),
+    [config.formSteps, fields],
+  )
+  const hasSteps = formSteps.length > 0
+  const [currentStepIndex, setCurrentStepIndex] = useState(0)
+
+  useEffect(() => {
+    if (!open) {
+      setCurrentStepIndex(0)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!formSteps.length) {
+      if (currentStepIndex !== 0) {
+        setCurrentStepIndex(0)
+      }
+      return
+    }
+
+    if (currentStepIndex > formSteps.length - 1) {
+      setCurrentStepIndex(formSteps.length - 1)
+    }
+  }, [currentStepIndex, formSteps])
+
+  const currentStep = hasSteps ? formSteps[Math.min(currentStepIndex, formSteps.length - 1)] : null
+  const visibleFields = hasSteps ? fields.filter((field) => field.stepId === currentStep?.id) : fields
+
+  async function handleNextStep() {
+    const currentFieldNames = visibleFields.map((field) => field.name)
+    const isValid = await trigger(currentFieldNames)
+
+    if (!isValid) {
+      return
+    }
+
+    setCurrentStepIndex((index) => Math.min(index + 1, formSteps.length - 1))
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className={cn('max-h-[92vh] overflow-y-auto sm:max-w-2xl', config.dialogContentClassName)}>
         <DialogHeader>
           <DialogTitle>
             {mode === 'create' ? config.createTitle : config.editTitle}
@@ -92,6 +137,34 @@ export function ModuleFormDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {hasSteps ? (
+          <div className="grid gap-3">
+            <div className="flex flex-wrap gap-2">
+              {formSteps.map((step, index) => (
+                <button
+                  key={step.id}
+                  type="button"
+                  onClick={() => setCurrentStepIndex(index)}
+                  className={cn(
+                    'rounded-full border px-3 py-1.5 text-sm transition',
+                    index === currentStepIndex
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground',
+                  )}
+                >
+                  {index + 1}. {step.title}
+                </button>
+              ))}
+            </div>
+            <div className="rounded-2xl border border-border/70 bg-muted/15 p-4">
+              <p className="text-sm font-medium text-foreground">{currentStep?.title}</p>
+              {currentStep?.description ? (
+                <p className="mt-1 text-xs text-muted-foreground">{currentStep.description}</p>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
         <form
           className="grid gap-4"
           onSubmit={handleSubmit((values) =>
@@ -99,7 +172,7 @@ export function ModuleFormDialog({
           )}
         >
           <div className="grid gap-4 md:grid-cols-2">
-            {fields.map((field) => {
+            {visibleFields.map((field) => {
               const error = errors[field.name]?.message
               const options = resolveOptions(field.options, lookups, record)
               const CustomField = field.render
@@ -108,15 +181,17 @@ export function ModuleFormDialog({
               return (
                 <div
                   key={field.name}
-                  className={cn('grid gap-2', field.fullWidth && 'md:col-span-2')}
+                  className={cn('grid gap-2', field.fullWidth && 'md:col-span-2', field.containerClassName)}
                 >
-                  <Label htmlFor={field.name}>{field.label}</Label>
+                  {!field.hideLabel ? <Label htmlFor={field.name}>{field.label}</Label> : null}
 
                   {CustomField ? (
                     <CustomField
                       field={field}
                       control={control}
                       register={register}
+                      setValue={setValue}
+                      getValues={getValues}
                       errors={errors}
                       lookups={lookups}
                       mode={mode}
@@ -282,13 +357,24 @@ export function ModuleFormDialog({
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting
-                ? 'Guardando...'
-                : mode === 'create'
-                  ? config.submitCreateLabel
-                  : config.submitEditLabel}
-            </Button>
+            {hasSteps && currentStepIndex > 0 ? (
+              <Button type="button" variant="outline" onClick={() => setCurrentStepIndex((index) => Math.max(index - 1, 0))}>
+                Atras
+              </Button>
+            ) : null}
+            {hasSteps && currentStepIndex < formSteps.length - 1 ? (
+              <Button type="button" onClick={handleNextStep}>
+                Siguiente
+              </Button>
+            ) : (
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting
+                  ? 'Guardando...'
+                  : mode === 'create'
+                    ? config.submitCreateLabel
+                    : config.submitEditLabel}
+              </Button>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

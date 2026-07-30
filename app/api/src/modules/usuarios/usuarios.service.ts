@@ -12,6 +12,8 @@ import {
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
@@ -19,7 +21,10 @@ import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
 export class UsuariosService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async findAll(query: ListUsersQueryDto) {
     const where = {
@@ -56,31 +61,47 @@ export class UsuariosService {
     return user;
   }
 
-  async create(createUserDto: CreateUserDto) {
+  async create(createUserDto: CreateUserDto, actor: AuthUser) {
     if (createUserDto.clientId) {
       await this.ensureClientExists(createUserDto.clientId);
     }
 
+    const normalizedEmail = createUserDto.email.trim().toLowerCase();
+
     const existingUser = await this.prisma.user.findUnique({
-      where: { username: createUserDto.username },
+      where: { username: normalizedEmail },
     });
 
     if (existingUser) {
-      throw new ConflictException('El username ya existe');
+      throw new ConflictException('El correo ya existe');
     }
 
     const user = await this.prisma.user.create({
       data: {
-        ...createUserDto,
+        clientId: createUserDto.clientId,
+        role: createUserDto.role,
+        isActive: createUserDto.isActive,
+        username: normalizedEmail,
         password: this.hashPassword(createUserDto.password),
       },
       select: this.userSelect(),
     });
 
+    await this.auditLogService.log({
+      actor,
+      module: 'USUARIOS',
+      action: 'CREATE',
+      entityType: 'User',
+      entityId: user.id,
+      entityLabel: user.username,
+      description: `Creo el usuario ${user.username}`,
+      metadata: { role: user.role, clientId: user.clientId },
+    });
+
     return user;
   }
 
-  async createEmployee(createEmployeeDto: CreateEmployeeDto) {
+  async createEmployee(createEmployeeDto: CreateEmployeeDto, actor: AuthUser) {
     if (createEmployeeDto.role === Role.CLIENTE) {
       throw new BadRequestException(
         'Un funcionario no puede tener rol CLIENTE',
@@ -96,17 +117,17 @@ export class UsuariosService {
     }
 
     const existingUser = await this.prisma.user.findUnique({
-      where: { username: createEmployeeDto.username },
+      where: { username: createEmployeeDto.email.trim().toLowerCase() },
     });
 
     if (existingUser) {
-      throw new ConflictException('El username ya existe');
+      throw new ConflictException('El correo ya existe');
     }
 
     const user = await this.prisma.$transaction(async (tx) => {
       const createdUser = await tx.user.create({
         data: {
-          username: createEmployeeDto.username,
+          username: createEmployeeDto.email.trim().toLowerCase(),
           password: this.hashPassword(createEmployeeDto.password),
           role: createEmployeeDto.role,
         },
@@ -125,50 +146,100 @@ export class UsuariosService {
       });
     });
 
+    await this.auditLogService.log({
+      actor,
+      module: 'USUARIOS',
+      action: 'CREATE_EMPLOYEE',
+      entityType: 'EmployeeUser',
+      entityId: user.user.id,
+      entityLabel: user.user.username,
+      description: `Creo el funcionario ${user.firstName} ${user.lastName}`,
+      metadata: {
+        userId: user.user.id,
+        employeeId: user.id,
+        role: user.user.role,
+        identification: user.identification,
+      },
+    });
+
     return user;
   }
 
-  async update(id: number, updateUserDto: UpdateUserDto) {
+  async update(id: number, updateUserDto: UpdateUserDto, actor: AuthUser) {
     this.ensurePositiveId(id);
-    await this.findOne(id);
+    const current = await this.findOne(id);
 
     if (updateUserDto.clientId) {
       await this.ensureClientExists(updateUserDto.clientId, id);
     }
 
-    if (updateUserDto.username) {
+    if (updateUserDto.email) {
+      const normalizedEmail = updateUserDto.email.trim().toLowerCase();
       const existingUser = await this.prisma.user.findUnique({
-        where: { username: updateUserDto.username },
+        where: { username: normalizedEmail },
       });
 
       if (existingUser && existingUser.id !== id) {
-        throw new ConflictException('El username ya existe');
+        throw new ConflictException('El correo ya existe');
       }
     }
 
     const data = {
       ...updateUserDto,
+      ...(updateUserDto.email
+        ? { username: updateUserDto.email.trim().toLowerCase() }
+        : {}),
       ...(updateUserDto.password && {
         password: this.hashPassword(updateUserDto.password),
       }),
     };
 
-    return this.prisma.user.update({
+    delete data.email;
+
+    const user = await this.prisma.user.update({
       where: { id },
       data,
       select: this.userSelect(),
     });
+    await this.auditLogService.log({
+      actor,
+      module: 'USUARIOS',
+      action: 'UPDATE',
+      entityType: 'User',
+      entityId: user.id,
+      entityLabel: user.username,
+      description: `Actualizo el usuario ${user.username}`,
+      metadata: {
+        userId: user.id,
+        changedFields: Object.keys(updateUserDto).filter((field) => field !== 'password'),
+        previousRole: current.role,
+        nextRole: user.role,
+        passwordChanged: Boolean(updateUserDto.password),
+      },
+    });
+    return user;
   }
 
-  async remove(id: number) {
+  async remove(id: number, actor: AuthUser) {
     this.ensurePositiveId(id);
-    await this.findOne(id);
+    const current = await this.findOne(id);
 
-    return this.prisma.user.update({
+    const user = await this.prisma.user.update({
       where: { id },
       data: { isActive: false, deletedAt: new Date() },
       select: this.userSelect(),
     });
+    await this.auditLogService.log({
+      actor,
+      module: 'USUARIOS',
+      action: 'DEACTIVATE',
+      entityType: 'User',
+      entityId: user.id,
+      entityLabel: user.username,
+      description: `Desactivo el usuario ${user.username}`,
+      metadata: { userId: user.id, previousStatus: current.isActive },
+    });
+    return user;
   }
 
   private hashPassword(password: string) {
