@@ -449,11 +449,7 @@ export function OffersPage() {
     },
   })
 
-  if (
-    offersQuery.isLoading ||
-    (lookupEnabled &&
-      (clientsQuery.isLoading || productsQuery.isLoading || productTypesQuery.isLoading || tagsQuery.isLoading))
-  ) {
+  if (offersQuery.isLoading) {
     return <OffersSkeleton />
   }
 

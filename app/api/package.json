@@ -29,7 +29,8 @@
     "db:seed:quick-access": "node scripts/seed-quick-access-and-mobile-orders.js",
     "db:seed:barcode-examples": "node scripts/seed-product-barcode-examples.js",
     "db:seed:business-examples": "node scripts/seed-business-examples.js",
-    "db:seed:product-type-images": "node scripts/fill-product-type-images.js"
+    "db:seed:product-type-images": "node scripts/fill-product-type-images.js",
+    "db:seed:fix-demo-product-images": "node scripts/fix-demo-product-images.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1074.0",

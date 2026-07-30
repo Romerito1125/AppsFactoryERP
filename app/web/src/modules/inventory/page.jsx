@@ -619,6 +619,11 @@ export function InventoryPage() {
     queryFn: () => apiClient.getAllPages('/bodegas'),
   })
 
+  const favoritesQuery = useQuery({
+    queryKey: ['inventario-favoritos'],
+    queryFn: () => apiClient.get('/productos/favoritos/mios'),
+  })
+
   const movementMutation = useMutation({
     mutationFn: async (values) => {
       const { path, payload } = buildMovementPayload(values)
@@ -636,24 +641,36 @@ export function InventoryPage() {
   const inventory = inventoryQuery.data ?? []
   const movements = movementsQuery.data ?? []
   const warehouses = warehousesQuery.data ?? []
+  const favoriteProductIds = new Set((favoritesQuery.data ?? []).map((product) => product.id))
 
   const filteredInventory = useMemo(
     () =>
-      inventory.filter((product) =>
-        matchesSearch(product, deferredSearch, (record) => [
-          record.name,
-          record.brand,
-          record.productType?.name,
-          ...getAssociatedProviders(record).map((provider) => provider.name),
-          ...(record.warehouses ?? []).map((item) => item.warehouse?.location),
-        ]) &&
-        (stockFilters.productTypeId === 'TODOS' || product.productType?.id === Number(stockFilters.productTypeId)) &&
-        (stockFilters.providerId === 'TODOS' || matchesProviderAssociation(product, Number(stockFilters.providerId))) &&
-        (stockFilters.warehouseId === 'TODOS' ||
-          (product.warehouses ?? []).some((item) => item.warehouseId === Number(stockFilters.warehouseId))) &&
-        matchesStockFilter(product, stockFilters.stockStatus),
-      ),
-    [deferredSearch, inventory, stockFilters],
+      inventory
+        .filter((product) =>
+          matchesSearch(product, deferredSearch, (record) => [
+            record.name,
+            record.brand,
+            record.productType?.name,
+            ...getAssociatedProviders(record).map((provider) => provider.name),
+            ...(record.warehouses ?? []).map((item) => item.warehouse?.location),
+          ]) &&
+          (stockFilters.productTypeId === 'TODOS' || product.productType?.id === Number(stockFilters.productTypeId)) &&
+          (stockFilters.providerId === 'TODOS' || matchesProviderAssociation(product, Number(stockFilters.providerId))) &&
+          (stockFilters.warehouseId === 'TODOS' ||
+            (product.warehouses ?? []).some((item) => item.warehouseId === Number(stockFilters.warehouseId))) &&
+          matchesStockFilter(product, stockFilters.stockStatus),
+        )
+        .sort((left, right) => {
+          const leftFavorite = favoriteProductIds.has(left.id) ? 1 : 0
+          const rightFavorite = favoriteProductIds.has(right.id) ? 1 : 0
+
+          if (leftFavorite !== rightFavorite) {
+            return rightFavorite - leftFavorite
+          }
+
+          return left.name.localeCompare(right.name)
+        }),
+    [deferredSearch, favoriteProductIds, inventory, stockFilters],
   )
 
   const filteredMovements = useMemo(

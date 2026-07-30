@@ -14,10 +14,11 @@ import { InvoiceSource, SaleMode } from '@prisma/client';
 import { CreateInvoiceItemDto } from './create-invoice-item.dto';
 
 export class CreateInvoiceDto {
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @IsPositive()
-  clientId: number;
+  clientId?: number;
 
   @IsOptional()
   @Type(() => Number)

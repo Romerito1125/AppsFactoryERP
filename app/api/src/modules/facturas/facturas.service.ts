@@ -78,18 +78,24 @@ export class FacturasService {
   async create(createInvoiceDto: CreateInvoiceDto, authUser: AuthUser) {
     // La venta no descuenta stock por bodega; el inventario se maneja en /inventario.
     return this.prisma.$transaction(async (tx) => {
-      const client = await tx.client.findUnique({
-        where: { id: createInvoiceDto.clientId },
-      });
+      const client = createInvoiceDto.clientId
+        ? await tx.client.findUnique({
+            where: { id: createInvoiceDto.clientId },
+          })
+        : await this.ensureWalkInClient(tx);
 
-      if (!client) {
+      if (createInvoiceDto.clientId && !client) {
         throw new NotFoundException('Cliente no encontrado');
       }
 
-      if (!client.isActive) {
+      if (client && !client.isActive) {
         throw new BadRequestException(
           'No se puede facturar a un cliente inactivo',
         );
+      }
+
+      if (!client) {
+        throw new NotFoundException('Cliente no encontrado');
       }
 
       if (createInvoiceDto.warehouseId) {
@@ -235,7 +241,7 @@ export class FacturasService {
           invoiceItems.reduce((sum, item) => sum + item.profitAmount, 0),
         ),
       );
-      const availableBenefits = referralDiscount
+      const availableBenefits = referralDiscount && createInvoiceDto.clientId
         ? await tx.referralBenefit.findMany({
             where: {
               beneficiaryClientId: client.id,
@@ -276,7 +282,7 @@ export class FacturasService {
       const invoice = await tx.invoice.create({
         data: {
           consecutive: this.generateConsecutive(),
-          clientId: createInvoiceDto.clientId,
+          clientId: client.id,
           warehouseId: createInvoiceDto.warehouseId,
           createdByUserId: creatorId,
           createdByRole: creatorRole,
@@ -635,16 +641,45 @@ export class FacturasService {
       OR: [
         { consecutive: { contains: q, mode: 'insensitive' as const } },
         {
-          client: { firstName: { contains: q, mode: 'insensitive' as const } },
+          client: { is: { firstName: { contains: q, mode: 'insensitive' as const } } },
         },
-        { client: { lastName: { contains: q, mode: 'insensitive' as const } } },
+        { client: { is: { lastName: { contains: q, mode: 'insensitive' as const } } } },
         {
           client: {
-            identification: { contains: q, mode: 'insensitive' as const },
+            is: {
+              identification: { contains: q, mode: 'insensitive' as const },
+            },
           },
         },
         { createdByUsername: { contains: q, mode: 'insensitive' as const } },
       ],
     };
+  }
+
+  private async ensureWalkInClient(tx: Prisma.TransactionClient) {
+    const identification = 'CONSUMIDOR-FINAL';
+    const existing = await tx.client.findUnique({ where: { identification } });
+
+    if (existing) {
+      if (!existing.isActive) {
+        return tx.client.update({
+          where: { id: existing.id },
+          data: { isActive: true, deletedAt: null },
+        });
+      }
+
+      return existing;
+    }
+
+    return tx.client.create({
+      data: {
+        identification,
+        firstName: 'Consumidor',
+        lastName: 'Final',
+        phone: '0000000000',
+        address: 'Venta sin cliente asociado',
+        clientType: 'MINORISTA',
+      },
+    });
   }
 }

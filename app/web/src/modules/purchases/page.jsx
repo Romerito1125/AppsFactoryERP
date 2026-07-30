@@ -137,6 +137,43 @@ function FieldError({ error }) {
   return error ? <p className="text-xs text-destructive">{String(error.message)}</p> : null
 }
 
+function SearchableOptionSelect({ items, value, onChange, placeholder, searchPlaceholder, getDescription }) {
+  const [query, setQuery] = useState('')
+  const filteredItems = query.trim()
+    ? items.filter((item) => item.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : items
+  const selectedItem = items.find((item) => item.id === value)
+
+  return (
+    <div className="grid gap-3">
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={searchPlaceholder} />
+      <div className="rounded-xl border border-dashed border-border/70 bg-muted/10 p-3 text-sm">
+        <p className="font-medium text-foreground">{selectedItem?.label ?? placeholder}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {selectedItem ? getDescription?.(selectedItem) ?? 'Seleccion actual del formulario.' : 'Busca y selecciona una opcion.'}
+        </p>
+      </div>
+      <div className="max-h-52 overflow-y-auto rounded-xl border border-border/70 p-2">
+        <div className="grid gap-2">
+          {filteredItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => onChange(item.id)}
+              className={`rounded-xl border px-3 py-2 text-left transition ${
+                item.id === value ? 'border-primary bg-primary/10 text-foreground' : 'border-border/70 bg-background hover:border-primary/40 hover:bg-primary/5'
+              }`}
+            >
+              <p className="truncate text-sm font-medium text-foreground">{item.label}</p>
+              {getDescription ? <p className="truncate text-xs text-muted-foreground">{getDescription(item)}</p> : null}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function PurchaseFormDialog({
   open,
   onOpenChange,
@@ -221,15 +258,17 @@ function PurchaseFormDialog({
             <div className="grid gap-4 rounded-2xl border border-border/70 bg-muted/10 p-4 md:grid-cols-2 xl:grid-cols-4">
               <div className="grid gap-2 md:col-span-2 xl:col-span-1">
                 <Label>Proveedor</Label>
-                <Controller
-                  name="providerId"
-                  control={form.control}
-                  render={({ field }) => (
-                    <NativeSelect
-                      value={field.value ? String(field.value) : ''}
-                      onChange={(event) => {
-                        const nextProviderId = event.target.value ? Number(event.target.value) : undefined
-                        field.onChange(nextProviderId)
+                  <Controller
+                    name="providerId"
+                    control={form.control}
+                    render={({ field }) => (
+                      <SearchableOptionSelect
+                        items={providers
+                          .filter((provider) => provider.isActive !== false)
+                          .map((provider) => ({ id: provider.id, label: provider.name, description: provider.description ?? 'Proveedor activo' }))}
+                        value={field.value}
+                        onChange={(nextProviderId) => {
+                          field.onChange(nextProviderId)
                           const currentItems = form.getValues('items')
                           currentItems.forEach((item, index) => {
                             const product = productById.get(item.productId)
@@ -237,43 +276,38 @@ function PurchaseFormDialog({
                               form.setValue(`items.${index}.productId`, undefined)
                             }
                           })
-                      }}
-                    >
-                      <option value="">Selecciona un proveedor</option>
-                      {providers
-                        .filter((provider) => provider.isActive !== false)
-                        .map((provider) => (
-                          <option key={provider.id} value={String(provider.id)}>
-                            {provider.name}
-                          </option>
-                        ))}
-                    </NativeSelect>
-                  )}
-                />
+                        }}
+                        placeholder="Selecciona un proveedor"
+                        searchPlaceholder="Buscar proveedor..."
+                        getDescription={(item) => item.description}
+                      />
+                    )}
+                  />
                 <FieldError error={form.formState.errors.providerId} />
               </div>
 
               <div className="grid gap-2 md:col-span-2 xl:col-span-1">
                 <Label>Bodega de recepcion</Label>
-                <Controller
-                  name="warehouseId"
-                  control={form.control}
-                  render={({ field }) => (
-                    <NativeSelect
-                      value={field.value ? String(field.value) : ''}
-                      onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                    >
-                      <option value="">Selecciona una bodega</option>
-                      {warehouses
-                        .filter((warehouse) => warehouse.isActive !== false)
-                        .map((warehouse) => (
-                          <option key={warehouse.id} value={String(warehouse.id)}>
-                            {warehouse.location}
-                          </option>
-                        ))}
-                    </NativeSelect>
-                  )}
-                />
+                  <Controller
+                    name="warehouseId"
+                    control={form.control}
+                    render={({ field }) => (
+                      <SearchableOptionSelect
+                        items={warehouses
+                          .filter((warehouse) => warehouse.isActive !== false)
+                          .map((warehouse) => ({
+                            id: warehouse.id,
+                            label: warehouse.location,
+                            description: `${formatNumber(warehouse._count?.products ?? 0)} productos visibles`,
+                          }))}
+                        value={field.value}
+                        onChange={field.onChange}
+                        placeholder="Selecciona una bodega"
+                        searchPlaceholder="Buscar bodega..."
+                        getDescription={(item) => item.description}
+                      />
+                    )}
+                  />
                 <FieldError error={form.formState.errors.warehouseId} />
               </div>
 
@@ -337,33 +371,34 @@ function PurchaseFormDialog({
                   >
                     <div className="grid gap-2 md:col-span-2 xl:col-span-1">
                       <Label>Producto</Label>
-                      <Controller
-                        name={`items.${index}.productId`}
-                        control={form.control}
-                        render={({ field }) => (
-                          <NativeSelect
-                            value={field.value ? String(field.value) : ''}
-                            onChange={(event) => {
-                              const productId = event.target.value ? Number(event.target.value) : undefined
-                              const selectedProduct = productById.get(productId)
-                              const activeCost = selectedProduct?.costs?.find((cost) => cost.isActive)
-                              field.onChange(productId)
-                              form.setValue(`items.${index}.taxRate`, Number(selectedProduct?.taxRate ?? 0), { shouldValidate: true })
-                              if (activeCost) {
-                                form.setValue(`items.${index}.unitCost`, Number(activeCost.cost), { shouldValidate: true })
-                              }
-                            }}
-                            disabled={!selectedProviderId}
-                          >
-                            <option value="">{selectedProviderId ? 'Selecciona un producto' : 'Selecciona primero el proveedor'}</option>
-                            {providerProducts
-                              .filter((item) => item.isActive !== false)
-                              .map((item) => (
-                                <option key={item.id} value={String(item.id)}>{`${item.name} - ${item.brand}`}</option>
-                              ))}
-                          </NativeSelect>
-                        )}
-                      />
+                        <Controller
+                          name={`items.${index}.productId`}
+                          control={form.control}
+                          render={({ field }) => (
+                            <SearchableOptionSelect
+                              items={providerProducts
+                                .filter((item) => item.isActive !== false)
+                                .map((item) => ({
+                                  id: item.id,
+                                  label: item.name,
+                                  description: `${item.brand} · ${item.productType?.name ?? 'Sin tipo'}`,
+                                }))}
+                              value={field.value}
+                              onChange={(productId) => {
+                                const selectedProduct = productById.get(productId)
+                                const activeCost = selectedProduct?.costs?.find((cost) => cost.isActive)
+                                field.onChange(productId)
+                                form.setValue(`items.${index}.taxRate`, Number(selectedProduct?.taxRate ?? 0), { shouldValidate: true })
+                                if (activeCost) {
+                                  form.setValue(`items.${index}.unitCost`, Number(activeCost.cost), { shouldValidate: true })
+                                }
+                              }}
+                              placeholder={selectedProviderId ? 'Selecciona un producto' : 'Selecciona primero el proveedor'}
+                              searchPlaceholder={selectedProviderId ? 'Buscar producto...' : 'Selecciona primero el proveedor'}
+                              getDescription={(item) => item.description}
+                            />
+                          )}
+                        />
                       <FieldError error={form.formState.errors.items?.[index]?.productId} />
                     </div>
 

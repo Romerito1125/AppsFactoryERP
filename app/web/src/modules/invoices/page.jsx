@@ -43,7 +43,7 @@ import { LocalPagination } from '@/modules/shared/local-pagination'
 const PAGE_SIZE = 20
 
 const invoiceSchema = z.object({
-  clientId: z.number({ message: 'Selecciona un cliente' }).int().positive('Selecciona un cliente'),
+  clientId: z.number().int().positive().optional(),
   referralDiscount: z.number().min(0, 'No puede ser negativo').optional(),
   items: z
     .array(
@@ -101,7 +101,62 @@ function InvoiceSkeleton() {
   )
 }
 
-function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, isSubmitting }) {
+function InvoiceClientSelector({ clients, value, onChange, isLoading }) {
+  const [query, setQuery] = useState('')
+  const filteredClients = query.trim()
+    ? clients.filter((client) =>
+        [client.firstName, client.lastName, client.identification]
+          .filter(Boolean)
+          .some((field) => String(field).toLowerCase().includes(query.trim().toLowerCase())),
+      )
+    : clients
+  const selectedClient = clients.find((client) => client.id === value)
+
+  return (
+    <div className="grid gap-3">
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar cliente por nombre o documento..." disabled={isLoading} />
+      <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-3 text-sm">
+        <p className="font-medium text-foreground">
+          {selectedClient ? `${selectedClient.firstName} ${selectedClient.lastName}` : 'Sin cliente asociado'}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {selectedClient ? selectedClient.identification ?? 'Sin documento' : 'La factura se registrara como consumidor final.'}
+        </p>
+      </div>
+      <div className="max-h-56 overflow-y-auto rounded-xl border border-border/70 p-2">
+        <div className="grid gap-2">
+          <button
+            type="button"
+            onClick={() => onChange(undefined)}
+            className={`rounded-xl border px-3 py-2 text-left transition ${
+              !value ? 'border-primary bg-primary/10 text-foreground' : 'border-border/70 bg-background hover:border-primary/40 hover:bg-primary/5'
+            }`}
+          >
+            <p className="text-sm font-medium">Sin cliente asociado</p>
+            <p className="text-xs text-muted-foreground">Usar consumidor final</p>
+          </button>
+          {isLoading
+            ? Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-14 rounded-xl" />)
+            : filteredClients.map((client) => (
+                <button
+                  key={client.id}
+                  type="button"
+                  onClick={() => onChange(client.id)}
+                  className={`rounded-xl border px-3 py-2 text-left transition ${
+                    client.id === value ? 'border-primary bg-primary/10 text-foreground' : 'border-border/70 bg-background hover:border-primary/40 hover:bg-primary/5'
+                  }`}
+                >
+                  <p className="truncate text-sm font-medium text-foreground">{`${client.firstName} ${client.lastName}`}</p>
+                  <p className="truncate text-xs text-muted-foreground">{client.identification ?? 'Sin documento'}</p>
+                </button>
+              ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, products, productsLoading, onSubmit, isSubmitting }) {
   const queryClient = useQueryClient()
   const form = useForm({
     resolver: zodResolver(invoiceSchema),
@@ -358,23 +413,13 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, products, onSubmit, 
               <div className="grid gap-4 md:grid-cols-[1.15fr_0.85fr]">
                 <div className="grid gap-2">
                   <Label>Cliente</Label>
-                  <Controller
-                    name="clientId"
-                    control={form.control}
-                    render={({ field }) => (
-                      <NativeSelect
-                        value={field.value ? String(field.value) : ''}
-                        onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}
-                      >
-                        <option value="">Selecciona un cliente</option>
-                        {clients.map((client) => (
-                          <option key={client.id} value={String(client.id)}>
-                            {`${client.firstName} ${client.lastName} · ${client.identification}`}
-                          </option>
-                        ))}
-                      </NativeSelect>
-                    )}
-                  />
+                    <Controller
+                      name="clientId"
+                      control={form.control}
+                      render={({ field }) => (
+                        <InvoiceClientSelector clients={clients} value={field.value} onChange={field.onChange} isLoading={clientsLoading} />
+                      )}
+                    />
                   {form.formState.errors.clientId ? (
                     <p className="text-xs text-destructive">{String(form.formState.errors.clientId.message)}</p>
                   ) : null}
@@ -771,7 +816,7 @@ export function InvoicesPage() {
     },
   })
 
-  if (invoicesQuery.isLoading || (createOpen && (clientsQuery.isLoading || productsQuery.isLoading))) {
+  if (invoicesQuery.isLoading) {
     return <InvoiceSkeleton />
   }
 
@@ -1010,7 +1055,9 @@ export function InvoicesPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         clients={clients}
+        clientsLoading={clientsQuery.isLoading}
         products={products}
+        productsLoading={productsQuery.isLoading}
         isSubmitting={createMutation.isPending}
         onSubmit={handleCreateInvoice}
       />

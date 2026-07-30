@@ -41,7 +41,7 @@ async function ensureReferral(referrer, referred) {
   })
 }
 
-async function ensureProduct({ name, provider, productType, price, cost, barcode }) {
+async function ensureProduct({ name, provider, productType, price, cost, barcode, imageUrl }) {
   let product = await prisma.product.findFirst({
     where: { name, providerId: provider.id },
     include: { prices: true },
@@ -53,6 +53,7 @@ async function ensureProduct({ name, provider, productType, price, cost, barcode
         name,
         description: 'Producto de ejemplo para compras, utilidades y red',
         brand: 'Demo ERP',
+        imageUrl,
         providerId: provider.id,
         productTypeId: productType.id,
         taxRate: 19,
@@ -77,6 +78,12 @@ async function ensureProduct({ name, provider, productType, price, cost, barcode
           },
         },
       },
+      include: { prices: true },
+    })
+  } else if (imageUrl && (!product.imageUrl || String(product.imageUrl).includes('placehold'))) {
+    product = await prisma.product.update({
+      where: { id: product.id },
+      data: { imageUrl },
       include: { prices: true },
     })
   }
@@ -284,8 +291,8 @@ async function main() {
   if (!warehouse) warehouse = await prisma.warehouse.create({ data: { location: 'Bodega Demo Principal' } })
 
   const [productA, productB] = await Promise.all([
-    ensureProduct({ name: 'Cafe utilidad demo', provider: providerA, productType, price: 18000, cost: 10000, barcode: '7700000000001' }),
-    ensureProduct({ name: 'Bebida favorita demo', provider: providerB, productType, price: 12000, cost: 7000, barcode: '7700000000002' }),
+    ensureProduct({ name: 'Cafe utilidad demo', provider: providerA, productType, price: 18000, cost: 10000, barcode: '7700000000001', imageUrl: 'https://images.unsplash.com/photo-1447933601403-0c6688de566e?auto=format&fit=crop&w=1200&q=80' }),
+    ensureProduct({ name: 'Bebida favorita demo', provider: providerB, productType, price: 12000, cost: 7000, barcode: '7700000000002', imageUrl: 'https://images.unsplash.com/photo-1544145945-f90425340c7e?auto=format&fit=crop&w=1200&q=80' }),
   ])
   const adminUser = await prisma.user.findFirst({ where: { role: 'ADMIN', isActive: true } })
   if (adminUser) {

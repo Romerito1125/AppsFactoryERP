@@ -309,7 +309,7 @@ export function DeliveriesPage() {
     },
   })
 
-  if (deliveriesQuery.isLoading || (createOpen && invoicesQuery.isLoading)) {
+  if (deliveriesQuery.isLoading) {
     return <DeliveriesSkeleton />
   }
 

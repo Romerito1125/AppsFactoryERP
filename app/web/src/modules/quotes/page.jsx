@@ -492,7 +492,7 @@ export function QuotesPage() {
     },
   })
 
-  if (quotesQuery.isLoading || (createOpen && (clientsQuery.isLoading || productsQuery.isLoading))) {
+  if (quotesQuery.isLoading) {
     return <QuoteSkeleton />
   }
 
