@@ -6,6 +6,7 @@ import {
   IsInt,
   IsOptional,
   IsPositive,
+  IsString,
   MinLength,
 } from 'class-validator';
 import { Role } from '../../../common/enums/role.enum';
