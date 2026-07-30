@@ -237,10 +237,14 @@ const clientData = [
 ]
 
 const userData = [
-  { clientKey: 'santiago_montes', username: 'santiago.admin', password: 'Admin123*', role: 'ADMIN', createdAt: daysAgo(180) },
-  { clientKey: 'valentina_ruiz', username: 'valentina.ventas', password: 'Ventas123*', role: 'VENDEDOR', createdAt: daysAgo(176) },
-  { clientKey: 'diego_pineda', username: 'diego.bodega', password: 'Bodega123*', role: 'BODEGA', createdAt: daysAgo(174) },
-  { clientKey: 'camila_torres', username: 'camila.conta', password: 'Conta123*', role: 'CONTADOR', createdAt: daysAgo(170) },
+  { clientKey: 'santiago_montes', username: 'santiago.admin@appsfactory.local', password: 'Admin123*', role: 'ADMIN', createdAt: daysAgo(180) },
+  { clientKey: 'laura_bustos', username: 'laura.cajero@appsfactory.local', password: 'Cajero123*', role: 'CAJERO', createdAt: daysAgo(178) },
+  { clientKey: 'valentina_ruiz', username: 'valentina.ventas@appsfactory.local', password: 'Ventas123*', role: 'VENDEDOR', createdAt: daysAgo(176) },
+  { clientKey: 'diego_pineda', username: 'diego.bodega@appsfactory.local', password: 'Bodega123*', role: 'BODEGA', createdAt: daysAgo(174) },
+  { clientKey: 'camila_torres', username: 'camila.conta@appsfactory.local', password: 'Conta123*', role: 'CONTADOR', createdAt: daysAgo(170) },
+  { clientKey: 'restaurante_puerto', username: 'nicolas.ventas@appsfactory.local', password: 'Ventas456*', role: 'VENDEDOR', createdAt: daysAgo(166) },
+  { clientKey: 'hotel_brisa', username: 'paula.cajero@appsfactory.local', password: 'Caja456*', role: 'CAJERO', createdAt: daysAgo(164) },
+  { clientKey: 'distribuidora_litoral', username: 'sergio.bodega@appsfactory.local', password: 'Bodega456*', role: 'BODEGA', createdAt: daysAgo(162) },
 ]
 
 const warehouseData = [

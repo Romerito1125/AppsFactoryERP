@@ -5,7 +5,7 @@ services:
       dockerfile: Dockerfile.api
     container_name: appsfactoryerp-api
     restart: unless-stopped
-    command: ["sh", "-c", "bun run db:deploy && bun run start:prod"]
+    command: ["sh", "-c", "bun run db:deploy && bun run db:seed:full-demo && bun run start:prod"]
     environment:
       NODE_ENV: production
       PORT: 7502

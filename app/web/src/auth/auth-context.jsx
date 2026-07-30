@@ -10,6 +10,9 @@ export const demoCredentials = {
   'valentina.ventas@appsfactory.local': 'Ventas123*',
   'diego.bodega@appsfactory.local': 'Bodega123*',
   'camila.conta@appsfactory.local': 'Conta123*',
+  'nicolas.ventas@appsfactory.local': 'Ventas456*',
+  'paula.cajero@appsfactory.local': 'Caja456*',
+  'sergio.bodega@appsfactory.local': 'Bodega456*',
 }
 
 export function getStoredSession() {

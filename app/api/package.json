@@ -25,6 +25,7 @@
     "db:generate": "node scripts/prisma-node-cli.js generate --schema prisma/schema.prisma",
     "db:migrate": "node scripts/prisma-node-cli.js migrate dev --schema prisma/schema.prisma",
     "db:deploy": "node scripts/prisma-node-cli.js migrate deploy --schema prisma/schema.prisma",
+    "db:seed:full-demo": "bun run db:seed:quick-access && bun run db:seed:business-examples",
     "db:seed:quick-access": "node scripts/seed-quick-access-and-mobile-orders.js",
     "db:seed:barcode-examples": "node scripts/seed-product-barcode-examples.js",
     "db:seed:business-examples": "node scripts/seed-business-examples.js"

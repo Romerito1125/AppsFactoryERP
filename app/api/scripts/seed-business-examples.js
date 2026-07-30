@@ -251,10 +251,16 @@ async function main() {
     upsertClient(1, 'Bruno', 'Nivel Uno'),
     upsertClient(2, 'Carla', 'Nivel Dos'),
     upsertClient(3, 'Diego', 'Nivel Tres'),
+    upsertClient(4, 'Elena', 'Aliada Uno'),
+    upsertClient(5, 'Fabian', 'Aliado Dos'),
+    upsertClient(6, 'Gabriela', 'Aliada Tres'),
   ])
   await ensureReferral(clients[0], clients[1])
   await ensureReferral(clients[1], clients[2])
   await ensureReferral(clients[2], clients[3])
+  await ensureReferral(clients[0], clients[4])
+  await ensureReferral(clients[4], clients[5])
+  await ensureReferral(clients[5], clients[6])
 
   await prisma.user.deleteMany({ where: { username: 'demo.red' } })
 
@@ -285,6 +291,9 @@ async function main() {
   await ensureInvoice({ consecutive: 'FAC-DEMO-RED-N1', client: clients[1], product: productA, quantity: 2, unitCost: 10000, benefitChain: [{ client: clients[0], generation: 1, percentage: 10 }] })
   await ensureInvoice({ consecutive: 'FAC-DEMO-RED-N2', client: clients[2], product: productA, quantity: 3, unitCost: 10000, benefitChain: [{ client: clients[1], generation: 1, percentage: 10 }, { client: clients[0], generation: 2, percentage: 5 }] })
   await ensureInvoice({ consecutive: 'FAC-DEMO-RED-N3', client: clients[3], product: productB, quantity: 5, unitCost: 7000, benefitChain: [{ client: clients[2], generation: 1, percentage: 10 }, { client: clients[1], generation: 2, percentage: 5 }, { client: clients[0], generation: 3, percentage: 2 }] })
+  await ensureInvoice({ consecutive: 'FAC-DEMO-RED-B1', client: clients[4], product: productB, quantity: 4, unitCost: 7000, benefitChain: [{ client: clients[0], generation: 1, percentage: 10 }] })
+  await ensureInvoice({ consecutive: 'FAC-DEMO-RED-B2', client: clients[5], product: productA, quantity: 2, unitCost: 10000, benefitChain: [{ client: clients[4], generation: 1, percentage: 10 }, { client: clients[0], generation: 2, percentage: 5 }] })
+  await ensureInvoice({ consecutive: 'FAC-DEMO-RED-B3', client: clients[6], product: productB, quantity: 6, unitCost: 7000, benefitChain: [{ client: clients[5], generation: 1, percentage: 10 }, { client: clients[4], generation: 2, percentage: 5 }, { client: clients[0], generation: 3, percentage: 2 }] })
 
   await ensurePurchase({ consecutive: 'OC-DEMO-2026-001', provider: providerA, warehouse, product: productA, orderedAt: new Date('2026-01-05T12:00:00Z'), expectedAt: new Date('2026-01-10T12:00:00Z'), receivedAt: new Date('2026-01-09T12:00:00Z'), quantity: 30, unitCost: 9500 })
   await ensurePurchase({ consecutive: 'OC-DEMO-2026-002', provider: providerB, warehouse, product: productB, orderedAt: new Date('2026-02-02T12:00:00Z'), expectedAt: new Date('2026-02-08T12:00:00Z'), receivedAt: new Date('2026-02-11T12:00:00Z'), quantity: 45, unitCost: 6800 })
@@ -293,9 +302,9 @@ async function main() {
 
   console.log('Datos de ejemplo creados o actualizados:')
   console.table({
-    red: 'Ana > Bruno > Carla > Diego',
+    red: 'Ana > Bruno > Carla > Diego | Ana > Elena > Fabian > Gabriela',
     porcentajes: '10% / 5% / 2%',
-    compras: 4,
+    compras: 6,
     productos: 2,
     favoritos: adminUser ? 2 : 0,
   })

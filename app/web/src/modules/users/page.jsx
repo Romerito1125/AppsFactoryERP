@@ -93,7 +93,7 @@ function createUsersConfig(clients) {
       },
       {
         name: 'password',
-        label: 'Contrasena',
+        label: 'Contraseña',
         type: 'password',
         placeholder: '******',
         autoComplete: 'new-password',

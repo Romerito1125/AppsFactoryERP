@@ -28,6 +28,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -66,6 +67,39 @@ function getNumber(records, keys, fallback = 0) {
 
 function getGeneration(record) {
   return getNumber([record], ['generation', 'generacion', 'level', 'nivel'], 0)
+}
+
+function getClientName(client) {
+  return `${client?.firstName ?? client?.nombre ?? ''} ${client?.lastName ?? client?.apellido ?? ''}`.trim() || 'Cliente sin nombre'
+}
+
+function getClientDocument(client) {
+  return client?.identification ?? client?.identificacion ?? null
+}
+
+function getClientSelectMeta(client) {
+  return [
+    getClientDocument(client),
+    client?.referralCode ? `Cod. ${client.referralCode}` : null,
+    Number(client?.referralLevel ?? 0) > 0 ? `Nivel ${formatNumber(client.referralLevel)}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+function getClientSelectLabel(client) {
+  return [getClientName(client), getClientSelectMeta(client)].filter(Boolean).join(' · ')
+}
+
+function getClientDetailItems(client) {
+  return [
+    { label: 'Cliente', value: getClientName(client) },
+    { label: 'Documento', value: getClientDocument(client) ?? 'Sin documento' },
+    { label: 'Telefono', value: client?.phone ?? client?.telefono ?? 'Sin telefono' },
+    { label: 'Direccion', value: client?.address ?? client?.direccion ?? 'Sin direccion' },
+    { label: 'Codigo referido', value: client?.referralCode ?? 'Sin codigo' },
+    { label: 'Nivel', value: formatNumber(client?.referralLevel ?? 0) },
+  ]
 }
 
 function normalizePolicies(payload) {
@@ -369,7 +403,7 @@ function ReferralNetworkView({ clients, selectedRootId, onRootChange, networkQue
   return (
     <div className="grid gap-5">
       <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 md:p-5">
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(280px,420px)] lg:items-end">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,520px)] xl:items-end">
           <div>
             <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
               <Network className="size-4 text-primary" />
@@ -379,16 +413,30 @@ function ReferralNetworkView({ clients, selectedRootId, onRootChange, networkQue
               Selecciona el cliente que recibira el descuento generado por las compras de su red.
             </p>
           </div>
-          <NativeSelect value={selectedRootId} onChange={(event) => onRootChange(event.target.value)}>
-            <option value="">Selecciona un cliente activo</option>
-            {clients
-              .filter((client) => client.isActive)
-              .map((client) => (
-                <option key={client.id} value={String(client.id)}>
-                  {`${client.firstName} ${client.lastName} · ${client.identification}`}
-                </option>
-              ))}
-          </NativeSelect>
+          <Select value={selectedRootId || undefined} onValueChange={onRootChange}>
+            <SelectTrigger className="h-auto min-h-14 w-full rounded-2xl border-border/70 bg-background/80 px-4 py-3 text-left whitespace-normal">
+              <div className="flex min-w-0 flex-1 flex-col items-start text-left">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Cliente seleccionado
+                </span>
+                <span className="mt-1 w-full truncate text-sm font-medium text-foreground">
+                  {selectedClient ? getClientSelectLabel(selectedClient) : 'Selecciona un cliente activo para ver la red completa'}
+                </span>
+              </div>
+            </SelectTrigger>
+            <SelectContent align="end" className="w-[min(92vw,520px)]">
+              {clients
+                .filter((client) => client.isActive)
+                .map((client) => (
+                  <SelectItem key={client.id} value={String(client.id)}>
+                    <div className="flex min-w-0 flex-col">
+                      <span className="truncate font-medium">{getClientName(client)}</span>
+                      <span className="truncate text-xs text-muted-foreground">{getClientSelectMeta(client)}</span>
+                    </div>
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -415,11 +463,11 @@ function ReferralNetworkView({ clients, selectedRootId, onRootChange, networkQue
         </div>
       ) : (
         <>
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="font-medium text-foreground">{`${selectedClient?.firstName ?? ''} ${selectedClient?.lastName ?? ''}`.trim()}</p>
-              <p className="text-xs text-muted-foreground">Resumen acumulado de todas las generaciones</p>
-            </div>
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-medium text-foreground">{getClientName(selectedClient)}</p>
+                <p className="text-xs text-muted-foreground">{getClientSelectMeta(selectedClient) || 'Resumen acumulado de todas las generaciones'}</p>
+              </div>
             {policiesError ? (
               <p className="text-xs text-amber-700 dark:text-amber-400">No fue posible cargar los porcentajes configurados.</p>
             ) : null}
@@ -486,12 +534,20 @@ function ReferralNetworkView({ clients, selectedRootId, onRootChange, networkQue
                               className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/20 px-3 py-2.5"
                             >
                               <div className="min-w-0">
-                                <p className="truncate text-sm font-medium text-foreground">
-                                  {`${client.firstName ?? client.nombre ?? ''} ${client.lastName ?? client.apellido ?? ''}`.trim()}
-                                </p>
+                                <p className="truncate text-sm font-medium text-foreground">{getClientName(client)}</p>
                                 <p className="truncate text-xs text-muted-foreground">
-                                  {client.identification ?? client.identificacion ?? 'Sin documento'}
+                                  {[getClientDocument(client), client.phone ?? client.telefono].filter(Boolean).join(' · ') || 'Sin documento'}
                                 </p>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  {client.referralCode ? (
+                                    <Badge variant="secondary" className="rounded-full px-2 py-0 text-[10px]">
+                                      {client.referralCode}
+                                    </Badge>
+                                  ) : null}
+                                  <Badge variant="outline" className="rounded-full px-2 py-0 text-[10px]">
+                                    Nivel {formatNumber(client.referralLevel ?? row.generation)}
+                                  </Badge>
+                                </div>
                               </div>
                               <span
                                 className={`size-2 shrink-0 rounded-full ${client.isActive === false ? 'bg-muted-foreground/40' : 'bg-emerald-500'}`}
@@ -884,43 +940,42 @@ export function ReferralsPage() {
       </div>
 
       <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
-        <CardHeader className="gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <CardHeader className="gap-5">
           <div>
-            <CardTitle>Operacion de referidos</CardTitle>
+            <CardTitle>Operación de referidos</CardTitle>
             <CardDescription>Administra relaciones, red y reparto de utilidades.</CardDescription>
           </div>
-          <div className="flex w-full flex-col gap-3 xl:w-auto xl:flex-row">
-            {view === 'relations' || view === 'clients' ? (
-              <div className="relative w-full xl:min-w-[260px]">
-                <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={search}
-                  onChange={(event) => {
-                    setSearch(event.target.value)
-                    setCurrentPage(1)
-                    setClientPage(1)
-                  }}
-                  placeholder="Buscar por cliente, codigo o documento..."
-                  className="pl-9"
-                />
-              </div>
-            ) : null}
-            <Tabs
-              value={view}
-              onValueChange={(value) => {
-                setView(value)
-                setCurrentPage(1)
-                setClientPage(1)
-              }}
-            >
-              <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4 xl:w-auto">
-                <TabsTrigger value="relations">Relaciones</TabsTrigger>
-                <TabsTrigger value="clients">Clientes</TabsTrigger>
-                <TabsTrigger value="network">Red</TabsTrigger>
-                <TabsTrigger value="configuration">Configuracion</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
+          <Tabs
+            value={view}
+            onValueChange={(value) => {
+              setView(value)
+              setCurrentPage(1)
+              setClientPage(1)
+            }}
+            className="w-full"
+          >
+            <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 rounded-2xl p-1.5 sm:w-fit">
+              <TabsTrigger className="min-w-[112px] flex-none px-4 py-2" value="relations">Relaciones</TabsTrigger>
+              <TabsTrigger className="min-w-[112px] flex-none px-4 py-2" value="clients">Clientes</TabsTrigger>
+              <TabsTrigger className="min-w-[112px] flex-none px-4 py-2" value="network">Red</TabsTrigger>
+              <TabsTrigger className="min-w-[112px] flex-none px-4 py-2" value="configuration">Configuración</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          {view === 'relations' || view === 'clients' ? (
+            <div className="relative w-full max-w-2xl">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value)
+                  setCurrentPage(1)
+                  setClientPage(1)
+                }}
+                placeholder="Buscar por cliente, código o documento..."
+                className="pl-9"
+              />
+            </div>
+          ) : null}
         </CardHeader>
         <CardContent>
           {view === 'relations' ? (
@@ -1088,6 +1143,14 @@ export function ReferralsPage() {
                       value: formatDate(detailReferral.createdAt),
                     },
                   ],
+                },
+                {
+                  label: 'Cliente que refiere',
+                  items: getClientDetailItems(detailReferral.referrerClient),
+                },
+                {
+                  label: 'Cliente referido',
+                  items: getClientDetailItems(detailReferral.referredClient),
                 },
               ]
             : []
