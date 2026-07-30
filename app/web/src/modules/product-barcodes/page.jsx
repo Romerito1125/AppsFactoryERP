@@ -593,6 +593,7 @@ export function ProductBarcodesPage() {
 
         <ProductVisualPicker
           products={catalogProducts}
+          compact
           actionLabel="Agregar codigo"
           onAction={(product) => openCreateDialog({ productId: product.id })}
           title="Productos por foto"

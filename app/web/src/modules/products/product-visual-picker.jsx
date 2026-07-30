@@ -35,6 +35,7 @@ export function ProductVisualPicker({
   disableLocalSearch = false,
   totalCount,
   footerContent,
+  compact = false,
 }) {
   const [search, setSearch] = useState('')
   const resolvedSearch = searchValue ?? search
@@ -92,7 +93,7 @@ export function ProductVisualPicker({
 
       <ScrollArea className={cn(maxHeightClassName, 'pr-2 sm:pr-4')}>
         {filteredProducts.length ? (
-          <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          <div className={cn('grid', compact ? 'gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5' : 'gap-4 md:grid-cols-2 2xl:grid-cols-3')}>
             {filteredProducts.map((product) => {
               const primaryBarcode = getPrimaryBarcode(product)
               const isSelected = product.id === selectedProductId
@@ -101,7 +102,9 @@ export function ProductVisualPicker({
                 <div
                   key={product.id}
                   className={cn(
-                    'grid min-w-0 gap-3 rounded-2xl border border-border/70 bg-card p-4 transition hover:border-primary/35 hover:shadow-sm hover:shadow-primary/10',
+                    compact
+                      ? 'grid min-w-0 gap-2 rounded-xl border border-border/70 bg-card p-3 transition hover:border-primary/35 hover:shadow-sm hover:shadow-primary/10'
+                      : 'grid min-w-0 gap-3 rounded-2xl border border-border/70 bg-card p-4 transition hover:border-primary/35 hover:shadow-sm hover:shadow-primary/10',
                     isSelected && 'border-primary/50 ring-2 ring-primary/15',
                   )}
                 >
@@ -113,11 +116,11 @@ export function ProductVisualPicker({
                     <ProductImage
                       src={product.imageUrl}
                       alt={product.name}
-                      className="aspect-[4/3] w-full rounded-xl"
-                      iconClassName="size-6"
+                      className={compact ? 'aspect-[4/3] w-full rounded-lg' : 'aspect-[4/3] w-full rounded-xl'}
+                      iconClassName={compact ? 'size-5' : 'size-6'}
                     />
                     <div className="min-w-0">
-                      <p className="line-clamp-1 text-sm font-medium text-foreground">{product.name}</p>
+                      <p className={cn('line-clamp-1 font-medium text-foreground', compact ? 'text-[13px]' : 'text-sm')}>{product.name}</p>
                       <p className="line-clamp-1 text-xs text-muted-foreground">
                         {product.brand} · {product.productType?.name ?? 'Sin tipo'}
                       </p>
@@ -139,11 +142,11 @@ export function ProductVisualPicker({
                       {product.barcodes?.length ? `${formatNumber(product.barcodes.length)} codigos` : 'Sin codigos registrados'}
                     </p>
                     {onAction ? (
-                      <Button type="button" size="sm" className="w-full sm:w-auto" onClick={() => onAction(product)}>
+                      <Button type="button" size="sm" className={cn('w-full sm:w-auto', compact && 'h-8 px-3 text-xs')} onClick={() => onAction(product)}>
                         {actionLabel}
                       </Button>
                     ) : (
-                      <Button type="button" size="sm" className="w-full sm:w-auto" variant={isSelected ? 'default' : 'outline'} onClick={() => onSelectProduct?.(product.id)}>
+                      <Button type="button" size="sm" className={cn('w-full sm:w-auto', compact && 'h-8 px-3 text-xs')} variant={isSelected ? 'default' : 'outline'} onClick={() => onSelectProduct?.(product.id)}>
                         {isSelected ? 'Seleccionado' : actionLabel}
                       </Button>
                     )}

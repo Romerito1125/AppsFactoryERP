@@ -10,13 +10,17 @@ import {
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { R2StorageService } from '../../shared/storage/r2-storage.service';
 import { CreateProductTypeDto } from './dto/create-product-type.dto';
 import { FilterProductTypesDto } from './dto/filter-product-types.dto';
 import { UpdateProductTypeDto } from './dto/update-product-type.dto';
 
 @Injectable()
 export class ProductTypesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: R2StorageService,
+  ) {}
 
   async findAll(filter: FilterProductTypesDto) {
     const where = {
@@ -51,24 +55,69 @@ export class ProductTypesService {
     return productType;
   }
 
-  async create(createProductTypeDto: CreateProductTypeDto) {
+  async create(
+    createProductTypeDto: CreateProductTypeDto,
+    image?: Express.Multer.File,
+  ) {
     await this.ensureUniqueName(createProductTypeDto.name);
 
-    return this.prisma.productType.create({ data: createProductTypeDto });
+    const uploadedImage = image
+      ? await this.storage.uploadProductImage(image)
+      : null;
+
+    try {
+      return await this.prisma.productType.create({
+        data: {
+          ...createProductTypeDto,
+          ...(uploadedImage ? { imageUrl: uploadedImage.url } : {}),
+        },
+      });
+    } catch (error) {
+      if (uploadedImage?.url) {
+        await this.storage.deleteFile(uploadedImage.url);
+      }
+
+      throw error;
+    }
   }
 
-  async update(id: number, updateProductTypeDto: UpdateProductTypeDto) {
+  async update(
+    id: number,
+    updateProductTypeDto: UpdateProductTypeDto,
+    image?: Express.Multer.File,
+  ) {
     this.ensurePositiveId(id);
-    await this.findOne(id);
+    const current = await this.findOne(id);
 
     if (updateProductTypeDto.name) {
       await this.ensureUniqueName(updateProductTypeDto.name, id);
     }
 
-    return this.prisma.productType.update({
-      where: { id },
-      data: updateProductTypeDto,
-    });
+    const uploadedImage = image
+      ? await this.storage.uploadProductImage(image, id)
+      : null;
+
+    try {
+      const updated = await this.prisma.productType.update({
+        where: { id },
+        data: {
+          ...updateProductTypeDto,
+          ...(uploadedImage ? { imageUrl: uploadedImage.url } : {}),
+        },
+      });
+
+      if (uploadedImage?.url && current.imageUrl) {
+        await this.storage.deleteFile(current.imageUrl);
+      }
+
+      return updated;
+    } catch (error) {
+      if (uploadedImage?.url) {
+        await this.storage.deleteFile(uploadedImage.url);
+      }
+
+      throw error;
+    }
   }
 
   async remove(id: number) {

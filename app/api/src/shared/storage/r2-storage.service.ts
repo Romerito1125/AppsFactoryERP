@@ -138,7 +138,16 @@ export class R2StorageService {
     }
 
     try {
-      return new URL(keyOrUrl).pathname.replace(/^\//, '');
+      const parsedUrl = new URL(keyOrUrl);
+
+      if (!this.config) return null;
+
+      const publicUrl = new URL(this.config.publicUrl);
+      if (parsedUrl.origin !== publicUrl.origin) {
+        return null;
+      }
+
+      return parsedUrl.pathname.replace(/^\//, '');
     } catch {
       return null;
     }

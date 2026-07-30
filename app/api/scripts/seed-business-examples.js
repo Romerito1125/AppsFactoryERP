@@ -270,8 +270,15 @@ async function main() {
   ])
   const productType = await prisma.productType.upsert({
     where: { name: 'Productos demo red' },
-    update: { isActive: true },
-    create: { name: 'Productos demo red', description: 'Datos de demostracion' },
+    update: {
+      isActive: true,
+      imageUrl: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=80',
+    },
+    create: {
+      name: 'Productos demo red',
+      description: 'Datos de demostracion',
+      imageUrl: 'https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=80',
+    },
   })
   let warehouse = await prisma.warehouse.findFirst({ where: { location: 'Bodega Demo Principal' } })
   if (!warehouse) warehouse = await prisma.warehouse.create({ data: { location: 'Bodega Demo Principal' } })

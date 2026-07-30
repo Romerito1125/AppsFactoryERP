@@ -12,11 +12,30 @@ import {
 } from '@/lib/format'
 import { CrudModulePage } from '@/modules/shared/crud-module-page'
 
+const optionalImageSchema = z
+  .custom(
+    (value) => value === undefined || value === null || (typeof File !== 'undefined' && value instanceof File),
+    'Selecciona una imagen valida',
+  )
+  .optional()
+  .refine((file) => !file || file.size <= 5 * 1024 * 1024, 'La imagen no puede superar 5 MB')
+  .refine((file) => !file || ['image/jpeg', 'image/png', 'image/webp'].includes(file.type), 'Usa una imagen JPG, PNG o WEBP')
+
 const productTypeSchema = z.object({
   name: z.string().min(2, 'Minimo 2 caracteres'),
   description: z.string().optional(),
-  imageUrl: z.string().optional(),
+  image: optionalImageSchema,
 })
+
+function buildProductTypeFormData(values) {
+  const formData = new FormData()
+
+  if (values.name) formData.append('name', values.name)
+  if (values.description) formData.append('description', values.description)
+  if (values.image instanceof File) formData.append('image', values.image)
+
+  return formData
+}
 
 const productTypesConfig = {
   key: 'tipos-producto',
@@ -45,7 +64,15 @@ const productTypesConfig = {
   statusFilter: 'api',
   fields: [
     { name: 'name', label: 'Nombre', placeholder: 'Lacteos' },
-    { name: 'imageUrl', label: 'URL de imagen', placeholder: 'https://...' },
+    {
+      name: 'image',
+      label: 'Imagen',
+      type: 'file',
+      accept: 'image/jpeg,image/png,image/webp',
+      helpText: 'JPG, PNG o WEBP. Maximo 5 MB.',
+      fullWidth: true,
+      getPreviewValue: (record) => record?.imageUrl,
+    },
     {
       name: 'description',
       label: 'Descripcion',
@@ -60,12 +87,12 @@ const productTypesConfig = {
   getDefaultValues: (_, record) => ({
     name: record?.name ?? '',
     description: record?.description ?? '',
-    imageUrl: record?.imageUrl ?? '',
+    image: undefined,
   }),
   fetchRecords: ({ status, search, page, limit }) =>
     apiClient.get('/tipos-producto', { estado: toApiStatus(status), q: search, page, limit }),
-  createRecord: (payload) => apiClient.post('/tipos-producto', payload),
-  updateRecord: (id, payload) => apiClient.patch(`/tipos-producto/${id}`, payload),
+  createRecord: (payload) => apiClient.post('/tipos-producto', buildProductTypeFormData(payload)),
+  updateRecord: (id, payload) => apiClient.patch(`/tipos-producto/${id}`, buildProductTypeFormData(payload)),
   archiveRecord: (id) => apiClient.delete(`/tipos-producto/${id}`),
   reactivateRecord: (id) => apiClient.patch(`/tipos-producto/${id}/reactivar`),
   searchResolver: (record) => [record.name, record.description, record.imageUrl],

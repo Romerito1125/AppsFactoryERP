@@ -8,11 +8,18 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CreateProductTypeDto } from './dto/create-product-type.dto';
 import { FilterProductTypesDto } from './dto/filter-product-types.dto';
 import { UpdateProductTypeDto } from './dto/update-product-type.dto';
 import { ProductTypesService } from './product-types.service';
+
+const imageUploadOptions = {
+  limits: { fileSize: 5 * 1024 * 1024 },
+};
 
 @Controller('tipos-producto')
 export class ProductTypesController {
@@ -29,16 +36,22 @@ export class ProductTypesController {
   }
 
   @Post()
-  create(@Body() createProductTypeDto: CreateProductTypeDto) {
-    return this.productTypesService.create(createProductTypeDto);
+  @UseInterceptors(FileInterceptor('image', imageUploadOptions))
+  create(
+    @Body() createProductTypeDto: CreateProductTypeDto,
+    @UploadedFile() image?: Express.Multer.File,
+  ) {
+    return this.productTypesService.create(createProductTypeDto, image);
   }
 
   @Patch(':id')
+  @UseInterceptors(FileInterceptor('image', imageUploadOptions))
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateProductTypeDto: UpdateProductTypeDto,
+    @UploadedFile() image?: Express.Multer.File,
   ) {
-    return this.productTypesService.update(id, updateProductTypeDto);
+    return this.productTypesService.update(id, updateProductTypeDto, image);
   }
 
   @Delete(':id')

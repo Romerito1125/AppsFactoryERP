@@ -255,11 +255,11 @@ const warehouseData = [
 ]
 
 const productTypeData = [
-  { key: 'abarrotes', name: 'Abarrotes', description: 'Despensa basica y productos de alta rotacion', createdAt: daysAgo(220) },
-  { key: 'bebidas_lacteos', name: 'Bebidas y Lacteos', description: 'Cafe, bebidas y refrigerados', createdAt: daysAgo(220) },
-  { key: 'snacks', name: 'Snacks y Desayuno', description: 'Granolas, galletas y consumo rapido', createdAt: daysAgo(220) },
-  { key: 'limpieza', name: 'Limpieza del Hogar', description: 'Aseo y mantenimiento domestico', createdAt: daysAgo(220) },
-  { key: 'cuidado', name: 'Cuidado Personal', description: 'Higiene y cuidado diario', createdAt: daysAgo(220) },
+  { key: 'abarrotes', name: 'Abarrotes', description: 'Despensa basica y productos de alta rotacion', imageUrl: 'https://images.unsplash.com/photo-1515543904379-3d757afe72e1?auto=format&fit=crop&w=1200&q=80', createdAt: daysAgo(220) },
+  { key: 'bebidas_lacteos', name: 'Bebidas y Lacteos', description: 'Cafe, bebidas y refrigerados', imageUrl: 'https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=1200&q=80', createdAt: daysAgo(220) },
+  { key: 'snacks', name: 'Snacks y Desayuno', description: 'Granolas, galletas y consumo rapido', imageUrl: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=1200&q=80', createdAt: daysAgo(220) },
+  { key: 'limpieza', name: 'Limpieza del Hogar', description: 'Aseo y mantenimiento domestico', imageUrl: 'https://images.unsplash.com/photo-1583947582886-f40ec95dd752?auto=format&fit=crop&w=1200&q=80', createdAt: daysAgo(220) },
+  { key: 'cuidado', name: 'Cuidado Personal', description: 'Higiene y cuidado diario', imageUrl: 'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=1200&q=80', createdAt: daysAgo(220) },
 ]
 
 const providerData = [
@@ -1258,6 +1258,7 @@ async function main() {
           data: {
             name: item.name,
             description: item.description,
+            imageUrl: item.imageUrl,
             createdAt: item.createdAt,
             updatedAt: item.createdAt,
           },
