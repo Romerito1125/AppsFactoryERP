@@ -56,8 +56,17 @@ export class FacturasController {
     return this.facturasService.update(id, updateInvoiceDto);
   }
 
+  @Patch(':id/validar')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.CONTADOR)
+  validate(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
+    return this.facturasService.validateInvoice(id, request.user);
+  }
+
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.facturasService.remove(id);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  remove(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
+    return this.facturasService.remove(id, request.user);
   }
 }

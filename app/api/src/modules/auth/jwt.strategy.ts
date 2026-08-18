@@ -46,6 +46,7 @@ export class JwtStrategy {
     return {
       sub: Number(payload.sub),
       clientId: payload.clientId ? Number(payload.clientId) : null,
+      warehouseId: payload.warehouseId ? Number(payload.warehouseId) : null,
       role: payload.role,
       username: payload.username,
     };

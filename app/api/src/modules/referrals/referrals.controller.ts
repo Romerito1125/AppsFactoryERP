@@ -30,8 +30,17 @@ export class ReferralsController {
   constructor(private readonly referralsService: ReferralsService) {}
 
   @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   findAll(@Query() query: ListReferralsQueryDto) {
     return this.referralsService.findAll(query);
+  }
+
+  @Get('resumen-utilidades')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.CONTADOR)
+  getProfitSummary() {
+    return this.referralsService.getProfitSummary();
   }
 
   @Get('politicas-utilidad')
@@ -62,17 +71,21 @@ export class ReferralsController {
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.referralsService.findOne(id);
   }
 
   @Post()
-  create(@Body() createReferralDto: CreateReferralDto) {
-    return this.referralsService.create(createReferralDto);
+  @UseGuards(JwtAuthGuard)
+  create(@Body() createReferralDto: CreateReferralDto, @Req() request: AuthRequest) {
+    return this.referralsService.create(createReferralDto, request.user);
   }
 
   @Post('validar')
-  validate(@Body() validateReferralDto: ValidateReferralDto) {
-    return this.referralsService.validate(validateReferralDto);
+  @UseGuards(JwtAuthGuard)
+  validate(@Body() validateReferralDto: ValidateReferralDto, @Req() request: AuthRequest) {
+    return this.referralsService.validate(validateReferralDto, request.user);
   }
 }

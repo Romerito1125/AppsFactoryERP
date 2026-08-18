@@ -144,6 +144,7 @@ function normalizeGenerationRows(networkPayload, statsPayload, policies) {
 
   return [...generations]
     .sort((left, right) => left - right)
+    .filter((generation) => generation !== 4)
     .map((generation) => {
       const network = networkGenerations.find((record) => getGeneration(record) === generation) ?? {}
       const stats = statsGenerations.find((record) => getGeneration(record) === generation) ?? {}
@@ -372,6 +373,7 @@ function ReferralNetworkView({ clients, selectedRootId, onRootChange, networkQue
     ['availableDiscount', 'descuentoDisponible', 'totalAvailableBenefit', 'beneficioTotalDisponible'],
     rows.reduce((sum, row) => sum + row.availableDiscount, 0),
   )
+  const socialWorkAmount = getNumber([stats], ['utilidadGeneralObraSocial', 'obraSocial', 'socialWorkAmount'])
   const totals = [
     {
       label: 'Clientes en la red',
@@ -397,6 +399,11 @@ function ReferralNetworkView({ clients, selectedRootId, onRootChange, networkQue
       label: 'Descuento disponible',
       value: formatCurrency(availableDiscount),
       icon: WalletCards,
+    },
+    {
+      label: 'Utilidad general · obra social',
+      value: formatCurrency(socialWorkAmount),
+      icon: CircleDollarSign,
     },
   ]
 
@@ -450,7 +457,7 @@ function ReferralNetworkView({ clients, selectedRootId, onRootChange, networkQue
         </div>
       ) : networkQuery.isLoading || statsQuery.isLoading ? (
         <div className="grid gap-4">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
             {Array.from({ length: 5 }).map((_, index) => (
               <Skeleton key={index} className="h-24 rounded-2xl" />
             ))}
@@ -568,6 +575,10 @@ function ReferralNetworkView({ clients, selectedRootId, onRootChange, networkQue
               Este cliente aun no tiene generaciones de referidos registradas.
             </div>
           )}
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-900 dark:text-amber-200">
+            <p className="font-semibold">Generación 4 destinada a obra social</p>
+            <p className="mt-1">El porcentaje de la cuarta generación se registra internamente en utilidades generales y no se muestra ni se entrega como descuento al cliente.</p>
+          </div>
         </>
       )}
     </div>
@@ -637,9 +648,13 @@ function ProfitConfigurationForm({ policies, onSave, isSubmitting }) {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-medium text-foreground">Generacion {policy.generation}</p>
-                      <Badge variant={policy.isActive ? 'default' : 'secondary'}>{policy.isActive ? 'Activa' : 'Inactiva'}</Badge>
+                      {policy.generation === 4 ? (
+                        <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-300">Obra social</Badge>
+                      ) : (
+                        <Badge variant={policy.isActive ? 'default' : 'secondary'}>{policy.isActive ? 'Activa' : 'Inactiva'}</Badge>
+                      )}
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">Porcentaje aplicado sobre la utilidad base de sus compras.</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{policy.generation === 4 ? 'Se acumula en utilidades generales para obra social; no genera saldo entregable.' : 'Porcentaje aplicado sobre la utilidad base de sus compras.'}</p>
                   </div>
                 </div>
                 <div className="grid gap-1.5">
@@ -746,6 +761,11 @@ export function ReferralsPage() {
     enabled: view === 'network' || view === 'configuration',
   })
 
+  const profitSummaryQuery = useQuery({
+    queryKey: ['referidos-resumen-utilidades'],
+    queryFn: () => apiClient.get('/referidos/resumen-utilidades'),
+  })
+
   const referralNetworkQuery = useQuery({
     queryKey: ['cliente-red-referidos', selectedRootId],
     queryFn: () => apiClient.get(`/clientes/${selectedRootId}/red-referidos`),
@@ -797,6 +817,7 @@ export function ReferralsPage() {
   const totalItems = Number(referralsQuery.data?.total ?? 0)
   const totalPages = Math.max(1, Number(referralsQuery.data?.totalPages ?? 1))
   const clients = clientsQuery.data ?? []
+  const profitSummary = profitSummaryQuery.data ?? {}
   const referralLookup = referralLookupQuery.data ?? []
   const referredClientIds = new Set(referralLookup.map((referral) => referral.referredClient.id))
   const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
@@ -838,7 +859,7 @@ export function ReferralsPage() {
   const summaryCards = [
     {
       label: 'Referidos registrados',
-      value: formatNumber(referrals.length),
+      value: formatNumber(totalItems),
       help: 'Relaciones creadas dentro del sistema.',
       icon: Link2,
     },
@@ -849,16 +870,16 @@ export function ReferralsPage() {
       icon: Sparkles,
     },
     {
-      label: 'Clientes con nivel',
-      value: formatNumber(clients.filter((client) => Number(client.referralLevel ?? 0) > 0).length),
-      help: 'Clientes con nivel de referido superior a cero.',
-      icon: Link2,
+      label: 'Descuento generado',
+      value: formatCurrency(profitSummary.descuentoGenerado ?? 0),
+      help: 'Valor total generado por utilidad para entregar como descuento.',
+      icon: CircleDollarSign,
     },
     {
-      label: 'Elegibles para relacion',
-      value: formatNumber(eligibleClients.length),
-      help: 'Clientes activos que aun no han sido relacionados como referidos.',
-      icon: Sparkles,
+      label: 'Por entregar a referidos',
+      value: formatCurrency(profitSummary.porEntregar ?? 0),
+      help: 'Saldo disponible que todavía puede aplicarse como descuento.',
+      icon: WalletCards,
     },
   ]
 
@@ -938,6 +959,27 @@ export function ReferralsPage() {
           )
         })}
       </div>
+
+      <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Distribución de utilidades</CardTitle>
+          <CardDescription>Resumen global de lo generado, utilizado y reservado para los referidos.</CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ['Descuentos utilizados', profitSummary.descuentoUtilizado, 'Saldo ya aplicado a compras.'],
+            ['Total repartido', profitSummary.totalRepartido, 'Descuentos más obra social.'],
+            ['Obra social', profitSummary.obraSocial, 'Generación 4 para utilidad general.'],
+            ['Pendiente por entregar', profitSummary.porEntregar, 'Disponible para próximos descuentos.'],
+          ].map(([label, value, help]) => (
+            <div key={label} className="rounded-2xl border border-border/70 bg-muted/15 p-4">
+              <p className="text-xs font-medium text-muted-foreground">{label}</p>
+              <p className="mt-2 text-xl font-semibold text-foreground">{formatCurrency(value ?? 0)}</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">{help}</p>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
       <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
         <CardHeader className="gap-5">

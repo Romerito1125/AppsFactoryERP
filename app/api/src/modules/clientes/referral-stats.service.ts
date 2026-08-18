@@ -29,6 +29,7 @@ type ReferralMetrics = {
   utilidadBaseHistorica: number;
   descuentoGenerado: number;
   descuentoDisponible: number;
+  obraSocial: number;
 };
 
 @Injectable()
@@ -64,6 +65,7 @@ export class ReferralStatsService {
           utilidadBaseHistorica: generation.utilidadBaseHistorica,
           descuentoGenerado: generation.descuentoGenerado,
           descuentoDisponible: generation.descuentoDisponible,
+          obraSocial: generation.obraSocial,
         }),
       this.emptyMetrics(),
     );
@@ -83,6 +85,8 @@ export class ReferralStatsService {
       utilidadBaseHistorica: totals.utilidadBaseHistorica,
       descuentoGenerado: totals.descuentoGenerado,
       descuentoDisponible: totals.descuentoDisponible,
+      utilidadGeneralObraSocial: totals.obraSocial,
+      obraSocial: totals.obraSocial,
       generaciones: enrichedGenerations,
       // Se conservan estas claves para consumidores existentes, ahora calculadas
       // con beneficios sobre utilidad en lugar de porcentajes sobre ventas.
@@ -110,7 +114,7 @@ export class ReferralStatsService {
     const clientIds = generations.flatMap((generation) =>
       generation.clients.map((client) => client.id),
     );
-    const [invoices, benefits, policies] = await Promise.all([
+    const [invoices, benefits, policies, socialContributions] = await Promise.all([
       clientIds.length
         ? this.prisma.invoice.findMany({
             where: {
@@ -139,6 +143,10 @@ export class ReferralStatsService {
       this.prisma.referralProfitPolicy.findMany({
         where: { isActive: true },
         select: { generation: true, percentage: true },
+      }),
+      this.prisma.referralSocialContribution.findMany({
+        where: { buyerClientId: { in: clientIds }, originInvoice: { status: InvoiceStatus.ACTIVA } },
+        select: { buyerClientId: true, generation: true, amount: true },
       }),
     ]);
     const metricsByClient = new Map<number, ReferralMetrics>();
@@ -179,6 +187,12 @@ export class ReferralStatsService {
       metrics.descuentoDisponible = this.roundMoney(
         metrics.descuentoDisponible + Number(benefit.remainingAmount),
       );
+    }
+
+    for (const contribution of socialContributions) {
+      const metrics = metricsByClient.get(contribution.buyerClientId);
+      if (!metrics) continue;
+      metrics.obraSocial = this.roundMoney(metrics.obraSocial + Number(contribution.amount));
     }
 
     return generations.map((generation) => {
@@ -248,6 +262,7 @@ export class ReferralStatsService {
       utilidadBaseHistorica: 0,
       descuentoGenerado: 0,
       descuentoDisponible: 0,
+      obraSocial: 0,
     };
   }
 
@@ -267,6 +282,7 @@ export class ReferralStatsService {
       descuentoDisponible: this.roundMoney(
         target.descuentoDisponible + source.descuentoDisponible,
       ),
+      obraSocial: this.roundMoney(target.obraSocial + source.obraSocial),
     };
   }
 

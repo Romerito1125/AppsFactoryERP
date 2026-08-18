@@ -10,13 +10,18 @@ import {
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateClientDto } from './dto/create-client.dto';
 import { FilterClientsDto } from './dto/filter-clients.dto';
 import { UpdateClientDto } from './dto/update-client.dto';
 
 @Injectable()
 export class ClientesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async findAll(filter: FilterClientsDto) {
     const where = {
@@ -44,7 +49,7 @@ export class ClientesService {
     return client;
   }
 
-  async create(createClientDto: CreateClientDto) {
+  async create(createClientDto: CreateClientDto, actor?: AuthUser) {
     const existingClient = await this.prisma.client.findUnique({
       where: { identification: createClientDto.identification },
     });
@@ -53,10 +58,21 @@ export class ClientesService {
       throw new ConflictException('La identificación ya existe');
     }
 
-    return this.prisma.client.create({ data: createClientDto });
+    const client = await this.prisma.client.create({ data: createClientDto });
+    await this.auditLogService.log({
+      actor,
+      module: 'CLIENTES',
+      action: 'CREATE',
+      entityType: 'Client',
+      entityId: client.id,
+      entityLabel: `${client.firstName} ${client.lastName}`,
+      description: `Creo el cliente ${client.firstName} ${client.lastName}`,
+      metadata: { clientType: client.clientType, identification: client.identification },
+    });
+    return client;
   }
 
-  async update(id: number, updateClientDto: UpdateClientDto) {
+  async update(id: number, updateClientDto: UpdateClientDto, actor?: AuthUser) {
     this.ensurePositiveId(id);
     await this.findOne(id);
 
@@ -70,17 +86,38 @@ export class ClientesService {
       }
     }
 
-    return this.prisma.client.update({ where: { id }, data: updateClientDto });
+    const client = await this.prisma.client.update({ where: { id }, data: updateClientDto });
+    await this.auditLogService.log({
+      actor,
+      module: 'CLIENTES',
+      action: 'UPDATE',
+      entityType: 'Client',
+      entityId: client.id,
+      entityLabel: `${client.firstName} ${client.lastName}`,
+      description: `Actualizo el cliente ${client.firstName} ${client.lastName}`,
+      metadata: { changedFields: Object.keys(updateClientDto) },
+    });
+    return client;
   }
 
-  async remove(id: number) {
+  async remove(id: number, actor?: AuthUser) {
     this.ensurePositiveId(id);
     await this.findOne(id);
 
-    return this.prisma.client.update({
+    const client = await this.prisma.client.update({
       where: { id },
       data: { isActive: false, deletedAt: new Date() },
     });
+    await this.auditLogService.log({
+      actor,
+      module: 'CLIENTES',
+      action: 'DEACTIVATE',
+      entityType: 'Client',
+      entityId: client.id,
+      entityLabel: `${client.firstName} ${client.lastName}`,
+      description: `Desactivo el cliente ${client.firstName} ${client.lastName}`,
+    });
+    return client;
   }
 
   async reactivate(id: number) {

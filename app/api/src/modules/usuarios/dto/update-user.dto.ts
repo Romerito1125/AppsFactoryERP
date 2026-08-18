@@ -19,6 +19,12 @@ export class UpdateUserDto {
   clientId?: number;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  warehouseId?: number;
+
+  @IsOptional()
   @IsEmail()
   email?: string;
 

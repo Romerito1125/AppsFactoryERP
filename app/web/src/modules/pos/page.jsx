@@ -2,8 +2,6 @@ import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
   LogOut,
   Minus,
   Pencil,
@@ -98,6 +96,19 @@ function getStockToneForWarehouse(product, warehouseId) {
     label: 'Disponible',
     className: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
   }
+}
+
+function getPackagingLabel(product) {
+  const profile = product?.packagingProfile
+  if (!profile?.unitsPerPackage && !profile?.packagesPerBox) return null
+  const packageText = profile.unitsPerPackage ? `1 paquete = ${profile.unitsPerPackage} und.` : null
+  const boxText = profile.packagesPerBox && profile.unitsPerPackage ? `1 caja = ${profile.packagesPerBox} paquetes` : null
+  return [packageText, boxText].filter(Boolean).join(' · ')
+}
+
+function getPriceUnitLabel(price) {
+  if (!price?.unit || price.unit === 'UND') return 'unidad'
+  return `${price.quantity ?? 1} ${String(price.unit).toLowerCase()}`
 }
 
 function getInvoiceActorLabel(invoice) {
@@ -199,9 +210,6 @@ export function PosPage() {
   const [selectedClientId, setSelectedClientId] = useState('NO_CLIENT')
   const [selectedAccountId, setSelectedAccountId] = useState(null)
   const [selectedUserId, setSelectedUserId] = useState(() => user?.sub ?? null)
-  const [operationZone, setOperationZone] = useState('')
-  const [operationCity, setOperationCity] = useState('')
-  const [operationStation, setOperationStation] = useState('')
   const [creditDueDate, setCreditDueDate] = useState(() => {
     const due = new Date()
     due.setDate(due.getDate() + 15)
@@ -223,10 +231,11 @@ export function PosPage() {
   // Warehouse selection
   const [selectedWarehouseId, setSelectedWarehouseId] = useState(null)
 
-  const itemsPerPage = 24
-
   const selectedClientNumericId =
     selectedClientId && selectedClientId !== 'NO_CLIENT' ? Number(selectedClientId) : null
+
+  const assignedWarehouseId = user?.role === 'BODEGA' ? Number(user.warehouseId ?? 0) || null : null
+  const effectiveWarehouseId = assignedWarehouseId ?? selectedWarehouseId
 
   useEffect(() => {
     setVisibleLimit(24)
@@ -378,7 +387,7 @@ export function PosPage() {
   const visibleProducts = useMemo(() => {
     return products.filter((product) => {
       // Filter out products with no stock in the selected warehouse (or total stock if none selected)
-      const stock = getWarehouseStock(product, selectedWarehouseId)
+      const stock = getWarehouseStock(product, effectiveWarehouseId)
       if (stock <= 0) {
         return false
       }
@@ -394,7 +403,7 @@ export function PosPage() {
 
       return matchesCategory && matchesSearch
     })
-  }, [products, productTypeId, deferredSearch, selectedWarehouseId])
+  }, [products, productTypeId, deferredSearch, effectiveWarehouseId])
 
   const totalProducts = visibleProducts.length
 
@@ -435,6 +444,14 @@ export function PosPage() {
         throw new Error('Agrega al menos un producto al ticket')
       }
 
+      if (user.role === 'BODEGA' && !assignedWarehouseId) {
+        throw new Error('Tu usuario Bodega no tiene una bodega asignada')
+      }
+
+      if (cart.some((item) => !item.warehouseId)) {
+        throw new Error('Selecciona la bodega de salida para cada producto')
+      }
+
       if (saleMode === 'contado' && !activeAccountId) {
         throw new Error('Selecciona una cuenta bancaria para registrar el recaudo')
       }
@@ -447,16 +464,17 @@ export function PosPage() {
         clientId: targetClientId,
         referralDiscount: Number(referralDiscount || 0),
         createdByUserId: selectedUserId ?? undefined,
-        warehouseId: selectedWarehouseId ?? undefined,
+        warehouseId: [...new Set(cartItems.map((item) => item.warehouseId).filter(Boolean))].length === 1
+          ? cartItems.find((item) => item.warehouseId)?.warehouseId
+          : undefined,
         source: 'POS',
         saleMode: saleMode === 'credito' ? 'CREDITO' : 'CONTADO',
-        zone: operationZone.trim() || undefined,
-        city: operationCity.trim() || undefined,
-        station: operationStation.trim() || undefined,
         items: cart.map((item) => ({
           productId: item.productId,
           productPriceId: item.productPriceId,
+          warehouseId: item.warehouseId,
           quantity: item.quantity,
+          ...(item.customUnitPrice !== undefined ? { unitPrice: item.customUnitPrice } : {}),
         })),
       }
 
@@ -509,7 +527,8 @@ export function PosPage() {
             return null
           }
 
-          const subtotal = Number(price.price) * item.quantity
+          const salePrice = item.customUnitPrice ?? Number(price.price)
+          const subtotal = salePrice * item.quantity
           const taxes = subtotal * (Number(product.taxRate ?? 0) / 100)
           const total = subtotal + taxes
 
@@ -517,6 +536,7 @@ export function PosPage() {
             ...item,
             product,
             price,
+            salePrice,
             subtotal,
             taxes,
             total,
@@ -547,9 +567,10 @@ export function PosPage() {
     }
 
     setRightTab('ticket')
+    const productWarehouseId = effectiveWarehouseId ?? product.warehouses?.find((item) => Number(item.quantity ?? 0) > 0)?.warehouseId
     setCart((current) => {
       const existing = current.find(
-        (item) => item.productId === product.id && item.productPriceId === defaultPrice.id,
+        (item) => item.productId === product.id && item.productPriceId === defaultPrice.id && item.warehouseId === productWarehouseId,
       )
 
       if (existing) {
@@ -558,15 +579,15 @@ export function PosPage() {
         )
       }
 
-      return [...current, { productId: product.id, productPriceId: defaultPrice.id, quantity: 1, product }]
+      return [...current, { productId: product.id, productPriceId: defaultPrice.id, warehouseId: productWarehouseId, quantity: 1, product }]
     })
   }
 
-  function updateQuantity(productId, productPriceId, nextQuantity) {
+  function updateQuantity(productId, productPriceId, warehouseId, nextQuantity) {
     if (nextQuantity <= 0) {
       setCart((current) =>
         current.filter(
-          (item) => !(item.productId === productId && item.productPriceId === productPriceId),
+          (item) => !(item.productId === productId && item.productPriceId === productPriceId && item.warehouseId === warehouseId),
         ),
       )
       return
@@ -574,21 +595,38 @@ export function PosPage() {
 
     setCart((current) =>
       current.map((item) =>
-        item.productId === productId && item.productPriceId === productPriceId
+        item.productId === productId && item.productPriceId === productPriceId && item.warehouseId === warehouseId
           ? { ...item, quantity: nextQuantity }
           : item,
       ),
     )
   }
 
-  function updatePrice(productId, currentPriceId, nextPriceId) {
+  function updatePrice(productId, currentPriceId, warehouseId, nextPriceId) {
     setCart((current) =>
       current.map((item) =>
-        item.productId === productId && item.productPriceId === currentPriceId
-          ? { ...item, productPriceId: Number(nextPriceId) }
+        item.productId === productId && item.productPriceId === currentPriceId && item.warehouseId === warehouseId
+          ? { ...item, productPriceId: Number(nextPriceId), customUnitPrice: undefined }
           : item,
       ),
     )
+  }
+
+  function updateCustomPrice(productId, productPriceId, warehouseId, value) {
+    const parsedValue = value === '' ? undefined : Number(value)
+    setCart((current) => current.map((item) => (
+      item.productId === productId && item.productPriceId === productPriceId && item.warehouseId === warehouseId
+        ? { ...item, customUnitPrice: parsedValue }
+        : item
+    )))
+  }
+
+  function updateWarehouse(productId, productPriceId, currentWarehouseId, nextWarehouseId) {
+    setCart((current) => current.map((item) => (
+      item.productId === productId && item.productPriceId === productPriceId && item.warehouseId === currentWarehouseId
+        ? { ...item, warehouseId: Number(nextWarehouseId) }
+        : item
+    )))
   }
 
   async function handleCheckout() {
@@ -659,7 +697,8 @@ export function PosPage() {
                 />
               </div>
               <Select
-                value={selectedWarehouseId ? String(selectedWarehouseId) : 'ALL_WAREHOUSES'}
+                value={effectiveWarehouseId ? String(effectiveWarehouseId) : 'ALL_WAREHOUSES'}
+                disabled={Boolean(assignedWarehouseId)}
                 onValueChange={(value) => {
                   setSelectedWarehouseId(value === 'ALL_WAREHOUSES' ? null : Number(value))
                   setVisibleLimit(24)
@@ -669,8 +708,8 @@ export function PosPage() {
                   <SelectValue placeholder="Todas las Bodegas (Stock Global)" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ALL_WAREHOUSES" className="text-sm">Todas las Bodegas (Stock Global)</SelectItem>
-                  {warehouses.map((w) => (
+                  {!assignedWarehouseId ? <SelectItem value="ALL_WAREHOUSES" className="text-sm">Todas las Bodegas (Stock Global)</SelectItem> : null}
+                  {(assignedWarehouseId ? warehouses.filter((warehouse) => warehouse.id === assignedWarehouseId) : warehouses).map((w) => (
                     <SelectItem key={w.id} value={String(w.id)} className="text-sm">
                       {w.location}
                     </SelectItem>
@@ -705,7 +744,7 @@ export function PosPage() {
         {/* Scrollable Catalog Grid */}
         <div className="flex-1 overflow-y-auto min-h-0 pr-1 pb-4 select-none flex flex-col justify-between" onScroll={handleScroll}>
           {posQuery.isLoading ? (
-            <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {Array.from({ length: 6 }).map((_, index) => (
                 <Skeleton key={index} className="h-64 rounded-[1.5rem]" />
               ))}
@@ -724,8 +763,8 @@ export function PosPage() {
             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
               {productsData.map((product) => {
                 const defaultPrice = getDefaultPrice(product)
-                const totalStock = getWarehouseStock(product, selectedWarehouseId)
-                const stockTone = getStockToneForWarehouse(product, selectedWarehouseId)
+                const totalStock = getWarehouseStock(product, effectiveWarehouseId)
+                const stockTone = getStockToneForWarehouse(product, effectiveWarehouseId)
 
                 return (
                   <button
@@ -734,7 +773,7 @@ export function PosPage() {
                     onClick={() => addProduct(product)}
                     disabled={!defaultPrice || totalStock <= 0}
                     className={cn(
-                      'rounded-[1.5rem] border border-border/70 bg-card p-4 text-left shadow-sm shadow-primary/5 transition hover:border-primary/35 hover:bg-primary/5 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-55 flex flex-col justify-between h-72 md:h-80 cursor-pointer',
+                      'rounded-[1.25rem] border border-border/70 bg-card p-3 text-left shadow-sm shadow-primary/5 transition hover:border-primary/35 hover:bg-primary/5 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-55 flex flex-col justify-between h-64 md:h-72 cursor-pointer',
                     )}
                   >
                     <ProductImage
@@ -757,9 +796,10 @@ export function PosPage() {
                     <div className="mt-3 flex items-end justify-between gap-3 w-full">
                       <div>
                         <p className="text-base md:text-lg font-bold text-foreground">
-                          {defaultPrice ? formatCurrency(defaultPrice.price) : 'Sin precio'}
+                          {defaultPrice ? `${formatCurrency(defaultPrice.price)} / ${getPriceUnitLabel(defaultPrice)}` : 'Sin precio'}
                         </p>
                         <p className="text-[11px] md:text-xs text-muted-foreground mt-0.5">Stock: {formatNumber(totalStock)}</p>
+                        {getPackagingLabel(product) ? <p className="text-[10px] text-primary mt-1">{getPackagingLabel(product)}</p> : null}
                       </div>
                       <div className="rounded-xl bg-primary px-3.5 py-2 text-xs md:text-sm font-semibold text-primary-foreground shadow-sm shadow-primary/10 hover:bg-primary/90 transition-colors">
                         Agregar
@@ -908,21 +948,6 @@ export function PosPage() {
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <div className="grid gap-1.5">
-                    <Label className="text-xs font-semibold text-muted-foreground">Zona</Label>
-                    <Input value={operationZone} onChange={(event) => setOperationZone(event.target.value)} className="h-9 rounded-xl bg-background/50 text-xs" placeholder="Centro" />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label className="text-xs font-semibold text-muted-foreground">Ciudad</Label>
-                    <Input value={operationCity} onChange={(event) => setOperationCity(event.target.value)} className="h-9 rounded-xl bg-background/50 text-xs" placeholder="Cartagena" />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label className="text-xs font-semibold text-muted-foreground">Estacion</Label>
-                    <Input value={operationStation} onChange={(event) => setOperationStation(event.target.value)} className="h-9 rounded-xl bg-background/50 text-xs" placeholder="Caja 1" />
-                  </div>
-                </div>
-
                 <div className="grid gap-1.5 rounded-xl border border-border/50 bg-muted/10 p-3">
                   <Label className="text-[11px] font-semibold text-muted-foreground">Descuento de red opcional</Label>
                   <div className="flex items-center gap-3">
@@ -949,7 +974,7 @@ export function PosPage() {
                     const activePrices = getActivePrices(item.product)
 
                     return (
-                      <div key={`${item.productId}:${item.productPriceId}`} className="rounded-2xl border border-border/50 bg-muted/15 p-4 hover:bg-muted/25 transition-colors">
+                      <div key={`${item.productId}:${item.productPriceId}:${item.warehouseId ?? 'none'}`} className="rounded-2xl border border-border/50 bg-muted/15 p-4 hover:bg-muted/25 transition-colors">
                         <div className="flex items-start gap-4">
                           <ProductImage src={item.product.imageUrl} alt={item.product.name} className="size-20 rounded-xl shrink-0" iconClassName="size-6" />
                           <div className="min-w-0 flex-1">
@@ -957,13 +982,14 @@ export function PosPage() {
                               <div className="min-w-0">
                                 <p className="line-clamp-1 font-semibold text-sm md:text-base text-foreground">{item.product.name}</p>
                                 <p className="line-clamp-1 text-xs text-muted-foreground mt-0.5">{item.product.brand}</p>
+                                {getPackagingLabel(item.product) ? <p className="mt-1 text-[10px] text-primary">{getPackagingLabel(item.product)}</p> : null}
                               </div>
                               <Button
                                 type="button"
                                 variant="ghost"
                                 size="icon"
                                 className="size-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-xl shrink-0 cursor-pointer"
-                                onClick={() => updateQuantity(item.productId, item.productPriceId, 0)}
+                                onClick={() => updateQuantity(item.productId, item.productPriceId, item.warehouseId, 0)}
                               >
                                 <Trash2 className="size-4" />
                               </Button>
@@ -973,7 +999,7 @@ export function PosPage() {
                               <div className="flex items-center gap-2">
                                 <Select
                                   value={String(item.price.id)}
-                                  onValueChange={(value) => updatePrice(item.productId, item.productPriceId, value)}
+                                  onValueChange={(value) => updatePrice(item.productId, item.productPriceId, item.warehouseId, value)}
                                 >
                                   <SelectTrigger className="h-10 text-xs md:text-sm rounded-xl flex-1 bg-background/50 cursor-pointer">
                                     <SelectValue placeholder="Precio" />
@@ -981,7 +1007,7 @@ export function PosPage() {
                                   <SelectContent>
                                     {activePrices.map((price) => (
                                       <SelectItem key={price.id} value={String(price.id)} className="text-xs md:text-sm">
-                                        {`${price.name} · ${formatCurrency(price.price)}`}
+                                        {`${price.name} · ${formatCurrency(price.price)} / ${getPriceUnitLabel(price)}`}
                                       </SelectItem>
                                     ))}
                                   </SelectContent>
@@ -998,13 +1024,48 @@ export function PosPage() {
                                 </Button>
                               </div>
 
+                              <div className="grid gap-1.5 rounded-xl border border-primary/20 bg-primary/5 p-3">
+                                <Label className="text-[11px] font-semibold text-primary">Precio acordado para este cliente</Label>
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={item.customUnitPrice ?? ''}
+                                    placeholder={String(item.price.price)}
+                                    onChange={(event) => updateCustomPrice(item.productId, item.productPriceId, item.warehouseId, event.target.value)}
+                                    className="h-9 rounded-xl bg-background/80 text-sm font-semibold"
+                                  />
+                                  <span className="shrink-0 text-[11px] text-muted-foreground">por {getPriceUnitLabel(item.price)}</span>
+                                </div>
+                                <p className="text-[10px] text-muted-foreground">
+                                  Total de lÃ­nea: {formatCurrency(item.total)} Â· Deja vacÃ­o para usar el precio registrado.
+                                </p>
+                              </div>
+
+                              <div className="grid gap-1.5">
+                                <Label className="text-[11px] text-muted-foreground">Bodega de salida</Label>
+                                <Select
+                                  value={item.warehouseId ? String(item.warehouseId) : undefined}
+                                  onValueChange={(value) => updateWarehouse(item.productId, item.productPriceId, item.warehouseId, value)}
+                                  disabled={Boolean(assignedWarehouseId)}
+                                >
+                                  <SelectTrigger className="h-9 rounded-xl bg-background/50 text-xs"><SelectValue placeholder="Selecciona bodega" /></SelectTrigger>
+                                  <SelectContent>
+                                    {(assignedWarehouseId ? warehouses.filter((warehouse) => warehouse.id === assignedWarehouseId) : warehouses.filter((warehouse) => item.product.warehouses?.some((stock) => stock.warehouseId === warehouse.id && Number(stock.quantity ?? 0) > 0))).map((warehouse) => (
+                                      <SelectItem key={warehouse.id} value={String(warehouse.id)}>{warehouse.location}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
                               <div className="flex items-center justify-between gap-2 mt-1">
                                 <div className="flex items-center gap-1.5 bg-background border border-border/70 rounded-xl p-1 shadow-sm">
                                   <Button
                                     type="button"
                                     variant="ghost"
                                     className="size-8 p-0 hover:bg-muted rounded-lg shrink-0 cursor-pointer"
-                                    onClick={() => updateQuantity(item.productId, item.productPriceId, item.quantity - 1)}
+                                    onClick={() => updateQuantity(item.productId, item.productPriceId, item.warehouseId, item.quantity - 1)}
                                   >
                                     <Minus className="size-3.5" />
                                   </Button>
@@ -1015,7 +1076,7 @@ export function PosPage() {
                                     type="button"
                                     variant="ghost"
                                     className="size-8 p-0 hover:bg-muted rounded-lg shrink-0 cursor-pointer"
-                                    onClick={() => updateQuantity(item.productId, item.productPriceId, item.quantity + 1)}
+                                    onClick={() => updateQuantity(item.productId, item.productPriceId, item.warehouseId, item.quantity + 1)}
                                   >
                                     <Plus className="size-3.5" />
                                   </Button>
@@ -1195,10 +1256,10 @@ export function PosPage() {
                 disabled={priceDialogMode === 'edit'}
                 placeholder="Ej. Distribuidor, Oferta Fin de Semana"
                 className={cn("h-10 rounded-xl", priceDialogMode === 'edit' && "bg-muted text-muted-foreground")}
-              />
-            </div>
+                                />
+                              </div>
 
-            <div className="grid gap-1.5">
+                              <div className="grid gap-1.5">
               <Label htmlFor="price-value" className="text-xs font-semibold text-muted-foreground">
                 Valor del precio ($)
               </Label>

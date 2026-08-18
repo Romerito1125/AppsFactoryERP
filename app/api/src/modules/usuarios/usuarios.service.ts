@@ -65,6 +65,9 @@ export class UsuariosService {
     if (createUserDto.clientId) {
       await this.ensureClientExists(createUserDto.clientId);
     }
+    if (createUserDto.warehouseId) {
+      await this.ensureWarehouseExists(createUserDto.warehouseId);
+    }
 
     const normalizedEmail = createUserDto.email.trim().toLowerCase();
 
@@ -79,6 +82,7 @@ export class UsuariosService {
     const user = await this.prisma.user.create({
       data: {
         clientId: createUserDto.clientId,
+        warehouseId: createUserDto.warehouseId,
         role: createUserDto.role,
         isActive: createUserDto.isActive,
         username: normalizedEmail,
@@ -171,6 +175,9 @@ export class UsuariosService {
 
     if (updateUserDto.clientId) {
       await this.ensureClientExists(updateUserDto.clientId, id);
+    }
+    if (updateUserDto.warehouseId) {
+      await this.ensureWarehouseExists(updateUserDto.warehouseId);
     }
 
     if (updateUserDto.email) {
@@ -280,6 +287,7 @@ export class UsuariosService {
     return {
       id: true,
       clientId: true,
+      warehouseId: true,
       username: true,
       role: true,
       isActive: true,
@@ -296,6 +304,13 @@ export class UsuariosService {
         },
       },
     };
+  }
+
+  private async ensureWarehouseExists(warehouseId: number) {
+    const warehouse = await this.prisma.warehouse.findUnique({ where: { id: warehouseId } });
+    if (!warehouse || !warehouse.isActive) {
+      throw new BadRequestException('La bodega seleccionada no existe o está inactiva');
+    }
   }
 
   private getStatusWhere(status?: RecordStatusQuery) {

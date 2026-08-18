@@ -1,16 +1,17 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InvoiceSource, Prisma } from '@prisma/client';
+import { InvoiceSource, Prisma, SaleMode } from '@prisma/client';
 import {
   buildPaginatedResponse,
   resolvePagination,
 } from '../../common/utils/pagination.util';
-import { NotificacionesService } from '../notificaciones/notificaciones.service';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { FacturasService } from '../facturas/facturas.service';
 import { PrismaService } from '../../shared/prisma/prisma.service';
-import { ProductResolverService } from '../../shared/products/product-resolver.service';
 import { CreateStoreOrderDto } from './dto/create-store-order.dto';
 import { ListStoreOrdersQueryDto } from './dto/list-store-orders-query.dto';
 import { StorefrontProductsQueryDto } from './dto/storefront-products-query.dto';
@@ -19,8 +20,7 @@ import { StorefrontProductsQueryDto } from './dto/storefront-products-query.dto'
 export class TiendaService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly notificacionesService: NotificacionesService,
-    private readonly productResolver: ProductResolverService,
+    private readonly facturasService: FacturasService,
   ) {}
 
   async findOrders(query: ListStoreOrdersQueryDto) {
@@ -44,21 +44,48 @@ export class TiendaService {
     return buildPaginatedResponse(data, total, page, limit);
   }
 
+  async findClientOrders(clientId: number | null | undefined, query: ListStoreOrdersQueryDto) {
+    if (!clientId) {
+      throw new ForbiddenException('La sesión no tiene un cliente asociado');
+    }
+
+    const where = {
+      source: InvoiceSource.APP_MOVIL,
+      clientId,
+      ...this.getOrderStatusWhere(query.status),
+    };
+    const { page, limit, skip, take } = resolvePagination(query);
+    const [total, data] = await Promise.all([
+      this.prisma.invoice.count({ where }),
+      this.prisma.invoice.findMany({
+        where,
+        include: this.storeOrderInclude,
+        orderBy: { id: 'desc' },
+        skip,
+        take,
+      }),
+    ]);
+
+    return buildPaginatedResponse(data, total, page, limit);
+  }
+
   async findProducts(query: StorefrontProductsQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const where = this.buildProductWhere(query);
-    const total = await this.prisma.product.count({ where });
-    const products = await this.prisma.product.findMany({
-      where,
-      include: this.productInclude,
-      orderBy:
-        query.sortBy === 'createdAt'
-          ? { createdAt: query.sortOrder ?? 'desc' }
-          : { id: 'asc' },
-      skip: query.sortBy === 'price' ? undefined : (page - 1) * limit,
-      take: query.sortBy === 'price' ? undefined : limit,
-    });
+    const [total, products] = await Promise.all([
+      this.prisma.product.count({ where }),
+      this.prisma.product.findMany({
+        where,
+        include: this.productInclude,
+        orderBy:
+          query.sortBy === 'createdAt'
+            ? { createdAt: query.sortOrder ?? 'desc' }
+            : { id: 'asc' },
+        skip: query.sortBy === 'price' ? undefined : (page - 1) * limit,
+        take: query.sortBy === 'price' ? undefined : limit,
+      }),
+    ]);
     const formattedProducts = products.map((product) =>
       this.formatProduct(product),
     );
@@ -113,98 +140,39 @@ export class TiendaService {
   }
 
   async findOffers() {
-    const offers = await this.prisma.offer.findMany({
+    return this.prisma.offer.findMany({
       where: this.activeOfferWhere(),
-      include: {
-        products: { include: { product: true } },
-        productTypes: { include: { productType: true } },
-        tags: { include: { tag: true } },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        discountType: true,
+        discountValue: true,
+        startsAt: true,
+        endsAt: true,
+        minimumProductQuantity: true,
+        maximumProductQuantity: true,
+        isStackable: true,
       },
       orderBy: { id: 'desc' },
     });
-
-    return offers.map((offer) => ({
-      ...offer,
-      products: offer.products.map((item) => item.product),
-      productTypes: offer.productTypes.map((item) => item.productType),
-      tags: offer.tags.map((item) => item.tag),
-    }));
   }
 
-  async createOrder(createStoreOrderDto: CreateStoreOrderDto) {
-    return this.prisma.$transaction(async (tx) => {
-      const client = await tx.client.findUnique({
-        where: { id: createStoreOrderDto.clientId },
-      });
+  async createOrder(createStoreOrderDto: CreateStoreOrderDto, authUser: AuthUser) {
+    if (authUser.clientId !== createStoreOrderDto.clientId) {
+      throw new ForbiddenException('Solo puedes crear pedidos para tu propia cuenta');
+    }
 
-      if (!client) {
-        throw new NotFoundException('Cliente no encontrado');
-      }
-
-      if (!client.isActive) {
-        throw new BadRequestException(
-          'No se puede crear un pedido para un cliente inactivo',
-        );
-      }
-
-      const resolvedItems: Array<{
-        productId: number;
-        productPriceId?: number;
-        quantity: number;
-        product: any;
-      }> = [];
-
-      for (const item of createStoreOrderDto.items) {
-        const product = await this.productResolver.resolve(item, tx, {
-          prices: { where: { isActive: true } },
-        });
-
-        resolvedItems.push({
-          productId: product.id,
-          productPriceId: item.productPriceId,
-          quantity: item.quantity,
-          product,
-        });
-      }
-
-      const groupedItems = this.groupInvoiceItems(resolvedItems);
-
-      const invoiceItems = this.buildInvoiceItems(groupedItems);
-      const subtotal = invoiceItems.reduce(
-        (sum, item) => sum + item.subtotal,
-        0,
-      );
-      const taxes = invoiceItems.reduce((sum, item) => sum + item.taxAmount, 0);
-      const total = invoiceItems.reduce((sum, item) => sum + item.total, 0);
-
-      const invoice = await tx.invoice.create({
-        data: {
-          consecutive: this.generateConsecutive(),
-          clientId: createStoreOrderDto.clientId,
-          createdByUserId: null,
-          createdByRole: null,
-          createdByUsername: null,
-          source: InvoiceSource.APP_MOVIL,
-          subtotal,
-          taxes,
-          total,
-          items: { create: invoiceItems },
-          delivery: {
-            create: {
-              address: createStoreOrderDto.delivery.address,
-              recipientName: createStoreOrderDto.delivery.recipientName,
-              recipientPhone: createStoreOrderDto.delivery.recipientPhone,
-              notes: createStoreOrderDto.delivery.notes,
-            },
-          },
-        },
-        include: this.storeOrderInclude,
-      });
-
-      await this.notificacionesService.createInvoiceNotification(tx, invoice);
-
-      return invoice;
-    });
+    return this.facturasService.create(
+      {
+        clientId: createStoreOrderDto.clientId,
+        items: createStoreOrderDto.items,
+        source: InvoiceSource.APP_MOVIL,
+        saleMode: SaleMode.CONTADO,
+      },
+      authUser,
+      createStoreOrderDto.delivery,
+    );
   }
 
   private readonly productInclude: Prisma.ProductInclude = {
@@ -216,7 +184,10 @@ export class TiendaService {
       where: { isActive: true },
       orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
     },
-    warehouses: true,
+    warehouses: {
+      where: { warehouse: { isActive: true, deletedAt: null } },
+      select: { quantity: true },
+    },
     offers: { include: { offer: true } },
     barcodes: {
       where: { isActive: true, isPrimary: true },
@@ -265,11 +236,10 @@ export class TiendaService {
 
   private formatProduct(product) {
     const now = new Date();
-    const currentPrice = product.prices.find(
-      (price) =>
-        (!price.startsAt || price.startsAt <= now) &&
-        (!price.endsAt || price.endsAt >= now),
+    const currentPrices = product.prices.filter((price) =>
+      this.isPriceActive(price, now),
     );
+    const currentPrice = currentPrices.find((price) => price.isDefault) ?? currentPrices[0];
     const { offers: productTypeOffers, ...productType } = product.productType;
     const tags = product.tags.map((item) => {
       const { offers, ...tag } = item.tag;
@@ -292,11 +262,21 @@ export class TiendaService {
       productType,
       tags,
       currentPrice: Number(currentPrice?.price ?? 0),
+      defaultPriceId: currentPrice?.id ?? null,
+      taxRate: Number(product.taxRate),
       stock: product.warehouses.reduce((sum, item) => sum + item.quantity, 0),
       primaryBarcode: product.barcodes[0]?.code ?? null,
       activeOffer: activeOffer ?? null,
       createdAt: product.createdAt,
     };
+  }
+
+  private isPriceActive(price, now = new Date()) {
+    return (
+      price.isActive &&
+      (!price.startsAt || price.startsAt <= now) &&
+      (!price.endsAt || price.endsAt >= now)
+    );
   }
 
   private buildInvoiceItems(

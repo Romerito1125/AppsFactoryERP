@@ -5,11 +5,18 @@ import {
   IsPositive,
   IsString,
   MinLength,
+  IsNumber,
+  Min,
   Validate,
 } from 'class-validator';
 import { HasProductIdentifierConstraint } from '../../../shared/products/validators/has-product-identifier.validator';
 
 export class CreateInvoiceItemDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  warehouseId?: number;
   @Validate(HasProductIdentifierConstraint)
   private readonly productIdentifier?: never;
 
@@ -34,4 +41,10 @@ export class CreateInvoiceItemDto {
   @IsInt()
   @IsPositive()
   quantity: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  unitPrice?: number;
 }

@@ -64,7 +64,6 @@ const clientsConfig = {
       type: 'select',
       placeholder: 'Selecciona un tipo',
       options: clientTypeOptions,
-      hiddenOnEdit: true,
     },
     { name: 'phone', label: 'Telefono', placeholder: '3001234567' },
     {
@@ -87,13 +86,7 @@ const clientsConfig = {
     address: record?.address ?? '',
   }),
   prepareValues: (mode, values) => {
-    if (mode === 'edit') {
-      const payload = { ...values }
-      delete payload.clientType
-      return payload
-    }
-
-    return values
+    return { ...values }
   },
   fetchRecords: ({ status, search, page, limit }) =>
     apiClient.get('/clientes', { estado: toApiStatus(status), q: search, page, limit }),

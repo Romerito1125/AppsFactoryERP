@@ -20,6 +20,7 @@ import {
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { ProductResolverService } from '../../shared/products/product-resolver.service';
@@ -30,6 +31,17 @@ import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 type ResolvedInvoiceProduct = Product & {
   prices: ProductPrice[];
   costs: ProductCost[];
+  packagingProfile?: {
+    unitsPerPackage: number | null;
+    packagesPerBox: number | null;
+  } | null;
+};
+
+export type InvoiceDeliveryInput = {
+  address: string;
+  recipientName: string;
+  recipientPhone: string;
+  notes?: string;
 };
 
 @Injectable()
@@ -38,6 +50,7 @@ export class FacturasService {
     private readonly prisma: PrismaService,
     private readonly notificacionesService: NotificacionesService,
     private readonly productResolver: ProductResolverService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findAll(query: ListInvoicesQueryDto) {
@@ -75,9 +88,12 @@ export class FacturasService {
     return invoice;
   }
 
-  async create(createInvoiceDto: CreateInvoiceDto, authUser: AuthUser) {
-    // La venta no descuenta stock por bodega; el inventario se maneja en /inventario.
-    return this.prisma.$transaction(async (tx) => {
+  async create(
+    createInvoiceDto: CreateInvoiceDto,
+    authUser: AuthUser,
+    delivery?: InvoiceDeliveryInput,
+  ) {
+    const invoice = await this.prisma.$transaction(async (tx) => {
       const client = createInvoiceDto.clientId
         ? await tx.client.findUnique({
             where: { id: createInvoiceDto.clientId },
@@ -114,6 +130,8 @@ export class FacturasService {
         productId: number;
         productPriceId?: number;
         quantity: number;
+        warehouseId?: number;
+        unitPrice?: number;
         product: ResolvedInvoiceProduct;
       }> = [];
 
@@ -125,14 +143,26 @@ export class FacturasService {
             orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
             take: 1,
           },
+          packagingProfile: true,
         })) as ResolvedInvoiceProduct;
 
         resolvedItems.push({
           productId: product.id,
           productPriceId: item.productPriceId,
           quantity: item.quantity,
+          warehouseId: item.warehouseId ?? createInvoiceDto.warehouseId,
+          unitPrice: item.unitPrice,
           product,
         });
+      }
+
+      if (authUser.role === PrismaRole.BODEGA) {
+        const invalidWarehouse = resolvedItems.some(
+          (item) => (item.warehouseId ?? createInvoiceDto.warehouseId) !== authUser.warehouseId,
+        );
+        if (invalidWarehouse || !authUser.warehouseId) {
+          throw new BadRequestException('El usuario de bodega solo puede facturar desde su bodega asignada');
+        }
       }
 
       const groupedItems = this.groupItems(resolvedItems);
@@ -146,9 +176,10 @@ export class FacturasService {
           );
         }
 
-        const productPrice = item.productPriceId
-          ? product.prices.find((price) => price.id === item.productPriceId)
-          : product.prices.find((price) => price.isDefault);
+        const productPrice = this.findSaleablePrice(
+          product,
+          item.productPriceId,
+        );
 
         if (!productPrice) {
           throw new BadRequestException(
@@ -158,16 +189,22 @@ export class FacturasService {
           );
         }
 
-        const unitPrice = Number(productPrice.price);
+        const unitPrice = item.unitPrice ?? Number(productPrice.price);
+        if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+          throw new BadRequestException(
+            `El precio acordado para ${product.name} no es vÃ¡lido`,
+          );
+        }
         const taxRate = Number(product.taxRate);
         const grossSubtotal = this.roundMoney(unitPrice * item.quantity);
         const currentCost = product.costs[0];
         let unitCost: number | null = null;
 
         if (currentCost && Number(currentCost.quantity) > 0) {
-          const quantityInCostUnit = convertQuantity(
+          const quantityInCostUnit = this.convertPriceQuantity(
             Number(productPrice.quantity),
             productPrice.unit,
+            product,
             currentCost.unit,
           );
 
@@ -181,14 +218,20 @@ export class FacturasService {
 
         return {
           productId: product.id,
+          product,
           productPriceId: productPrice.id,
           quantity: item.quantity,
+          warehouseId: item.warehouseId,
           unitPrice,
           taxRate,
           grossSubtotal,
           unitCost,
         };
       });
+
+      if ((createInvoiceDto.source ?? InvoiceSource.ADMIN) === InvoiceSource.APP_MOVIL) {
+        await this.assignStoreWarehouses(tx, grossInvoiceItems);
+      }
 
       const grossSubtotal = this.roundMoney(
         grossInvoiceItems.reduce((sum, item) => sum + item.grossSubtotal, 0),
@@ -208,6 +251,7 @@ export class FacturasService {
         grossInvoiceItems.map((item) => item.grossSubtotal),
       );
       const invoiceItems = grossInvoiceItems.map((item, index) => {
+        const { product: _product, ...invoiceItem } = item;
         const discountAmount = discountAmounts[index];
         const subtotal = this.roundMoney(item.grossSubtotal - discountAmount);
         const taxAmount = this.roundMoney(subtotal * (item.taxRate / 100));
@@ -218,7 +262,7 @@ export class FacturasService {
             : this.roundMoney(subtotal - item.unitCost * item.quantity);
 
         return {
-          ...item,
+          ...invoiceItem,
           subtotal,
           taxAmount,
           total,
@@ -241,6 +285,7 @@ export class FacturasService {
           invoiceItems.reduce((sum, item) => sum + item.profitAmount, 0),
         ),
       );
+      await this.decrementInvoiceStock(tx, grossInvoiceItems);
       const availableBenefits = referralDiscount && createInvoiceDto.clientId
         ? await tx.referralBenefit.findMany({
             where: {
@@ -282,8 +327,9 @@ export class FacturasService {
       const invoice = await tx.invoice.create({
         data: {
           consecutive: this.generateConsecutive(),
+          validationStatus: authUser.role === PrismaRole.VENDEDOR ? 'PENDIENTE' : 'VALIDADA',
           clientId: client.id,
-          warehouseId: createInvoiceDto.warehouseId,
+          warehouseId: this.resolveInvoiceWarehouseId(grossInvoiceItems),
           createdByUserId: creatorId,
           createdByRole: creatorRole,
           createdByUsername: creatorUsername,
@@ -298,6 +344,18 @@ export class FacturasService {
           discountTotal: referralDiscount,
           referralDiscount,
           items: { create: invoiceItems },
+          ...(delivery
+            ? {
+                delivery: {
+                  create: {
+                    address: delivery.address,
+                    recipientName: delivery.recipientName,
+                    recipientPhone: delivery.recipientPhone,
+                    notes: delivery.notes,
+                  },
+                },
+              }
+            : {}),
         },
         include: this.invoiceInclude,
       });
@@ -312,11 +370,20 @@ export class FacturasService {
 
       await this.notificacionesService.createInvoiceNotification(tx, invoice);
 
-      return tx.invoice.findUnique({
-        where: { id: invoice.id },
-        include: this.invoiceInclude,
-      });
+      return invoice;
     });
+
+    await this.auditLogService.log({
+      actor: authUser,
+      module: 'FACTURAS',
+      action: 'CREATE',
+      entityType: 'Invoice',
+      entityId: invoice.id,
+      entityLabel: invoice.consecutive,
+      description: `Creo la factura ${invoice.consecutive}`,
+      metadata: { source: invoice.source, warehouseId: invoice.warehouseId, total: Number(invoice.total) },
+    });
+    return invoice;
   }
 
   async update(id: number, updateInvoiceDto: UpdateInvoiceDto) {
@@ -341,11 +408,25 @@ export class FacturasService {
     });
   }
 
-  async remove(id: number) {
+  async validateInvoice(id: number, actor: AuthUser) {
+    this.ensurePositiveId(id);
+    const invoice = await this.prisma.invoice.findUnique({ where: { id } });
+    if (!invoice) throw new NotFoundException('Factura no encontrada');
+    if (invoice.status === InvoiceStatus.ANULADA) {
+      throw new BadRequestException('No se puede validar una factura anulada');
+    }
+    return this.prisma.invoice.update({
+      where: { id },
+      data: { validationStatus: 'VALIDADA', validatedAt: new Date(), validatedByUserId: actor.sub },
+      include: this.invoiceInclude,
+    });
+  }
+
+  async remove(id: number, actor?: AuthUser) {
     this.ensurePositiveId(id);
 
-    // Anular conserva la factura para trazabilidad; no ajusta inventario por bodega.
-    return this.prisma.$transaction(async (tx) => {
+    // Anular conserva la factura para trazabilidad y devuelve al inventario lo descontado.
+    const annulled = await this.prisma.$transaction(async (tx) => {
       const invoice = await tx.invoice.findUnique({
         where: { id },
       });
@@ -356,6 +437,39 @@ export class FacturasService {
 
       if (invoice.status === 'ANULADA') {
         throw new BadRequestException('La factura ya está anulada');
+      }
+
+      const invoiceItems = await tx.invoiceItem.findMany({
+        where: { invoiceId: id },
+        select: {
+          productId: true,
+          warehouseId: true,
+          quantity: true,
+          productPrice: { select: { quantity: true, unit: true } },
+          product: {
+            select: {
+              unit: true,
+              packagingProfile: {
+                select: { unitsPerPackage: true, packagesPerBox: true },
+              },
+            },
+          },
+        },
+      });
+
+      for (const item of invoiceItems) {
+        if (!item.warehouseId || !item.productPrice) continue;
+        const stockUnits = this.convertPriceQuantity(
+          item.quantity * Number(item.productPrice.quantity),
+          item.productPrice.unit,
+          item.product,
+          item.product.unit,
+        );
+        if (stockUnits === null || !Number.isInteger(stockUnits)) continue;
+        await tx.productWarehouse.updateMany({
+          where: { productId: item.productId, warehouseId: item.warehouseId },
+          data: { quantity: { increment: stockUnits } },
+        });
       }
 
       await tx.referralBenefit.updateMany({
@@ -400,6 +514,17 @@ export class FacturasService {
         include: this.invoiceInclude,
       });
     });
+
+    await this.auditLogService.log({
+      actor,
+      module: 'FACTURAS',
+      action: 'ANULATE',
+      entityType: 'Invoice',
+      entityId: annulled.id,
+      entityLabel: annulled.consecutive,
+      description: `Anulo la factura ${annulled.consecutive}`,
+    });
+    return annulled;
   }
 
   private readonly invoiceInclude = {
@@ -422,14 +547,87 @@ export class FacturasService {
       include: {
         product: { include: { productType: true } },
         productPrice: true,
+        warehouse: true,
       },
     },
     generatedReferralBenefits: true,
+    delivery: true,
     benefitRedemptions: {
       include: { benefit: true },
       orderBy: { id: 'asc' },
     },
   } as const;
+
+  private async assignStoreWarehouses(
+    tx: Prisma.TransactionClient,
+    items: Array<{
+      productId: number;
+      productPriceId: number;
+      quantity: number;
+      warehouseId?: number;
+      product: ResolvedInvoiceProduct;
+    }>,
+  ) {
+    const reservedByWarehouse = new Map<string, number>();
+
+    for (const item of items) {
+      if (item.warehouseId) {
+        continue;
+      }
+
+      const price = item.product.prices.find(
+        (candidate) => candidate.id === item.productPriceId,
+      );
+
+      if (!price) {
+        throw new BadRequestException(
+          `El precio del producto ${item.product.name} no está disponible`,
+        );
+      }
+
+      const stockUnits = this.convertPriceQuantity(
+        item.quantity * Number(price.quantity),
+        price.unit,
+        item.product,
+        item.product.unit,
+      );
+
+      if (stockUnits === null || !Number.isInteger(stockUnits)) {
+        throw new BadRequestException(
+          `No se puede convertir el empaque del producto ${item.product.name} a inventario`,
+        );
+      }
+
+      const warehouses = await tx.productWarehouse.findMany({
+        where: {
+          productId: item.productId,
+          quantity: { gt: 0 },
+          warehouse: { isActive: true, deletedAt: null },
+        },
+        select: { warehouseId: true, quantity: true },
+        orderBy: { quantity: 'desc' },
+      });
+
+      const selectedWarehouse = warehouses.find((warehouse) => {
+        const key = `${item.productId}:${warehouse.warehouseId}`;
+        const reserved = reservedByWarehouse.get(key) ?? 0;
+        return warehouse.quantity - reserved >= stockUnits;
+      });
+
+      if (!selectedWarehouse) {
+        throw new BadRequestException(
+          `Stock insuficiente de ${item.product.name}`,
+        );
+      }
+
+      item.warehouseId = selectedWarehouse.warehouseId;
+      const key = `${item.productId}:${selectedWarehouse.warehouseId}`;
+      reservedByWarehouse.set(
+        key,
+        (reservedByWarehouse.get(key) ?? 0) + stockUnits,
+      );
+    }
+  }
 
   private async consumeReferralBenefits(
     tx: Prisma.TransactionClient,
@@ -519,18 +717,28 @@ export class FacturasService {
         const percentage = Number(policy.percentage);
         const amount = this.roundMoney(baseProfit * (percentage / 100));
 
-        await tx.referralBenefit.create({
-          data: {
-            beneficiaryClientId,
-            buyerClientId,
-            originInvoiceId,
-            generation,
-            baseProfit,
-            percentage,
+        if (policy.isSocialWork || generation === 4) {
+          await tx.referralSocialContribution.create({
+            data: { buyerClientId, originInvoiceId, generation, baseProfit, percentage, amount },
+          });
+          await this.notificacionesService.createSocialWorkNotification(tx, {
+            invoiceId: originInvoiceId,
             amount,
-            remainingAmount: amount,
-          },
-        });
+          });
+        } else {
+          await tx.referralBenefit.create({
+            data: {
+              beneficiaryClientId,
+              buyerClientId,
+              originInvoiceId,
+              generation,
+              baseProfit,
+              percentage,
+              amount,
+              remainingAmount: amount,
+            },
+          });
+        }
       }
 
       descendantClientId = beneficiaryClientId;
@@ -542,6 +750,8 @@ export class FacturasService {
       productId: number;
       productPriceId?: number;
       quantity: number;
+      warehouseId?: number;
+      unitPrice?: number;
       product: ResolvedInvoiceProduct;
     }>,
   ) {
@@ -551,24 +761,73 @@ export class FacturasService {
         productId: number;
         productPriceId?: number;
         quantity: number;
+        warehouseId?: number;
+        unitPrice?: number;
         product: ResolvedInvoiceProduct;
       }
     >();
 
     // Agrupa líneas repetidas solo cuando usan el mismo producto y precio.
     for (const item of items) {
-      const key = `${item.productId}:${item.productPriceId ?? 'default'}`;
+      const key = `${item.productId}:${item.productPriceId ?? 'default'}:${item.warehouseId ?? 'none'}:${item.unitPrice ?? 'catalog'}`;
       const current = groupedItems.get(key);
 
       groupedItems.set(key, {
         productId: item.productId,
         productPriceId: item.productPriceId,
         quantity: (current?.quantity ?? 0) + item.quantity,
+        warehouseId: item.warehouseId,
+        unitPrice: item.unitPrice,
         product: item.product,
       });
     }
 
     return Array.from(groupedItems.values());
+  }
+
+  private resolveInvoiceWarehouseId(items: Array<{ warehouseId?: number }>) {
+    const ids = [...new Set(items.map((item) => item.warehouseId).filter(Boolean))];
+    return ids.length === 1 ? ids[0] : undefined;
+  }
+
+  private async decrementInvoiceStock(tx: Prisma.TransactionClient, items: Array<{ productId: number; quantity: number; warehouseId?: number; productPriceId?: number; product: ResolvedInvoiceProduct }>) {
+    for (const item of items) {
+      if (!item.warehouseId) continue;
+      const price = item.product.prices.find((candidate) => candidate.id === item.productPriceId);
+      if (!price) continue;
+      const stockUnits = this.convertPriceQuantity(item.quantity * Number(price.quantity), price.unit, item.product, item.product.unit);
+      if (stockUnits === null || !Number.isInteger(stockUnits)) {
+        throw new BadRequestException(`No se puede convertir el empaque del producto ${item.product.name} a inventario`);
+      }
+      const updated = await tx.productWarehouse.updateMany({
+        where: { productId: item.productId, warehouseId: item.warehouseId, quantity: { gte: stockUnits } },
+        data: { quantity: { decrement: stockUnits } },
+      });
+      if (updated.count !== 1) {
+        throw new BadRequestException(`Stock insuficiente de ${item.product.name} en la bodega seleccionada`);
+      }
+    }
+  }
+
+  private convertPriceQuantity(
+    quantity: number,
+    fromUnit: ProductPrice['unit'],
+    product: Pick<ResolvedInvoiceProduct, 'unit' | 'packagingProfile'>,
+    toUnit: ProductPrice['unit'],
+  ) {
+    const packaging = product.packagingProfile;
+    let productUnits = quantity;
+    if (fromUnit === 'PAQUETE') {
+      if (!packaging?.unitsPerPackage) return null;
+      productUnits *= packaging.unitsPerPackage;
+    } else if (fromUnit === 'CAJA') {
+      if (!packaging?.unitsPerPackage || !packaging.packagesPerBox) return null;
+      productUnits *= packaging.unitsPerPackage * packaging.packagesPerBox;
+    }
+    if (fromUnit === 'PAQUETE' || fromUnit === 'CAJA') {
+      return toUnit === product.unit ? productUnits : convertQuantity(productUnits, product.unit, toUnit);
+    }
+    return convertQuantity(quantity, fromUnit, toUnit);
   }
 
   private allocateDiscount(discount: number, subtotals: number[]) {
@@ -619,6 +878,22 @@ export class FacturasService {
 
   private generateConsecutive() {
     return `FAC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  }
+
+  private findSaleablePrice(product: ResolvedInvoiceProduct, productPriceId?: number) {
+    const now = new Date();
+    const isInSaleWindow = (price: ProductPrice) =>
+      price.isActive &&
+      (!price.startsAt || price.startsAt <= now) &&
+      (!price.endsAt || price.endsAt >= now);
+
+    return productPriceId
+      ? product.prices.find(
+          (price) => price.id === productPriceId && isInSaleWindow(price),
+        )
+      : product.prices.find(
+          (price) => price.isDefault && isInSaleWindow(price),
+        );
   }
 
   private ensurePositiveId(id: number) {

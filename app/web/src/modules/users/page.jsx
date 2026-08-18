@@ -23,6 +23,7 @@ const roleOptions = [
 
 const createSchema = z.object({
   clientId: z.number().int().nonnegative('Selecciona un cliente valido').optional(),
+  warehouseId: z.number().int().positive().optional(),
   email: z.string().email('Ingresa un correo valido'),
   password: z.string().min(6, 'Minimo 6 caracteres'),
   role: z.enum(['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR']),
@@ -31,13 +32,14 @@ const createSchema = z.object({
 
 const updateSchema = z.object({
   clientId: z.number().int().nonnegative('Selecciona un cliente valido').optional(),
+  warehouseId: z.number().int().positive().optional(),
   email: z.string().email('Ingresa un correo valido'),
   password: z.string().optional(),
   role: z.enum(['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR']),
   isActive: z.boolean(),
 })
 
-function createUsersConfig(clients) {
+function createUsersConfig(clients, warehouses) {
   const clientsMap = new Map(
     clients.map((client) => [client.id, `${client.firstName} ${client.lastName} · ${client.identification}`]),
   )
@@ -107,6 +109,18 @@ function createUsersConfig(clients) {
         options: roleOptions,
       },
       {
+        name: 'warehouseId',
+        label: 'Bodega asignada',
+        type: 'select',
+        valueType: 'number',
+        placeholder: 'Sin bodega asignada',
+        options: [
+          { value: 0, label: 'Sin bodega asignada' },
+          ...warehouses.map((warehouse) => ({ value: warehouse.id, label: warehouse.location })),
+        ],
+        helpText: 'Para usuarios Bodega, limita el POS a esta ubicación.',
+      },
+      {
         name: 'isActive',
         label: 'Estado activo',
         type: 'switch',
@@ -117,6 +131,7 @@ function createUsersConfig(clients) {
     updateSchema,
     getDefaultValues: (_, record) => ({
       clientId: record?.clientId ?? 0,
+      warehouseId: record?.warehouseId ?? 0,
       email: record?.username ?? '',
       password: '',
       role: record?.role ?? 'CAJERO',
@@ -127,6 +142,9 @@ function createUsersConfig(clients) {
 
       if (!payload.clientId) {
         payload.clientId = null
+      }
+      if (!payload.warehouseId) {
+        payload.warehouseId = null
       }
 
       if (mode === 'edit' && !payload.password) {
@@ -145,6 +163,7 @@ function createUsersConfig(clients) {
         record.username,
         formatRole(record.role),
       clientsMap.get(record.clientId),
+      warehouses.find((warehouse) => warehouse.id === record.warehouseId)?.location,
       record.clientId ? null : 'interno sin cliente',
       String(record.clientId),
     ],
@@ -198,6 +217,11 @@ function createUsersConfig(clients) {
         render: (record) => <Badge variant="outline">{formatRole(record.role)}</Badge>,
       },
       {
+        key: 'warehouse',
+        label: 'Bodega',
+        render: (record) => warehouses.find((warehouse) => warehouse.id === record.warehouseId)?.location ?? 'Sin bodega',
+      },
+      {
         key: 'status',
         label: 'Estado',
         render: (record) => (
@@ -222,6 +246,7 @@ function createUsersConfig(clients) {
             value: clientsMap.get(record.clientId) ?? (record.clientId ? `Cliente #${record.clientId}` : 'Interno sin cliente'),
           },
           { label: 'Rol', value: formatRole(record.role) },
+          { label: 'Bodega asignada', value: warehouses.find((warehouse) => warehouse.id === record.warehouseId)?.location ?? 'Sin bodega' },
           { label: 'Estado', value: getRecordStatus(record) },
         ],
       },
@@ -242,11 +267,15 @@ export function UsersPage() {
     queryKey: ['usuarios-clientes-lookup'],
     queryFn: () => apiClient.getAllPages('/clientes'),
   })
+  const warehousesQuery = useQuery({
+    queryKey: ['usuarios-bodegas-lookup'],
+    queryFn: () => apiClient.getAllPages('/bodegas'),
+  })
 
   return (
     <CrudModulePage
-      config={createUsersConfig(clientsQuery.data ?? [])}
-      lookupsLoading={clientsQuery.isLoading}
+      config={createUsersConfig(clientsQuery.data ?? [], warehousesQuery.data ?? [])}
+      lookupsLoading={clientsQuery.isLoading || warehousesQuery.isLoading}
     />
   )
 }

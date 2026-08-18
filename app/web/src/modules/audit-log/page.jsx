@@ -13,6 +13,7 @@ import { apiClient } from '@/lib/api-client'
 import { formatDate, formatNumber, formatRole } from '@/lib/format'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
 import { LocalPagination } from '@/modules/shared/local-pagination'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 const PAGE_SIZE = 20
 
@@ -24,6 +25,18 @@ const moduleOptions = [
   'PRECIOS_PRODUCTO',
   'INVENTARIO',
   'REFERIDOS',
+  'CLIENTES',
+  'FACTURAS',
+  'BODEGAS',
+]
+
+const actionGroupOptions = [
+  { value: 'TODOS', label: 'Todas las acciones' },
+  { value: 'ELIMINACIONES', label: 'Eliminaciones' },
+  { value: 'CREACIONES', label: 'Creaciones' },
+  { value: 'MODIFICACIONES', label: 'Modificaciones' },
+  { value: 'APROBACIONES', label: 'Aprobaciones' },
+  { value: 'MOVIMIENTOS', label: 'Movimientos' },
 ]
 
 function AuditLogSkeleton() {
@@ -58,6 +71,7 @@ function getActionVariant(action) {
 export function AuditLogPage() {
   const [search, setSearch] = useState('')
   const [module, setModule] = useState('TODOS')
+  const [actionGroup, setActionGroup] = useState('TODOS')
   const [userId, setUserId] = useState('TODOS')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -70,11 +84,12 @@ export function AuditLogPage() {
   })
 
   const logsQuery = useQuery({
-    queryKey: ['auditoria', search, module, userId, startDate, endDate, currentPage],
+    queryKey: ['auditoria', search, module, actionGroup, userId, startDate, endDate, currentPage],
     queryFn: () =>
       apiClient.get('/auditoria', {
         q: search || undefined,
         module: module === 'TODOS' ? undefined : module,
+        actionGroup: actionGroup === 'TODOS' ? undefined : actionGroup,
         userId: userId === 'TODOS' ? undefined : Number(userId),
         startDate: startDate || undefined,
         endDate: endDate || undefined,
@@ -144,10 +159,20 @@ export function AuditLogPage() {
             Historial de acciones
           </CardTitle>
           <CardDescription>
-            Filtra la auditoria por usuario, fecha, modulo y texto libre.
+            Organiza la trazabilidad por tipo de acción para revisar eliminaciones, cambios y movimientos por separado.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
+          <Tabs value={actionGroup} onValueChange={(value) => { setActionGroup(value); setCurrentPage(1) }}>
+            <TabsList className="flex h-auto flex-wrap justify-start gap-1 rounded-2xl p-1">
+              {actionGroupOptions.map((option) => (
+                <TabsTrigger key={option.value} value={option.value} className="rounded-xl px-3 py-2 text-xs">
+                  {option.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+
           <div className="grid gap-3 xl:grid-cols-[minmax(260px,1fr)_180px_220px_180px_180px_auto] xl:items-end">
             <div className="relative">
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -206,6 +231,7 @@ export function AuditLogPage() {
             <Button variant="outline" onClick={() => {
               setSearch('')
               setModule('TODOS')
+              setActionGroup('TODOS')
               setUserId('TODOS')
               setStartDate('')
               setEndDate('')

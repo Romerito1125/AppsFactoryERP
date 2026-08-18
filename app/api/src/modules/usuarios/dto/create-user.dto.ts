@@ -18,6 +18,12 @@ export class CreateUserDto {
   @IsPositive()
   clientId?: number;
 
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  warehouseId?: number;
+
   @IsEmail()
   email: string;
 

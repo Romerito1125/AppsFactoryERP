@@ -1,15 +1,18 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   buildPaginatedResponse,
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { Role } from '../../common/enums/role.enum';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateReferralDto } from './dto/create-referral.dto';
 import { ListReferralsQueryDto } from './dto/list-referrals-query.dto';
@@ -40,6 +43,69 @@ export class ReferralsService {
     return buildPaginatedResponse(data, total, page, limit);
   }
 
+  async getProfitSummary() {
+    const [benefits, socialContributions] = await Promise.all([
+      this.prisma.referralBenefit.findMany({
+        where: { status: { not: 'ANULADO' } },
+        select: { generation: true, amount: true, remainingAmount: true },
+      }),
+      this.prisma.referralSocialContribution.findMany({
+        where: { originInvoice: { status: 'ACTIVA' } },
+        select: { generation: true, amount: true },
+      }),
+    ]);
+
+    const byGeneration = new Map<number, { generated: number; available: number; used: number; socialWork: number }>();
+    const ensureGeneration = (generation: number) => {
+      const current = byGeneration.get(generation);
+      if (current) return current;
+      const created = { generated: 0, available: 0, used: 0, socialWork: 0 };
+      byGeneration.set(generation, created);
+      return created;
+    };
+
+    let generated = 0;
+    let available = 0;
+    let socialWork = 0;
+
+    for (const benefit of benefits) {
+      const amount = Number(benefit.amount);
+      const remaining = Number(benefit.remainingAmount);
+      const current = ensureGeneration(benefit.generation);
+      generated += amount;
+      available += remaining;
+      current.generated += amount;
+      current.available += remaining;
+      current.used += Math.max(0, amount - remaining);
+    }
+
+    for (const contribution of socialContributions) {
+      const amount = Number(contribution.amount);
+      const current = ensureGeneration(contribution.generation);
+      socialWork += amount;
+      current.socialWork += amount;
+    }
+
+    const round = (value: number) => this.roundMoney(value);
+    const totalGenerated = round(generated);
+    const totalAvailable = round(available);
+    const totalSocialWork = round(socialWork);
+
+    return {
+      porEntregar: totalAvailable,
+      descuentoGenerado: totalGenerated,
+      descuentoUtilizado: round(totalGenerated - totalAvailable),
+      obraSocial: totalSocialWork,
+      totalRepartido: round(totalGenerated + totalSocialWork),
+      porGeneracion: [...byGeneration.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([generation, values]) => ({
+          generation,
+          ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, round(value)])),
+        })),
+    };
+  }
+
   async findOne(id: number) {
     this.ensurePositiveId(id);
 
@@ -55,23 +121,31 @@ export class ReferralsService {
     return referral;
   }
 
-  async create(createReferralDto: CreateReferralDto) {
+  async create(createReferralDto: CreateReferralDto, actor?: AuthUser) {
     const { codeUsed, referrerClient, referredClient } =
-      await this.validateReferralRules(createReferralDto);
+      await this.validateReferralRules(createReferralDto, actor);
 
-    return this.prisma.referral.create({
-      data: {
-        referrerClientId: referrerClient.id,
-        referredClientId: referredClient.id,
-        codeUsed,
-      },
-      include: this.referralInclude,
-    });
+    try {
+      return await this.prisma.referral.create({
+        data: {
+          referrerClientId: referrerClient.id,
+          referredClientId: referredClient.id,
+          codeUsed,
+        },
+        include: this.referralInclude,
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('El cliente ya fue registrado como referido');
+      }
+
+      throw error;
+    }
   }
 
-  async validate(validateReferralDto: ValidateReferralDto) {
+  async validate(validateReferralDto: ValidateReferralDto, actor?: AuthUser) {
     const { referrerClient } =
-      await this.validateReferralRules(validateReferralDto);
+      await this.validateReferralRules(validateReferralDto, actor);
 
     return {
       valid: true,
@@ -83,7 +157,11 @@ export class ReferralsService {
     };
   }
 
-  private async validateReferralRules(dto: ValidateReferralDto) {
+  private async validateReferralRules(dto: ValidateReferralDto, actor?: AuthUser) {
+    if (actor?.role === Role.CLIENTE && actor.clientId !== dto.referredClientId) {
+      throw new ForbiddenException('Solo puedes vincular un referido a tu propia cuenta');
+    }
+
     const codeUsed = dto.codeUsed.trim().toUpperCase();
     const referrerClient = await this.prisma.client.findUnique({
       where: { referralCode: codeUsed },
@@ -242,13 +320,16 @@ export class ReferralsService {
           create: {
             generation: policy.generation,
             percentage: policy.percentage,
-            isActive: policy.isActive ?? true,
+            isActive: policy.generation === 4 ? true : policy.isActive ?? true,
+            isSocialWork: policy.generation === 4,
           },
           update: {
             percentage: policy.percentage,
-            ...(policy.isActive === undefined
+            ...(policy.generation === 4 || policy.isActive === undefined
               ? {}
               : { isActive: policy.isActive }),
+            ...(policy.generation === 4 ? { isActive: true } : {}),
+            isSocialWork: policy.generation === 4,
           },
         }),
       ),
@@ -296,8 +377,9 @@ export class ReferralsService {
             generation: policy.generation,
             percentage: policy.percentage,
             isActive: true,
+            isSocialWork: policy.generation === 4,
           },
-          update: {},
+          update: { isSocialWork: policy.generation === 4, ...(policy.generation === 4 ? { isActive: true } : {}) },
         }),
       ),
     );
@@ -333,5 +415,9 @@ export class ReferralsService {
         },
       ],
     };
+  }
+
+  private roundMoney(value: number) {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
   }
 }

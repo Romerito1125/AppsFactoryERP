@@ -44,7 +44,7 @@ export class AuthService {
           password: this.hashPassword(registerDto.password),
           role: Role.CLIENTE,
         },
-        include: { client: true, employee: true },
+        include: this.userInclude,
       });
     });
 
@@ -54,7 +54,7 @@ export class AuthService {
   async login(loginDto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { username: loginDto.email.trim().toLowerCase() },
-      include: { client: true, employee: true },
+      include: this.userInclude,
     });
 
     if (!user || !user.isActive) {
@@ -79,7 +79,7 @@ export class AuthService {
   async profile(authUser: AuthUser) {
     const user = await this.prisma.user.findUnique({
       where: { id: authUser.sub },
-      include: { client: true, employee: true },
+      include: this.userInclude,
     });
 
     if (!user) {
@@ -113,6 +113,7 @@ export class AuthService {
     const payload = {
       sub: user.id,
       clientId: user.clientId,
+      warehouseId: user.warehouseId,
       role: user.role,
       username: user.username,
     };
@@ -126,6 +127,15 @@ export class AuthService {
       role: user.role,
     };
   }
+
+  private readonly userInclude = {
+    client: {
+      include: {
+        referredBy: { select: { id: true } },
+      },
+    },
+    employee: true,
+  } as const;
 
   private hashPassword(password: string) {
     const salt = randomBytes(16).toString('hex');

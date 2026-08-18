@@ -99,6 +99,9 @@ function playNotificationTone() {
 }
 
 function getNotificationRoute(notification) {
+  if (notification.type === 'OBRA_SOCIAL') {
+    return '/referidos'
+  }
   if (notification.type === 'PEDIDO_APP') {
     return '/pedidos-app'
   }
@@ -111,6 +114,9 @@ function getNotificationRoute(notification) {
 }
 
 function getNotificationTypeLabel(notification) {
+  if (notification.type === 'OBRA_SOCIAL') {
+    return 'Obra social'
+  }
   if (notification.type === 'PEDIDO_APP') {
     return 'Pedido app'
   }

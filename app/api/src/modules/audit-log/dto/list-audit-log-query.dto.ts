@@ -18,6 +18,10 @@ export class ListAuditLogQueryDto extends PaginationQueryDto {
   action?: string;
 
   @IsOptional()
+  @IsString()
+  actionGroup?: string;
+
+  @IsOptional()
   @IsDateString()
   startDate?: string;
 

@@ -50,6 +50,8 @@ const invoiceSchema = z.object({
       z.object({
         productId: z.number({ message: 'Selecciona un producto' }).int().positive('Selecciona un producto'),
         productPriceId: z.number().int().positive('Selecciona un precio valido').optional(),
+        warehouseId: z.number().int().positive().optional(),
+        unitPrice: z.number().min(0).optional(),
         quantity: z.number({ message: 'Cantidad obligatoria' }).int().positive('Minimo 1 unidad'),
       }),
     )
@@ -156,14 +158,14 @@ function InvoiceClientSelector({ clients, value, onChange, isLoading }) {
   )
 }
 
-function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, products, productsLoading, onSubmit, isSubmitting }) {
+function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, products, warehouses, onSubmit, isSubmitting }) {
   const queryClient = useQueryClient()
   const form = useForm({
     resolver: zodResolver(invoiceSchema),
     defaultValues: {
       clientId: undefined,
       referralDiscount: 0,
-      items: [{ productId: undefined, productPriceId: undefined, quantity: 1 }],
+      items: [{ productId: undefined, productPriceId: undefined, warehouseId: undefined, unitPrice: undefined, quantity: 1 }],
     },
   })
 
@@ -239,7 +241,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
     form.reset({
       clientId: undefined,
       referralDiscount: 0,
-      items: [{ productId: undefined, productPriceId: undefined, quantity: 1 }],
+      items: [{ productId: undefined, productPriceId: undefined, warehouseId: undefined, unitPrice: undefined, quantity: 1 }],
     })
     setCatalogSearch('')
     setFavoritesOnly(false)
@@ -277,6 +279,14 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
         shouldDirty: true,
         shouldValidate: true,
       })
+      form.setValue(`items.${index}.warehouseId`, product.warehouses?.find((item) => Number(item.quantity ?? 0) > 0)?.warehouseId, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+      form.setValue(`items.${index}.unitPrice`, undefined, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
 
       if (!form.getValues(`items.${index}.quantity`)) {
         form.setValue(`items.${index}.quantity`, 1, {
@@ -309,6 +319,8 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
       append({
         productId: product.id,
         productPriceId: defaultPrice?.id,
+        warehouseId: product.warehouses?.find((item) => Number(item.quantity ?? 0) > 0)?.warehouseId,
+        unitPrice: undefined,
         quantity: 1,
       })
     },
@@ -466,6 +478,8 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
                       append({
                         productId: undefined,
                         productPriceId: undefined,
+                        warehouseId: undefined,
+                        unitPrice: undefined,
                         quantity: 1,
                       })
                       setCatalogTargetIndex(nextIndex)
@@ -489,7 +503,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
                       <div
                         key={itemField.id}
                         className={cn(
-                          'grid gap-3 rounded-2xl border border-border/70 bg-card p-4 md:grid-cols-[1.1fr_1fr_0.45fr_0.8fr_auto] md:items-end',
+                          'grid gap-3 rounded-2xl border border-border/70 bg-card p-4 md:grid-cols-[1.2fr_1fr_0.9fr_0.55fr_0.95fr_auto] md:items-end',
                           catalogTargetIndex === index && 'border-primary/40 ring-2 ring-primary/15',
                         )}
                       >
@@ -557,6 +571,38 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
                           {form.formState.errors.items?.[index]?.productPriceId ? (
                             <p className="text-xs text-destructive">{String(form.formState.errors.items[index].productPriceId.message)}</p>
                           ) : null}
+                          <Label className="mt-1">Precio acordado</Label>
+                          <Controller
+                            name={`items.${index}.unitPrice`}
+                            control={form.control}
+                            render={({ field }) => (
+                              <Input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={field.value ?? ''}
+                                placeholder={selectedProductPrice ? String(selectedProductPrice.price) : 'Precio del catálogo'}
+                                onChange={(event) => field.onChange(event.target.value === '' ? undefined : Number(event.target.value))}
+                              />
+                            )}
+                          />
+                          <p className="text-[11px] text-muted-foreground">Vacío = precio registrado.</p>
+                        </div>
+
+                        <div className="grid gap-2">
+                          <Label>Bodega de salida</Label>
+                          <Controller
+                            name={`items.${index}.warehouseId`}
+                            control={form.control}
+                            render={({ field }) => (
+                              <NativeSelect value={field.value ? String(field.value) : ''} onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : undefined)}>
+                                <option value="">Sin bodega</option>
+                                {warehouses.filter((warehouse) => warehouse.isActive !== false).map((warehouse) => (
+                                  <option key={warehouse.id} value={String(warehouse.id)}>{warehouse.location}</option>
+                                ))}
+                              </NativeSelect>
+                            )}
+                          />
                         </div>
 
                         <div className="grid gap-2">
@@ -577,7 +623,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
                           <p className="text-xs text-muted-foreground">Vista previa</p>
                           <p className="mt-1 font-medium">
                             {selectedProductPrice
-                              ? formatCurrency(Number(selectedProductPrice.price ?? 0) * Number(watchedItems[index]?.quantity ?? 0))
+                              ? formatCurrency(Number(watchedItems[index]?.unitPrice ?? selectedProductPrice.price ?? 0) * Number(watchedItems[index]?.quantity ?? 0))
                               : 'Selecciona producto'}
                           </p>
                           {selectedProduct ? (
@@ -672,9 +718,9 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
                   <span>{formatNumber(catalogProducts.length)} productos</span>
                 </div>
 
-                <ScrollArea className="h-[440px] pr-4">
+                <ScrollArea className="h-[560px] pr-4">
                   {catalogProducts.length ? (
-                    <div className="grid gap-3 sm:grid-cols-2">{catalogProductCards}</div>
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{catalogProductCards}</div>
                   ) : (
                     <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-6 text-center">
                       <p className="font-medium text-foreground">No hay productos para este filtro</p>
@@ -786,6 +832,11 @@ export function InvoicesPage() {
     queryFn: () => apiClient.getAllPages('/productos'),
     enabled: createOpen,
   })
+  const warehousesQuery = useQuery({
+    queryKey: ['facturas-bodegas'],
+    queryFn: () => apiClient.getAllPages('/bodegas'),
+    enabled: createOpen,
+  })
 
   const createMutation = useMutation({
     mutationFn: (payload) => apiClient.post('/facturas', payload),
@@ -813,6 +864,13 @@ export function InvoicesPage() {
       queryClient.invalidateQueries({ queryKey: ['facturas-productos'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard-overview'] })
       setCancelInvoice(null)
+    },
+  })
+  const validateMutation = useMutation({
+    mutationFn: (id) => apiClient.patch(`/facturas/${id}/validar`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['facturas'] })
+      queryClient.invalidateQueries({ queryKey: ['factura-detalle'] })
     },
   })
 
@@ -885,6 +943,14 @@ export function InvoicesPage() {
     await toast.promise(cancelMutation.mutateAsync(cancelInvoice.id), {
       loading: 'Anulando factura...',
       success: 'Factura anulada',
+      error: (error) => error.message,
+    })
+  }
+
+  async function handleValidateInvoice(invoice) {
+    await toast.promise(validateMutation.mutateAsync(invoice.id), {
+      loading: 'Validando factura...',
+      success: 'Factura validada correctamente',
       error: (error) => error.message,
     })
   }
@@ -994,7 +1060,10 @@ export function InvoicesPage() {
                     <TableCell>{formatNumber(invoice.items.length)}</TableCell>
                     <TableCell>{formatCurrency(invoice.total)}</TableCell>
                     <TableCell>
-                      <Badge variant={invoice.status === 'ACTIVA' ? 'default' : 'secondary'}>{formatInvoiceStatus(invoice.status)}</Badge>
+                      <div className="flex flex-wrap gap-1">
+                        <Badge variant={invoice.status === 'ACTIVA' ? 'default' : 'secondary'}>{formatInvoiceStatus(invoice.status)}</Badge>
+                        {invoice.validationStatus === 'PENDIENTE' ? <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-300">Pendiente de validar</Badge> : null}
+                      </div>
                     </TableCell>
                     <TableCell>{formatDate(invoice.createdAt)}</TableCell>
                     <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
@@ -1006,6 +1075,9 @@ export function InvoicesPage() {
                         </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-48">
                             <DropdownMenuItem onClick={() => setDetailInvoice(invoice)}>Ver detalle</DropdownMenuItem>
+                            {invoice.validationStatus === 'PENDIENTE' ? (
+                              <DropdownMenuItem onClick={() => handleValidateInvoice(invoice)}>Validar factura</DropdownMenuItem>
+                            ) : null}
                            <DropdownMenuItem onClick={() => handleInvoicePdfView(invoice)}>
                              Ver PDF
                            </DropdownMenuItem>
@@ -1058,6 +1130,7 @@ export function InvoicesPage() {
         clientsLoading={clientsQuery.isLoading}
         products={products}
         productsLoading={productsQuery.isLoading}
+        warehouses={warehousesQuery.data ?? []}
         isSubmitting={createMutation.isPending}
         onSubmit={handleCreateInvoice}
       />
@@ -1105,6 +1178,11 @@ export function InvoicesPage() {
                 <FileDown className="mr-2 size-4" />
                 Descargar PDF
               </Button>
+              {selectedDetailInvoice.validationStatus === 'PENDIENTE' ? (
+                <Button type="button" variant="outline" onClick={() => handleValidateInvoice(selectedDetailInvoice)}>
+                  Validar factura
+                </Button>
+              ) : null}
             </div>
 
             <div className="rounded-2xl border border-border/70 bg-card p-4">

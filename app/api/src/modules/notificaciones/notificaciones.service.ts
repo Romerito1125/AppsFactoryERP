@@ -75,6 +75,20 @@ export class NotificacionesService {
     });
   }
 
+  async createSocialWorkNotification(
+    tx: Prisma.TransactionClient,
+    payload: { invoiceId: number; amount: number },
+  ) {
+    return tx.notification.create({
+      data: {
+        type: NotificationType.OBRA_SOCIAL,
+        title: 'Aporte para obra social',
+        message: `La generación 4 de referidos destinó $${Number(payload.amount).toFixed(2)} a utilidades generales para obra social. Este valor no se entrega como beneficio al cliente.`,
+        invoiceId: payload.invoiceId,
+      },
+    });
+  }
+
   private resolveNotificationType(source: InvoiceSource) {
     if (source === InvoiceSource.APP_MOVIL) {
       return NotificationType.PEDIDO_APP;

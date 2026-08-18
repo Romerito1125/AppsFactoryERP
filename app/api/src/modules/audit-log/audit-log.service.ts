@@ -101,6 +101,7 @@ export class AuditLogService {
 
   private buildWhere(query: ListAuditLogQueryDto): Prisma.AuditLogWhereInput {
     const where: Prisma.AuditLogWhereInput = {};
+    const and: Prisma.AuditLogWhereInput[] = [];
     const q = query.q?.trim();
 
     if (query.userId) {
@@ -115,6 +116,18 @@ export class AuditLogService {
       where.action = query.action.trim().toUpperCase();
     }
 
+    const actionGroupPrefixes: Record<string, string[]> = {
+      ELIMINACIONES: ['DEACTIVATE', 'DELETE', 'REMOVE', 'CANCEL', 'ANUL'],
+      CREACIONES: ['CREATE', 'ENTRY'],
+      MODIFICACIONES: ['UPDATE', 'CHANGE', 'ADJUSTMENT'],
+      APROBACIONES: ['APPROVE', 'VALIDATE'],
+      MOVIMIENTOS: ['EXIT', 'TRANSFER', 'ADJUSTMENT'],
+    };
+    const prefixes = actionGroupPrefixes[query.actionGroup?.trim().toUpperCase() ?? ''];
+    if (prefixes?.length) {
+      and.push({ OR: prefixes.map((prefix) => ({ action: { startsWith: prefix } })) });
+    }
+
     if (query.startDate || query.endDate) {
       where.createdAt = {
         ...(query.startDate
@@ -127,15 +140,17 @@ export class AuditLogService {
     }
 
     if (q) {
-      where.OR = [
+      and.push({ OR: [
         { username: { contains: q, mode: 'insensitive' } },
         { module: { contains: q, mode: 'insensitive' } },
         { action: { contains: q, mode: 'insensitive' } },
         { entityType: { contains: q, mode: 'insensitive' } },
         { entityLabel: { contains: q, mode: 'insensitive' } },
         { description: { contains: q, mode: 'insensitive' } },
-      ];
+      ] });
     }
+
+    if (and.length) where.AND = and;
 
     return where;
   }

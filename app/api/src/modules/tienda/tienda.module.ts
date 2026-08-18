@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
-import { SharedProductsModule } from '../../shared/products/products.module';
-import { NotificacionesModule } from '../notificaciones/notificaciones.module';
+import { AuthModule } from '../auth/auth.module';
+import { FacturasModule } from '../facturas/facturas.module';
 import { TiendaController } from './tienda.controller';
 import { TiendaService } from './tienda.service';
 
 @Module({
-  imports: [NotificacionesModule, SharedProductsModule],
+  imports: [AuthModule, FacturasModule],
   controllers: [TiendaController],
   providers: [TiendaService],
 })
