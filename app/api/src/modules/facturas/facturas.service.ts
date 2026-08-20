@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import {
   InvoiceSource,
-  DiscountType,
   Prisma,
   Product,
   ProductCost,
@@ -28,10 +27,12 @@ import { ProductResolverService } from '../../shared/products/product-resolver.s
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { ListInvoicesQueryDto } from './dto/list-invoices-query.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
+import { resolveOfferPricing } from '../ofertas/offer-pricing.util';
 
 type ResolvedInvoiceProduct = Product & {
   prices: ProductPrice[];
   costs: ProductCost[];
+  tags: Array<{ tagId: number }>;
   packagingProfile?: {
     unitsPerPackage: number | null;
     packagesPerBox: number | null;
@@ -145,6 +146,7 @@ export class FacturasService {
             orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
             take: 1,
           },
+          tags: { select: { tagId: true } },
           packagingProfile: true,
         })) as ResolvedInvoiceProduct;
 
@@ -170,11 +172,10 @@ export class FacturasService {
       const groupedItems = this.groupItems(resolvedItems);
 
       const now = new Date();
-      const specialOffers = await tx.offer.findMany({
+      const activeOffers = await tx.offer.findMany({
         where: {
           isActive: true,
           deletedAt: null,
-          discountType: DiscountType.PRECIO_ESPECIAL,
           AND: [
             { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
             { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
@@ -182,6 +183,8 @@ export class FacturasService {
               OR: [
                 { clients: { some: { clientId: client.id } } },
                 { products: { some: { productId: { in: groupedItems.map((item) => item.productId) } } } },
+                { productTypes: { some: { productTypeId: { in: groupedItems.map((item) => item.product.productTypeId) } } } },
+                { tags: { some: { tagId: { in: groupedItems.flatMap((item) => item.product.tags.map((tag) => tag.tagId)) } } } },
                 {
                   clients: { none: {} },
                   products: { none: {} },
@@ -192,7 +195,12 @@ export class FacturasService {
             },
           ],
         },
-        include: { clients: true, products: true },
+        include: {
+          clients: true,
+          products: true,
+          productTypes: true,
+          tags: true,
+        },
       });
 
       const grossInvoiceItems = groupedItems.map((item) => {
@@ -217,24 +225,33 @@ export class FacturasService {
           );
         }
 
-        const specialPrices = item.unitPrice === undefined
-          ? specialOffers
-              .filter((offer) =>
-                (!offer.clients.length && !offer.products.length) ||
-                offer.clients.some((target) => target.clientId === client.id) ||
-                offer.products.some((target) => target.productId === product.id),
-              )
-              .map((offer) => Number(offer.discountValue))
-              .filter((price) => Number.isFinite(price) && price >= 0)
-          : [];
-        const unitPrice = item.unitPrice ?? Math.min(Number(productPrice.price), ...(specialPrices.length ? specialPrices : [Number(productPrice.price)]));
+        const catalogUnitPrice = Number(productPrice.price);
+        const offerPricing =
+          item.unitPrice === undefined
+            ? resolveOfferPricing(catalogUnitPrice, activeOffers, {
+                clientId: client.id,
+                productId: product.id,
+                productTypeId: product.productTypeId,
+                tagIds: product.tags.map((tag) => tag.tagId),
+                quantity: item.quantity,
+              })
+            : {
+                discountAmount: 0,
+                effectiveUnitPrice: item.unitPrice,
+              };
+        const unitPrice = Number(
+          offerPricing.effectiveUnitPrice ?? catalogUnitPrice,
+        );
         if (!Number.isFinite(unitPrice) || unitPrice < 0) {
           throw new BadRequestException(
             `El precio acordado para ${product.name} no es vÃ¡lido`,
           );
         }
         const taxRate = Number(product.taxRate);
-        const grossSubtotal = this.roundMoney(unitPrice * item.quantity);
+        const grossSubtotal = this.roundMoney(
+          catalogUnitPrice * item.quantity,
+        );
+        const netSubtotal = this.roundMoney(unitPrice * item.quantity);
         const currentCost = product.costs[0];
         let unitCost: number | null = null;
 
@@ -263,6 +280,8 @@ export class FacturasService {
           unitPrice,
           taxRate,
           grossSubtotal,
+          netSubtotal,
+          offerDiscountAmount: this.roundMoney(grossSubtotal - netSubtotal),
           unitCost,
         };
       });
@@ -271,27 +290,37 @@ export class FacturasService {
         await this.assignStoreWarehouses(tx, grossInvoiceItems);
       }
 
-      const grossSubtotal = this.roundMoney(
-        grossInvoiceItems.reduce((sum, item) => sum + item.grossSubtotal, 0),
-      );
       const referralDiscount = this.roundMoney(
         createInvoiceDto.referralDiscount ?? 0,
       );
 
-      if (referralDiscount > grossSubtotal) {
+      const subtotalBeforeReferral = this.roundMoney(
+        grossInvoiceItems.reduce((sum, item) => sum + item.netSubtotal, 0),
+      );
+
+      if (referralDiscount > subtotalBeforeReferral) {
         throw new BadRequestException(
           'El descuento de referidos no puede superar el subtotal de la factura',
         );
       }
 
-      const discountAmounts = this.allocateDiscount(
+      const referralDiscountAmounts = this.allocateDiscount(
         referralDiscount,
-        grossInvoiceItems.map((item) => item.grossSubtotal),
+        grossInvoiceItems.map((item) => item.netSubtotal),
       );
       const invoiceItems = grossInvoiceItems.map((item, index) => {
-        const { product: _product, ...invoiceItem } = item;
-        const discountAmount = discountAmounts[index];
-        const subtotal = this.roundMoney(item.grossSubtotal - discountAmount);
+        const {
+          product: _product,
+          offerDiscountAmount,
+          netSubtotal: _netSubtotal,
+          ...invoiceItem
+        } = item;
+        const discountAmount = this.roundMoney(
+          offerDiscountAmount + referralDiscountAmounts[index],
+        );
+        const subtotal = this.roundMoney(
+          item.netSubtotal - referralDiscountAmounts[index],
+        );
         const taxAmount = this.roundMoney(subtotal * (item.taxRate / 100));
         const total = this.roundMoney(subtotal + taxAmount);
         const profitAmount =
@@ -321,6 +350,12 @@ export class FacturasService {
         Math.max(
           0,
           invoiceItems.reduce((sum, item) => sum + item.profitAmount, 0),
+        ),
+      );
+      const offerDiscountTotal = this.roundMoney(
+        grossInvoiceItems.reduce(
+          (sum, item) => sum + item.offerDiscountAmount,
+          0,
         ),
       );
       await this.decrementInvoiceStock(tx, grossInvoiceItems);
@@ -379,7 +414,7 @@ export class FacturasService {
           subtotal,
           taxes,
           total,
-          discountTotal: referralDiscount,
+          discountTotal: this.roundMoney(offerDiscountTotal + referralDiscount),
           referralDiscount,
           items: { create: invoiceItems },
           ...(delivery

@@ -285,7 +285,7 @@ function AppSidebar() {
                                 'group/link flex min-h-[2.85rem] items-center gap-2.5 rounded-xl px-2.5 py-2 transition-all duration-200 relative overflow-hidden',
                                 isActive
                                   ? 'bg-linear-to-r from-sidebar-primary to-sidebar-primary/95 text-sidebar-primary-foreground shadow-md shadow-primary/25'
-                                  : 'text-sidebar-foreground/90 hover:bg-white/6 hover:text-sidebar-foreground',
+                                  : '!text-sidebar-foreground hover:bg-white/6 hover:!text-sidebar-foreground',
                                 'group-data-[state=collapsed]:size-10! group-data-[state=collapsed]:min-h-0! group-data-[state=collapsed]:p-0! group-data-[state=collapsed]:justify-center group-data-[state=collapsed]:rounded-xl'
                               )
                             }
@@ -300,14 +300,15 @@ function AppSidebar() {
                                 )}>
                                   <Icon className={cn(
                                     "size-4 transition-transform duration-200 group-data-[state=collapsed]:size-5",
-                                    !isActive && "group-hover/link:scale-110"
+                                    !isActive && "group-hover/link:scale-110",
+                                    isActive ? "!text-sidebar-primary-foreground" : "!text-sidebar-foreground"
                                   )} />
                                 </div>
                                 <div className="flex min-w-0 flex-1 flex-col items-start gap-0.5 transition-all duration-200 group-data-[state=collapsed]:hidden">
-                                  <span className="text-sm font-medium leading-none">{item.label}</span>
+                                  <span className={cn("text-sm font-medium leading-none", isActive ? "!text-sidebar-primary-foreground" : "!text-sidebar-foreground")}>{item.label}</span>
                                   <span className={cn(
-                                    "truncate text-[10px] leading-none",
-                                    isActive ? "text-sidebar-primary-foreground/75" : "text-sidebar-foreground/68"
+                                    "truncate !text-[10px] leading-none",
+                                    isActive ? "!text-sidebar-primary-foreground/75" : "!text-sidebar-foreground/75"
                                   )}>
                                     {item.description}
                                   </span>

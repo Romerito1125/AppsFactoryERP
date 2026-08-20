@@ -14,6 +14,7 @@ import { ApplicableOffersDto } from './dto/applicable-offers.dto';
 import { CreateOfferDto } from './dto/create-offer.dto';
 import { FilterOffersDto } from './dto/filter-offers.dto';
 import { UpdateOfferDto } from './dto/update-offer.dto';
+import { resolveOfferPricing } from './offer-pricing.util';
 
 @Injectable()
 export class OfertasService {
@@ -229,37 +230,27 @@ export class OfertasService {
         const productTagIds = product.tags.map(
           (productTag) => productTag.tagId,
         );
-        const applicableOffers = offers.filter((offer) =>
-          this.offerAppliesToItem(
-            offer,
-            applicableOffersDto.clientId,
-            product.id,
-            product.productTypeId,
-            productTagIds,
-            item.quantity,
-          ),
-        );
-        const evaluatedOffers = applicableOffers.map((offer) => ({
+        const pricing = resolveOfferPricing(item.unitPrice, offers, {
+          clientId: applicableOffersDto.clientId,
+          productId: product.id,
+          productTypeId: product.productTypeId,
+          tagIds: productTagIds,
+          quantity: item.quantity,
+        });
+        const evaluatedOffers = pricing.evaluatedOffers.map((offer) => ({
           id: offer.id,
           name: offer.name,
           discountType: offer.discountType,
           discountValue: String(offer.discountValue),
           isStackable: offer.isStackable,
-          estimatedDiscount: this.calculateDiscount(offer, item.quantity, item.unitPrice),
+          estimatedDiscount: offer.estimatedDiscount,
           specialPrice:
             offer.discountType === DiscountType.PRECIO_ESPECIAL
               ? Number(offer.discountValue)
               : null,
         }));
-        const stackableOffers = evaluatedOffers.filter(
-          (offer) => offer.isStackable,
-        );
-        const bestSingleOffer = evaluatedOffers.reduce<any>(
-          (best, offer) =>
-            !best || offer.estimatedDiscount > best.estimatedDiscount
-              ? offer
-              : best,
-          undefined,
+        const selectedOfferIds = new Set(
+          pricing.selectedOffers.map((offer) => offer.id),
         );
 
         return {
@@ -267,21 +258,11 @@ export class OfertasService {
           productPriceId: item.productPriceId,
           quantity: item.quantity,
           applicableOffers: evaluatedOffers,
-          selectedOffers:
-            stackableOffers.length &&
-            stackableOffers.reduce(
-              (sum, offer) => sum + offer.estimatedDiscount,
-              0,
-            ) > (bestSingleOffer?.estimatedDiscount ?? 0)
-              ? stackableOffers
-              : bestSingleOffer
-              ? [bestSingleOffer]
-              : [],
-          effectiveUnitPrice: this.resolveEffectiveUnitPrice(
-            item.unitPrice,
-            applicableOffers,
-            item.quantity,
+          discountAmount: pricing.discountAmount,
+          selectedOffers: evaluatedOffers.filter((offer) =>
+            selectedOfferIds.has(offer.id),
           ),
+          effectiveUnitPrice: pricing.effectiveUnitPrice,
         };
       }),
     };
@@ -305,59 +286,6 @@ export class OfertasService {
       ),
       tags: offer.tags.map((offerTag) => offerTag.tag),
     };
-  }
-
-  private offerAppliesToItem(
-    offer,
-    clientId: number,
-    productId: number,
-    productTypeId: number,
-    tagIds: number[],
-    quantity: number,
-  ) {
-    if (offer.minimumProductQuantity && quantity < offer.minimumProductQuantity)
-      return false;
-    if (offer.maximumProductQuantity && quantity > offer.maximumProductQuantity)
-      return false;
-    // Sin targets significa oferta general; con targets basta coincidir con uno.
-    const hasTargets =
-      offer.clients.length > 0 ||
-      offer.products.length > 0 ||
-      offer.productTypes.length > 0 ||
-      offer.tags.length > 0;
-
-    if (!hasTargets) return true;
-
-    return (
-      offer.clients.some((offerClient) => offerClient.clientId === clientId) ||
-      offer.products.some(
-        (offerProduct) => offerProduct.productId === productId,
-      ) ||
-      offer.productTypes.some(
-        (offerProductType) => offerProductType.productTypeId === productTypeId,
-      ) ||
-      offer.tags.some((offerTag) => tagIds.includes(offerTag.tagId))
-    );
-  }
-
-  private calculateDiscount(offer, quantity: number, unitPrice?: number) {
-    const value = Number(offer.discountValue);
-    if (offer.discountType === DiscountType.PORCENTAJE) return value;
-    if (offer.discountType === DiscountType.PRECIO_ESPECIAL) {
-      return unitPrice === undefined
-        ? 0
-        : Math.max(0, (unitPrice - value) * quantity);
-    }
-    return value * quantity;
-  }
-
-  private resolveEffectiveUnitPrice(itemPrice: number | undefined, offers, quantity: number) {
-    if (itemPrice === undefined || !offers.length) return itemPrice ?? null;
-    const specialPrices = offers
-      .filter((offer) => offer.discountType === DiscountType.PRECIO_ESPECIAL)
-      .map((offer) => Number(offer.discountValue))
-      .filter((price) => Number.isFinite(price) && price >= 0);
-    return specialPrices.length ? Math.min(itemPrice, ...specialPrices) : itemPrice;
   }
 
   private buildOfferClients(ids?: number[]) {

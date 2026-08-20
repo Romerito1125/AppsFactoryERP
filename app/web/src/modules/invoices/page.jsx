@@ -1229,8 +1229,9 @@ export function InvoicesPage() {
                   <p className="mt-1 text-sm font-medium text-foreground">{formatCurrency(selectedDetailInvoice.taxes)}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-muted-foreground">Descuento de red</p>
-                  <p className="mt-1 text-sm font-medium text-foreground">{formatCurrency(selectedDetailInvoice.referralDiscount ?? 0)}</p>
+                  <p className="text-xs text-muted-foreground">Descuento total</p>
+                  <p className="mt-1 text-sm font-medium text-foreground">{formatCurrency(selectedDetailInvoice.discountTotal ?? selectedDetailInvoice.referralDiscount ?? 0)}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">Red: {formatCurrency(selectedDetailInvoice.referralDiscount ?? 0)}</p>
                 </div>
               </div>
             </div>

@@ -41,7 +41,7 @@ function buildInvoicePdf(invoice) {
       { label: 'Creada por', value: getInvoiceActorLabel(invoice), help: formatInvoiceSource(invoice.source) },
       { label: 'Subtotal', value: formatCurrency(invoice.subtotal), help: 'Base antes de impuestos.' },
       { label: 'Total', value: formatCurrency(invoice.total), help: `IVA ${formatCurrency(invoice.taxes)}` },
-      { label: 'Descuento de red', value: formatCurrency(invoice.referralDiscount ?? 0), help: 'Aplicado en la venta.' },
+      { label: 'Descuento total', value: formatCurrency(invoice.discountTotal ?? invoice.referralDiscount ?? 0), help: `Red ${formatCurrency(invoice.referralDiscount ?? 0)} · ofertas incluidas.` },
       { label: 'Estado', value: formatInvoiceStatus(invoice.status), help: `Items: ${formatNumber(invoice.items?.length ?? 0)}` },
     ],
     startY,

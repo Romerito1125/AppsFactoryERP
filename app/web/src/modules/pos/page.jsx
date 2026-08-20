@@ -264,16 +264,29 @@ export function PosPage() {
     },
   })
 
+  const pricingClientId =
+    selectedClientNumericId ??
+    (posQuery.data?.clients ?? []).find((client) =>
+      ['CONSUMIDOR-FINAL', 'CONSUMIDOR_FINAL'].includes(client.identification),
+    )?.id ??
+    null
+
   const referralBalanceQuery = useQuery({
     queryKey: ['pos-cliente-estadisticas-referidos', selectedClientNumericId],
     queryFn: () => apiClient.get(`/clientes/${selectedClientNumericId}/estadisticas-referidos`),
     enabled: Boolean(selectedClientNumericId),
   })
 
-  const specialOffersQuery = useQuery({
-    queryKey: ['pos-ofertas-precio-especial', selectedClientNumericId, cart.map((item) => `${item.productId}:${item.quantity}`).join('|')],
+  const offersQuery = useQuery({
+    queryKey: [
+      'pos-ofertas',
+      pricingClientId,
+      cart
+        .map((item) => `${item.productId}:${item.productPriceId}:${item.quantity}:${item.customUnitPrice ?? 'catalog'}`)
+        .join('|'),
+    ],
     queryFn: () => apiClient.post('/ofertas/aplicables', {
-      clientId: selectedClientNumericId,
+      clientId: pricingClientId,
       items: cart.map((item) => {
         const price = getDefaultPrice(item.product)
         return {
@@ -284,7 +297,7 @@ export function PosPage() {
         }
       }),
     }),
-    enabled: Boolean(selectedClientNumericId && cart.length),
+    enabled: Boolean(pricingClientId && cart.length),
     staleTime: 15_000,
   })
 
@@ -437,11 +450,13 @@ export function PosPage() {
       let targetClientId = activeClientId
 
       if (activeClientId === 'NO_CLIENT') {
-        let consumerFinal = clients.find((c) => c.identification === 'CONSUMIDOR_FINAL')
+        let consumerFinal = clients.find((c) =>
+          ['CONSUMIDOR-FINAL', 'CONSUMIDOR_FINAL'].includes(c.identification),
+        )
         if (!consumerFinal) {
           try {
             consumerFinal = await apiClient.post('/clientes', {
-              identification: 'CONSUMIDOR_FINAL',
+              identification: 'CONSUMIDOR-FINAL',
               firstName: 'Consumidor',
               lastName: 'Final',
               clientType: 'MINORISTA',
@@ -545,8 +560,11 @@ export function PosPage() {
             return null
           }
 
-          const specialPrice = specialOffersQuery.data?.items?.find((entry) => entry.productId === item.productId)?.effectiveUnitPrice
-          const salePrice = item.customUnitPrice ?? (specialPrice !== null && specialPrice !== undefined ? Number(specialPrice) : Number(price.price))
+          const offerPricing = offersQuery.data?.items?.find((entry) =>
+            entry.productId === item.productId && entry.productPriceId === item.productPriceId,
+          )
+          const effectiveUnitPrice = offerPricing?.effectiveUnitPrice
+          const salePrice = item.customUnitPrice ?? (effectiveUnitPrice !== null && effectiveUnitPrice !== undefined ? Number(effectiveUnitPrice) : Number(price.price))
           const subtotal = salePrice * item.quantity
           const taxes = subtotal * (Number(product.taxRate ?? 0) / 100)
           const total = subtotal + taxes
@@ -559,10 +577,11 @@ export function PosPage() {
             subtotal,
             taxes,
             total,
+            offerDiscount: item.customUnitPrice === undefined ? Number(offerPricing?.discountAmount ?? 0) : 0,
           }
         })
         .filter(Boolean),
-    [cart, specialOffersQuery.data],
+    [cart, offersQuery.data],
   )
 
   const totals = cartItems.reduce(
@@ -570,10 +589,11 @@ export function PosPage() {
       accumulator.subtotal += item.subtotal
       accumulator.taxes += item.taxes
       accumulator.total += item.total
+      accumulator.offerDiscount += item.offerDiscount
       accumulator.items += item.quantity
       return accumulator
     },
-    { subtotal: 0, taxes: 0, total: 0, items: 0 },
+    { subtotal: 0, taxes: 0, total: 0, offerDiscount: 0, items: 0 },
   )
 
   const availableReferralDiscount = Number(referralBalanceQuery.data?.descuentoDisponible ?? 0)
@@ -1141,6 +1161,12 @@ export function PosPage() {
                     <span className="text-muted-foreground">IVA</span>
                     <span className="font-medium text-foreground">{formatCurrency(totals.taxes)}</span>
                   </div>
+                  {totals.offerDiscount > 0 ? (
+                    <div className="flex items-center justify-between text-emerald-600 dark:text-emerald-400">
+                      <span>Descuento de oferta</span>
+                      <span className="font-medium">-{formatCurrency(totals.offerDiscount)}</span>
+                    </div>
+                  ) : null}
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Descuento red</span>
                     <span className="font-medium text-foreground">-{formatCurrency(Number(referralDiscount || 0))}</span>
