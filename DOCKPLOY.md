@@ -35,4 +35,15 @@ WEB_PORT=9080
 - El frontend consume la API por `/api` en el mismo dominio.
 - Nginx hace proxy interno a `api:7502`, así que no hace falta exponer la API públicamente.
 - `DATABASE_URL` debe existir en Dockploy y apuntar a tu base de datos ya creada.
-- El contenedor `api` no ejecuta migraciones al arrancar; solo usa la base de datos existente.
+- El contenedor `api` levanta directamente NestJS en `7502`; no ejecuta semillas demo ni migraciones en cada reinicio.
+- Antes del primer despliegue o después de agregar una migración, ejecuta una tarea puntual en el servicio `api`:
+
+  ```bash
+  bun run db:deploy
+  ```
+
+- La carga de datos demo es opcional y debe ejecutarse manualmente cuando se necesite:
+
+  ```bash
+  bun run db:seed:full-demo
+  ```
