@@ -11,32 +11,12 @@ const apiUrl = `http://127.0.0.1:${apiPort}/`
 
 let shuttingDown = false
 let webProcess = null
+let apiProcess = null
 
-const apiProcess = spawnProcess('api', apiDir)
-
-apiProcess.on('exit', (code) => {
-  if (!shuttingDown && !webProcess) {
-    process.exit(code ?? 1)
-  }
+startDev().catch((error) => {
+  console.error(`[dev] ${error.message}`)
+  shutdown(1)
 })
-
-waitForApi(apiUrl, apiProcess)
-  .then(() => {
-    if (shuttingDown) {
-      return
-    }
-
-    webProcess = spawnProcess('web', webDir)
-    webProcess.on('exit', (code) => {
-      if (!shuttingDown) {
-        shutdown(code ?? 0)
-      }
-    })
-  })
-  .catch((error) => {
-    console.error(`[dev] ${error.message}`)
-    shutdown(1)
-  })
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => shutdown(0))
@@ -72,6 +52,33 @@ function spawnProcess(label, cwd) {
   return child
 }
 
+async function startDev() {
+  if (await isApiReady(apiUrl)) {
+    console.warn(`[dev] Ya existe una API activa en ${apiUrl}; se reutilizará para este frontend.`)
+  } else {
+    apiProcess = spawnProcess('api', apiDir)
+    apiProcess.on('exit', (code) => {
+      if (!shuttingDown) {
+        console.error(`[dev] La API terminó inesperadamente (código ${code ?? 1}).`)
+        shutdown(code ?? 1)
+      }
+    })
+
+    await waitForApi(apiUrl, apiProcess)
+  }
+
+  if (shuttingDown) {
+    return
+  }
+
+  webProcess = spawnProcess('web', webDir)
+  webProcess.on('exit', (code) => {
+    if (!shuttingDown) {
+      shutdown(code ?? 0)
+    }
+  })
+}
+
 function pipeOutput(stream, label) {
   stream.setEncoding('utf8')
   stream.on('data', (chunk) => {
@@ -92,20 +99,47 @@ async function waitForApi(url, apiProcess) {
       throw new Error(`La API terminó antes de quedar lista (código ${apiProcess.exitCode})`)
     }
 
-    try {
-      const response = await fetch(url)
-      if (response.ok) {
-        console.log(`[dev] API lista en ${url}`)
-        return
-      }
-    } catch {
-      // La API sigue arrancando.
+    if (await isApiReady(url)) {
+      console.log(`[dev] API lista en ${url}`)
+      return
     }
 
     await new Promise((resolve) => setTimeout(resolve, 1500))
   }
 
   throw new Error(`La API no respondió en ${url} dentro del tiempo esperado`)
+}
+
+async function isApiReady(url) {
+  try {
+    const healthResponse = await fetch(new URL('health', url))
+    if (healthResponse.ok) {
+      return true
+    }
+
+    // Permite reutilizar una API anterior durante la transición al endpoint /health.
+    const rootResponse = await fetch(url)
+    return rootResponse.ok && (await rootResponse.text()).includes('Hello World')
+  } catch {
+    return false
+  }
+}
+
+function terminateProcessTree(child) {
+  if (!child || child.exitCode !== null || !child.pid) {
+    return
+  }
+
+  if (process.platform === 'win32') {
+    const killer = spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    killer.on('error', () => child.kill())
+    return
+  }
+
+  child.kill('SIGTERM')
 }
 
 function shutdown(code) {
@@ -116,10 +150,8 @@ function shutdown(code) {
   shuttingDown = true
 
   for (const child of [webProcess, apiProcess]) {
-    if (child && child.exitCode === null) {
-      child.kill('SIGTERM')
-    }
+    terminateProcessTree(child)
   }
 
-  setTimeout(() => process.exit(code), 200)
+  setTimeout(() => process.exit(code), 500)
 }

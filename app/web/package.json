@@ -4,10 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "bun node_modules/vite/bin/vite.js",
+    "build": "bun node_modules/vite/bin/vite.js build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "bun node_modules/vite/bin/vite.js preview"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.9",
