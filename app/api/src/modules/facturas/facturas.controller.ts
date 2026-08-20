@@ -40,7 +40,7 @@ export class FacturasController {
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.CAJERO, Role.VENDEDOR, Role.BODEGA, Role.CONTADOR)
+  @Roles(Role.ADMIN, Role.CAJERO, Role.VENDEDOR, Role.CONTADOR)
   create(
     @Body() createInvoiceDto: CreateInvoiceDto,
     @Req() request: AuthRequest,
@@ -49,6 +49,8 @@ export class FacturasController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.CAJERO, Role.VENDEDOR, Role.CONTADOR)
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateInvoiceDto: UpdateInvoiceDto,

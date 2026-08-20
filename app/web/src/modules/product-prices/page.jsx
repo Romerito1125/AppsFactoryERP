@@ -452,6 +452,8 @@ export function ProductPricesPage() {
 
   const prices = pricesQuery.data?.data ?? []
   const totalItems = Number(pricesQuery.data?.total ?? 0)
+  const activeTotal = Number(pricesQuery.data?.activeTotal ?? prices.filter((price) => price.isActive).length)
+  const defaultTotal = Number(pricesQuery.data?.defaultTotal ?? prices.filter((price) => price.isDefault).length)
   const totalPages = Math.max(1, Number(pricesQuery.data?.totalPages ?? 1))
   const products = productsQuery.data ?? []
   const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
@@ -466,13 +468,13 @@ export function ProductPricesPage() {
     },
     {
       label: 'Precios activos',
-      value: formatNumber(prices.filter((price) => price.isActive).length),
+      value: formatNumber(activeTotal),
       help: 'Precios disponibles para uso operativo.',
       icon: Star,
     },
     {
       label: 'Precios default',
-      value: formatNumber(prices.filter((price) => price.isDefault).length),
+      value: formatNumber(defaultTotal),
       help: 'Precio principal por producto para facturacion.',
       icon: TagIcon,
     },

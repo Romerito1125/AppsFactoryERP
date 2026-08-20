@@ -22,16 +22,21 @@ import {
   PurchaseReportQueryDto,
 } from './dto/purchase-report-query.dto';
 import { UpdatePurchaseOrderDto } from './dto/update-purchase-order.dto';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { Role } from '../../common/enums/role.enum';
 
 @Injectable()
 export class ComprasService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(query: ListPurchaseOrdersQueryDto) {
+  async findAll(query: ListPurchaseOrdersQueryDto, authUser?: AuthUser) {
+    const warehouseId = this.resolveWarehouseScope(query.warehouseId, authUser);
+    const todayRange = authUser?.role === Role.BODEGA ? this.buildTodayRange() : undefined;
     const where: Prisma.PurchaseOrderWhereInput = {
-      status: query.status,
+      status: authUser?.role === Role.BODEGA ? PurchaseOrderStatus.ORDENADA : query.status,
       providerId: query.providerId,
-      warehouseId: query.warehouseId,
+      warehouseId,
+      ...(todayRange ? { expectedAt: todayRange } : {}),
       orderedAt: this.buildDateRange(
         query.dateFrom ?? query.startDate,
         query.dateTo ?? query.endDate,
@@ -53,7 +58,22 @@ export class ComprasService {
     return buildPaginatedResponse(data, total, page, limit);
   }
 
-  async findOne(id: number) {
+  async getPendingToday(authUser: AuthUser) {
+    const warehouseId = this.resolveWarehouseScope(undefined, authUser);
+    const data = await this.prisma.purchaseOrder.findMany({
+      where: {
+        status: PurchaseOrderStatus.ORDENADA,
+        warehouseId,
+        expectedAt: this.buildTodayRange(),
+      },
+      include: this.detailInclude,
+      orderBy: [{ expectedAt: 'asc' }, { id: 'asc' }],
+    });
+
+    return buildPaginatedResponse(data, data.length, 1, Math.max(1, data.length));
+  }
+
+  async findOne(id: number, authUser?: AuthUser) {
     this.ensurePositiveId(id);
     const purchaseOrder = await this.prisma.purchaseOrder.findUnique({
       where: { id },
@@ -63,6 +83,7 @@ export class ComprasService {
     if (!purchaseOrder) {
       throw new NotFoundException('Orden de compra no encontrada');
     }
+    this.ensureWarehouseAccess(purchaseOrder.warehouseId, authUser);
 
     return purchaseOrder;
   }
@@ -321,14 +342,15 @@ export class ComprasService {
     });
   }
 
-  async getSummary(query: PurchaseReportQueryDto) {
+  async getSummary(query: PurchaseReportQueryDto, authUser?: AuthUser) {
+    const warehouseId = this.resolveWarehouseScope(query.warehouseId, authUser);
     const orderedAt = this.buildDateRange(
       query.dateFrom ?? query.startDate,
       query.dateTo ?? query.endDate,
     );
     const baseWhere: Prisma.PurchaseOrderWhereInput = {
       providerId: query.providerId,
-      warehouseId: query.warehouseId,
+      warehouseId,
       orderedAt,
     };
     const where: Prisma.PurchaseOrderWhereInput = {
@@ -467,7 +489,7 @@ export class ComprasService {
       onTimeRate: this.onTimeRate(timeRows),
       filters: {
         providerId: query.providerId ?? null,
-        warehouseId: query.warehouseId ?? null,
+        warehouseId: warehouseId ?? null,
         dateFrom: query.dateFrom ?? query.startDate ?? null,
         dateTo: query.dateTo ?? query.endDate ?? null,
         granularity: query.granularity ?? PurchaseReportGranularity.MES,
@@ -757,6 +779,14 @@ export class ComprasService {
     };
   }
 
+  private buildTodayRange() {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return { gte: start, lt: end };
+  }
+
   private buildTimeline(
     rows: Array<{
       receivedAt: Date | null;
@@ -830,6 +860,20 @@ export class ComprasService {
   private ensurePositiveId(id: number) {
     if (id <= 0) {
       throw new BadRequestException('El id debe ser un número positivo');
+    }
+  }
+
+  private resolveWarehouseScope(requestedWarehouseId?: number, authUser?: AuthUser) {
+    if (authUser?.role !== Role.BODEGA) return requestedWarehouseId;
+    if (!authUser.warehouseId) {
+      throw new BadRequestException('El usuario de bodega no tiene una bodega asignada');
+    }
+    return authUser.warehouseId;
+  }
+
+  private ensureWarehouseAccess(warehouseId: number, authUser?: AuthUser) {
+    if (authUser?.role === Role.BODEGA && warehouseId !== authUser.warehouseId) {
+      throw new NotFoundException('Orden de compra no encontrada');
     }
   }
 }

@@ -61,6 +61,10 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
+    if (user.role === Role.BODEGA && !user.warehouseId) {
+      throw new UnauthorizedException('El usuario de bodega no tiene una bodega asignada');
+    }
+
     if (user.client && !user.client.isActive) {
       throw new UnauthorizedException('Credenciales inválidas');
     }

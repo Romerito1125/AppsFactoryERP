@@ -120,7 +120,7 @@ function App() {
             <Route
               path="/pos"
               element={
-                <ProtectedRoute allowedRoles={['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR']}>
+                <ProtectedRoute allowedRoles={['ADMIN', 'CAJERO', 'VENDEDOR', 'CONTADOR']}>
                   <div className="min-h-screen bg-[radial-gradient(circle_at_top,#eff7ff,transparent_42%),linear-gradient(180deg,rgba(255,255,255,0.98),rgba(245,247,250,1))] px-4 py-6 dark:bg-[radial-gradient(circle_at_top,#132235,transparent_35%),linear-gradient(180deg,rgba(12,18,28,0.96),rgba(8,12,20,1))] md:px-6 md:py-8">
                     <PosPage />
                   </div>
@@ -129,7 +129,7 @@ function App() {
             />
             <Route
               element={
-                <ProtectedRoute allowedRoles={['ADMIN', 'CONTADOR']}>
+                <ProtectedRoute allowedRoles={['ADMIN', 'CONTADOR', 'BODEGA']}>
                   <AdminLayout />
                 </ProtectedRoute>
               }
@@ -156,7 +156,7 @@ function App() {
               <Route path="/etiquetas" element={<ProtectedRoute allowedRoles={['ADMIN']}><TagsPage /></ProtectedRoute>} />
               <Route path="/bodegas" element={<ProtectedRoute allowedRoles={['ADMIN']}><WarehousesPage /></ProtectedRoute>} />
               <Route path="/facturas" element={<ProtectedRoute allowedRoles={['ADMIN']}><InvoicesPage /></ProtectedRoute>} />
-              <Route path="/compras" element={<ProtectedRoute allowedRoles={['ADMIN']}><PurchasesPage /></ProtectedRoute>} />
+              <Route path="/compras" element={<ProtectedRoute allowedRoles={['ADMIN', 'BODEGA']}><PurchasesPage /></ProtectedRoute>} />
               <Route path="/reportes" element={<ProtectedRoute allowedRoles={['ADMIN', 'CONTADOR']}><ReportsPage /></ProtectedRoute>} />
             </Route>
           </Routes>

@@ -1,5 +1,11 @@
 import { ClientType } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 
 export class UpdateClientDto {
   @IsOptional()
@@ -28,4 +34,13 @@ export class UpdateClientDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  password?: string;
 }

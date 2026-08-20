@@ -184,6 +184,7 @@ export class TiendaService {
       where: { isActive: true },
       orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
     },
+    packagingProfile: true,
     warehouses: {
       where: { warehouse: { isActive: true, deletedAt: null } },
       select: { quantity: true },
@@ -262,6 +263,15 @@ export class TiendaService {
       productType,
       tags,
       currentPrice: Number(currentPrice?.price ?? 0),
+      currentPriceUnit: currentPrice?.unit ?? null,
+      currentPriceQuantity: Number(currentPrice?.quantity ?? 1),
+      packagingProfile: product.packagingProfile
+        ? {
+            unitsPerPackage: product.packagingProfile.unitsPerPackage,
+            packagesPerBox: product.packagingProfile.packagesPerBox,
+            saleByUnitOnly: product.packagingProfile.saleByUnitOnly,
+          }
+        : null,
       defaultPriceId: currentPrice?.id ?? null,
       taxRate: Number(product.taxRate),
       stock: product.warehouses.reduce((sum, item) => sum + item.quantity, 0),

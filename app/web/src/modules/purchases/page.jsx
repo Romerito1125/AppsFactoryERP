@@ -3,7 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
-import { Box, CalendarClock, ClipboardList, MoreHorizontal, PackageCheck, Plus, Search, Trash2, Truck, WalletCards } from 'lucide-react'
+import { Box, CalendarClock, ClipboardList, Download, MoreHorizontal, PackageCheck, Plus, Search, Share2, Trash2, Truck, WalletCards } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -31,6 +31,8 @@ import { apiClient } from '@/lib/api-client'
 import { formatCurrency, formatDate, formatNumber } from '@/lib/format'
 import { LocalPagination } from '@/modules/shared/local-pagination'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { useAuth } from '@/auth/auth-context'
+import { downloadPurchasePdf, sharePurchaseOnWhatsApp } from './purchase-pdf'
 
 const PAGE_SIZE = 20
 
@@ -520,7 +522,7 @@ function PurchaseFormDialog({
   )
 }
 
-function PurchaseDetail({ purchase, onAction }) {
+function PurchaseDetail({ purchase, onAction, readOnly = false }) {
   return (
     <div className="grid gap-4">
       <div className="rounded-2xl border border-border/70 bg-card p-4">
@@ -595,7 +597,18 @@ function PurchaseDetail({ purchase, onAction }) {
         </div>
       </div>
 
-      {purchase.status === 'BORRADOR' ? (
+      {!readOnly ? (
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Button variant="outline" onClick={() => downloadPurchasePdf(purchase)}>
+            <Download className="mr-2 size-4" /> Descargar PDF
+          </Button>
+          <Button variant="outline" onClick={() => sharePurchaseOnWhatsApp(purchase)}>
+            <Share2 className="mr-2 size-4" /> Compartir por WhatsApp
+          </Button>
+        </div>
+      ) : null}
+
+      {!readOnly && purchase.status === 'BORRADOR' ? (
         <div className="grid gap-2 sm:grid-cols-2">
           <Button onClick={() => onAction('order', purchase)}>
             <Truck className="mr-2 size-4" />
@@ -609,7 +622,7 @@ function PurchaseDetail({ purchase, onAction }) {
           </Button>
         </div>
       ) : null}
-      {purchase.status === 'ORDENADA' ? (
+      {!readOnly && purchase.status === 'ORDENADA' ? (
         <div className="grid gap-2 sm:grid-cols-2">
           <Button onClick={() => onAction('receive', purchase)}>
             <PackageCheck className="mr-2 size-4" />
@@ -624,8 +637,82 @@ function PurchaseDetail({ purchase, onAction }) {
   )
 }
 
+function WarehouseIncomingView({ purchases, detailId, detailQuery, onSelect, onClose }) {
+  return (
+    <div className="grid gap-6">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <Badge className="mb-3 bg-primary/12 text-primary hover:bg-primary/12">Bodega · Solo lectura</Badge>
+          <h2 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">Llegadas de hoy</h2>
+          <p className="mt-2 max-w-3xl text-sm text-muted-foreground md:text-base">
+            Consulta lo que está programado para llegar hoy a tu bodega. Este usuario no puede crear, modificar ni recibir compras.
+          </p>
+        </div>
+        <Badge variant="outline" className="w-fit rounded-full px-3 py-1">
+          {formatNumber(purchases.length)} {purchases.length === 1 ? 'orden' : 'ordenes'} pendientes
+        </Badge>
+      </div>
+
+      <Card className="border-border/70 bg-card/94 shadow-sm shadow-primary/5">
+        <CardHeader>
+          <CardTitle>Pedidos que llegan hoy</CardTitle>
+          <CardDescription>Solo se muestran órdenes emitidas, pendientes de llegada y asignadas a esta bodega.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {purchases.length ? (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {purchases.map((purchase) => (
+                <button
+                  key={purchase.id}
+                  type="button"
+                  onClick={() => onSelect(purchase.id)}
+                  className="rounded-2xl border border-border/70 bg-muted/10 p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-primary">{purchase.consecutive}</p>
+                      <p className="mt-1 text-sm font-medium text-foreground">{getProviderName(purchase)}</p>
+                    </div>
+                    <CalendarClock className="size-5 text-primary" />
+                  </div>
+                  <div className="mt-4 grid gap-2 text-xs text-muted-foreground">
+                    <span>Llegada: {purchase.expectedAt ? formatDate(purchase.expectedAt) : 'Hoy'}</span>
+                    <span>Productos: {formatNumber(purchase.items?.length ?? purchase.itemsCount ?? 0)}</span>
+                    <span>Unidades: {formatNumber((purchase.items ?? []).reduce((sum, item) => sum + Number(item.quantity ?? 0), 0))}</span>
+                  </div>
+                  <p className="mt-4 text-xs font-medium text-primary">Ver detalle de llegada</p>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-10 text-center">
+              <CalendarClock className="mx-auto size-8 text-muted-foreground" />
+              <p className="mt-3 font-medium text-foreground">No hay llegadas programadas para hoy</p>
+              <p className="mt-1 text-sm text-muted-foreground">Cuando una orden sea emitida para esta bodega y tenga fecha de hoy, aparecerá aquí.</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <ModuleDetailsDrawer
+        open={Boolean(detailId)}
+        onOpenChange={(open) => !open && onClose()}
+        title={detailQuery.data?.consecutive ?? 'Detalle de llegada'}
+        description={detailQuery.data ? getProviderName(detailQuery.data) : 'Cargando información...'}
+        badge={detailQuery.data ? { label: 'Pendiente de llegada', variant: 'secondary' } : null}
+      >
+        {detailQuery.isLoading ? <Skeleton className="h-52 rounded-2xl" /> : null}
+        {detailQuery.isError ? <div className="rounded-2xl border border-destructive/25 bg-destructive/5 p-4 text-sm text-destructive">{detailQuery.error.message}</div> : null}
+        {detailQuery.data ? <PurchaseDetail purchase={detailQuery.data} readOnly /> : null}
+      </ModuleDetailsDrawer>
+    </div>
+  )
+}
+
 export function PurchasesPage() {
   const queryClient = useQueryClient()
+  const { user } = useAuth()
+  const isWarehouseViewer = user?.role === 'BODEGA'
   const [search, setSearch] = useState('')
   const deferredSearch = useDeferredValue(search)
   const [status, setStatus] = useState('TODAS')
@@ -640,18 +727,20 @@ export function PurchasesPage() {
   const [pendingAction, setPendingAction] = useState(null)
 
   const purchasesQuery = useQuery({
-    queryKey: ['compras', status, deferredSearch, providerId, warehouseId, startDate, endDate, currentPage],
+    queryKey: ['compras', isWarehouseViewer ? 'pendientes-hoy' : status, deferredSearch, providerId, warehouseId, startDate, endDate, currentPage],
     queryFn: () =>
-      apiClient.get('/compras', {
-        status: status === 'TODAS' ? undefined : status,
-        q: deferredSearch,
-        providerId: providerId || undefined,
-        warehouseId: warehouseId || undefined,
-        startDate: startDate || undefined,
-        endDate: endDate || undefined,
-        page: currentPage,
-        limit: PAGE_SIZE,
-      }),
+      isWarehouseViewer
+        ? apiClient.get('/compras/pendientes-hoy')
+        : apiClient.get('/compras', {
+            status: status === 'TODAS' ? undefined : status,
+            q: deferredSearch,
+            providerId: providerId || undefined,
+            warehouseId: warehouseId || undefined,
+            startDate: startDate || undefined,
+            endDate: endDate || undefined,
+            page: currentPage,
+            limit: PAGE_SIZE,
+          }),
     placeholderData: (previousData) => previousData,
   })
   const reportQuery = useQuery({
@@ -664,19 +753,22 @@ export function PurchasesPage() {
         endDate: endDate || undefined,
       }),
     retry: false,
+    enabled: !isWarehouseViewer,
   })
   const providersQuery = useQuery({
     queryKey: ['compras-proveedores'],
     queryFn: () => apiClient.getAllPages('/proveedores', { estado: 'todos' }),
+    enabled: !isWarehouseViewer,
   })
   const warehousesQuery = useQuery({
     queryKey: ['compras-bodegas'],
     queryFn: () => apiClient.getAllPages('/bodegas', { estado: 'todos' }),
+    enabled: !isWarehouseViewer,
   })
   const productsQuery = useQuery({
     queryKey: ['compras-productos'],
     queryFn: () => apiClient.getAllPages('/productos', { estado: 'todos' }),
-    enabled: createOpen || Boolean(editPurchase),
+    enabled: !isWarehouseViewer && (createOpen || Boolean(editPurchase)),
   })
   const detailQuery = useQuery({
     queryKey: ['compras', 'detalle', detailId],
@@ -733,8 +825,19 @@ export function PurchasesPage() {
   const startItem = totalItems === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1
   const endItem = Math.min(startItem + purchases.length - 1, totalItems)
   const providers = providersQuery.data ?? []
-  const warehouses = warehousesQuery.data ?? []
+  const warehouses = (warehousesQuery.data ?? []).filter((warehouse) => user?.role !== 'BODEGA' || warehouse.id === Number(user.warehouseId))
   const products = productsQuery.data ?? []
+  if (isWarehouseViewer) {
+    return (
+      <WarehouseIncomingView
+        purchases={purchases}
+        detailId={detailId}
+        detailQuery={detailQuery}
+        onSelect={setDetailId}
+        onClose={() => setDetailId(null)}
+      />
+    )
+  }
   const report = reportQuery.data
   const visibleDrafts = purchases.filter((purchase) => purchase.status === 'BORRADOR').length
   const visibleOrdered = purchases.filter((purchase) => purchase.status === 'ORDENADA').length

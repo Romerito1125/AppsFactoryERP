@@ -896,6 +896,7 @@ enum InvoiceSource {
 enum DiscountType {
   PORCENTAJE
   MONTO_FIJO
+  PRECIO_ESPECIAL
 }
 
 enum DeliveryStatus {

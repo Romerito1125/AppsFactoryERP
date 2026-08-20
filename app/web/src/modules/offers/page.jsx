@@ -53,7 +53,7 @@ const offerSchema = z
   .object({
     name: z.string().min(2, 'Minimo 2 caracteres'),
     description: z.string().optional(),
-    discountType: z.enum(['PORCENTAJE']),
+    discountType: z.enum(['PORCENTAJE', 'MONTO_FIJO', 'PRECIO_ESPECIAL']),
     discountValue: z.number({ message: 'Descuento obligatorio' }).positive('Debe ser mayor a cero'),
     startsAt: z.string().optional(),
     endsAt: z.string().optional(),
@@ -151,7 +151,7 @@ function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, i
     () => ({
       name: offer?.name ?? '',
       description: offer?.description ?? '',
-      discountType: 'PORCENTAJE',
+      discountType: offer?.discountType ?? 'PRECIO_ESPECIAL',
       discountValue: offer?.discountValue ? Number(offer.discountValue) : undefined,
       startsAt: offer?.startsAt ? String(offer.startsAt).slice(0, 10) : '',
       endsAt: offer?.endsAt ? String(offer.endsAt).slice(0, 10) : '',
@@ -232,8 +232,21 @@ function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, i
             </div>
 
             <div className="grid gap-2">
-              <Label>Tipo de descuento</Label>
-              <Input value="Porcentaje" disabled />
+              <Label>Tipo de oferta</Label>
+              <Controller
+                name="discountType"
+                control={form.control}
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="PRECIO_ESPECIAL">Precio especial</SelectItem>
+                      <SelectItem value="PORCENTAJE">Porcentaje</SelectItem>
+                      <SelectItem value="MONTO_FIJO">Monto fijo legado</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              />
             </div>
 
             <div className="grid gap-2 md:col-span-2">
@@ -246,11 +259,24 @@ function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, i
           {step === 'rules' ? (
           <div className="grid gap-4 md:grid-cols-2">
             <div className="grid gap-2">
-              <Label>Valor del descuento %</Label>
+              <Controller
+                name="discountType"
+                control={form.control}
+                render={({ field }) => (
+                  <div className="grid gap-2 md:col-span-2 rounded-2xl border border-primary/15 bg-primary/5 p-3 text-sm text-muted-foreground">
+                    {field.value === 'PRECIO_ESPECIAL'
+                      ? 'El valor será el precio final por unidad para los productos/clientes seleccionados.'
+                      : field.value === 'MONTO_FIJO'
+                        ? 'El valor se conserva como descuento fijo para las ofertas existentes.'
+                        : 'El valor será un porcentaje aplicado sobre el precio vigente.'}
+                  </div>
+                )}
+              />
+              <Label>{form.watch('discountType') === 'PRECIO_ESPECIAL' ? 'Precio especial por unidad' : form.watch('discountType') === 'MONTO_FIJO' ? 'Descuento fijo' : 'Valor del descuento %'}</Label>
               <Input
                 type="number"
                 min="1"
-                max="100"
+                max={form.watch('discountType') === 'PORCENTAJE' ? '100' : undefined}
                 {...form.register('discountValue', { setValueAs: (value) => Number(value) })}
               />
               {form.formState.errors.discountValue ? (
@@ -406,9 +432,13 @@ function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, i
 }
 
 function formatDiscount(offer) {
-  return offer.discountType === 'PORCENTAJE'
-    ? `${formatNumber(offer.discountValue)}%`
-    : formatCurrency(offer.discountValue)
+  if (offer.discountType === 'PRECIO_ESPECIAL') {
+    return `Precio especial · ${formatCurrency(offer.discountValue)}`
+  }
+
+  return offer.discountType === 'MONTO_FIJO'
+    ? `Descuento fijo · ${formatCurrency(offer.discountValue)}`
+    : `${formatNumber(offer.discountValue)}%`
 }
 
 function renderTargets(offer) {

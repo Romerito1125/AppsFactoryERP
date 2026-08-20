@@ -12,13 +12,37 @@ import {
 } from '@/lib/format'
 import { CrudModulePage } from '@/modules/shared/crud-module-page'
 
-const clientSchema = z.object({
+const optionalEmailSchema = z.union([
+  z.literal(''),
+  z.string().email('Ingresa un correo valido'),
+])
+const optionalPasswordSchema = z.union([
+  z.literal(''),
+  z.string().min(6, 'Minimo 6 caracteres'),
+])
+
+const clientFieldsSchema = z.object({
   identification: z.string().min(5, 'Minimo 5 caracteres'),
   firstName: z.string().min(2, 'Minimo 2 caracteres'),
   lastName: z.string().min(2, 'Minimo 2 caracteres'),
   clientType: z.enum(['MAYORISTA', 'MINORISTA']),
   phone: z.string().optional(),
   address: z.string().optional(),
+  email: optionalEmailSchema,
+  password: optionalPasswordSchema,
+})
+
+const createClientSchema = clientFieldsSchema.superRefine((values, context) => {
+  const hasEmail = Boolean(values.email)
+  const hasPassword = Boolean(values.password)
+
+  if (hasEmail !== hasPassword) {
+    context.addIssue({
+      code: 'custom',
+      path: [hasEmail ? 'password' : 'email'],
+      message: 'Ingresa correo y contraseña para crear el acceso de la app.',
+    })
+  }
 })
 
 const clientTypeOptions = [
@@ -36,8 +60,8 @@ const clientsConfig = {
   createButtonLabel: 'Nuevo cliente',
   createTitle: 'Crear cliente',
   editTitle: 'Actualizar cliente',
-  createDescription: 'Registra un cliente con su informacion base para ventas.',
-  editDescription: 'Edita datos de contacto, identificacion o estado del cliente.',
+  createDescription: 'Registra un cliente con su informacion base y, si quieres, su acceso a la app.',
+  editDescription: 'Edita datos del cliente y su acceso a la app.',
   submitCreateLabel: 'Crear cliente',
   submitEditLabel: 'Guardar cambios',
   tableTitle: 'Base de clientes',
@@ -74,9 +98,22 @@ const clientsConfig = {
       rows: 3,
       fullWidth: true,
     },
+    {
+      name: 'email',
+      label: 'Correo para la app (opcional)',
+      placeholder: 'cliente@correo.com',
+      autoComplete: 'email',
+    },
+    {
+      name: 'password',
+      label: 'Contraseña de la app (opcional)',
+      type: 'password',
+      placeholder: '******',
+      autoComplete: 'new-password',
+    },
   ],
-  createSchema: clientSchema,
-  updateSchema: clientSchema,
+  createSchema: createClientSchema,
+  updateSchema: clientFieldsSchema,
   getDefaultValues: (_, record) => ({
     identification: record?.identification ?? '',
     firstName: record?.firstName ?? '',
@@ -84,9 +121,20 @@ const clientsConfig = {
     clientType: record?.clientType ?? 'MINORISTA',
     phone: record?.phone ?? '',
     address: record?.address ?? '',
+    email: record?.user?.username ?? '',
+    password: '',
   }),
   prepareValues: (mode, values) => {
-    return { ...values }
+    const payload = { ...values }
+
+    if (!payload.email) {
+      delete payload.email
+    }
+    if (!payload.password) {
+      delete payload.password
+    }
+
+    return payload
   },
   fetchRecords: ({ status, search, page, limit }) =>
     apiClient.get('/clientes', { estado: toApiStatus(status), q: search, page, limit }),
@@ -101,6 +149,7 @@ const clientsConfig = {
     record.phone,
     record.address,
     record.referralCode,
+    record.user?.username,
   ],
   getSummaryCards: ({ rawRecords }) => {
     const activeCount = rawRecords.filter((record) => record.isActive).length
@@ -152,6 +201,15 @@ const clientsConfig = {
       ),
     },
     {
+      key: 'appAccess',
+      label: 'App',
+      render: (record) => (
+        <Badge variant={record.user?.isActive ? 'default' : 'secondary'}>
+          {record.user ? 'Con acceso' : 'Sin acceso'}
+        </Badge>
+      ),
+    },
+    {
       key: 'status',
       label: 'Estado',
       render: (record) => (
@@ -174,6 +232,7 @@ const clientsConfig = {
         { label: 'Tipo', value: formatClientType(record.clientType) },
         { label: 'Telefono', value: record.phone ?? 'Sin telefono' },
         { label: 'Direccion', value: record.address ?? 'Sin direccion' },
+        { label: 'Acceso app', value: record.user?.username ?? 'Sin acceso' },
         { label: 'Estado', value: getRecordStatus(record) },
       ],
     },

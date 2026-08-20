@@ -16,6 +16,21 @@ function buildReportPdf(reportConfig) {
     meta: reportConfig.meta,
   })
 
+  if (reportConfig.semaphoreColor) {
+    const colors = {
+      VERDE: [16, 185, 129],
+      AMARILLO: [245, 158, 11],
+      ROJO: [239, 68, 68],
+    }
+    const color = colors[reportConfig.semaphoreColor] ?? colors.VERDE
+    doc.setFillColor(...color)
+    doc.circle(doc.internal.pageSize.getWidth() - 18, 16, 3, 'F')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(...color)
+    doc.text(`Semaforo: ${reportConfig.semaphoreColor}`, doc.internal.pageSize.getWidth() - 14, 17, { align: 'right' })
+  }
+
   const metricsY = reportConfig.metrics?.length ? addMetricsGrid(doc, reportConfig.metrics, startY) : startY
 
   addSectionTable(doc, {

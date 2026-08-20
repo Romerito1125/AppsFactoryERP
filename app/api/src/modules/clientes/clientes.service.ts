@@ -4,6 +4,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Role } from '@prisma/client';
+import { randomBytes, scryptSync } from 'crypto';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
 import {
   buildPaginatedResponse,
@@ -31,7 +33,13 @@ export class ClientesService {
     const { page, limit, skip, take } = resolvePagination(filter);
     const [total, data] = await Promise.all([
       this.prisma.client.count({ where }),
-      this.prisma.client.findMany({ where, orderBy: { id: 'asc' }, skip, take }),
+      this.prisma.client.findMany({
+        where,
+        orderBy: { id: 'asc' },
+        skip,
+        take,
+        include: this.clientInclude,
+      }),
     ]);
 
     return buildPaginatedResponse(data, total, page, limit);
@@ -40,7 +48,10 @@ export class ClientesService {
   async findOne(id: number) {
     this.ensurePositiveId(id);
 
-    const client = await this.prisma.client.findUnique({ where: { id } });
+    const client = await this.prisma.client.findUnique({
+      where: { id },
+      include: this.clientInclude,
+    });
 
     if (!client) {
       throw new NotFoundException('Cliente no encontrado');
@@ -50,6 +61,8 @@ export class ClientesService {
   }
 
   async create(createClientDto: CreateClientDto, actor?: AuthUser) {
+    const { email, password, ...clientData } = createClientDto;
+    const credentials = this.resolveCreateCredentials(email, password);
     const existingClient = await this.prisma.client.findUnique({
       where: { identification: createClientDto.identification },
     });
@@ -58,7 +71,36 @@ export class ClientesService {
       throw new ConflictException('La identificación ya existe');
     }
 
-    const client = await this.prisma.client.create({ data: createClientDto });
+    if (credentials.email) {
+      const existingUser = await this.prisma.user.findUnique({
+        where: { username: credentials.email },
+      });
+
+      if (existingUser) {
+        throw new ConflictException('El correo ya existe');
+      }
+    }
+
+    const client = await this.prisma.$transaction(async (tx) => {
+      const createdClient = await tx.client.create({ data: clientData });
+
+      if (credentials.email && credentials.password) {
+        await tx.user.create({
+          data: {
+            clientId: createdClient.id,
+            username: credentials.email,
+            password: this.hashPassword(credentials.password),
+            role: Role.CLIENTE,
+            isActive: true,
+          },
+        });
+      }
+
+      return tx.client.findUniqueOrThrow({
+        where: { id: createdClient.id },
+        include: this.clientInclude,
+      });
+    });
     await this.auditLogService.log({
       actor,
       module: 'CLIENTES',
@@ -67,14 +109,21 @@ export class ClientesService {
       entityId: client.id,
       entityLabel: `${client.firstName} ${client.lastName}`,
       description: `Creo el cliente ${client.firstName} ${client.lastName}`,
-      metadata: { clientType: client.clientType, identification: client.identification },
+      metadata: {
+        clientType: client.clientType,
+        identification: client.identification,
+        appAccessCreated: Boolean(credentials.email),
+      },
     });
     return client;
   }
 
   async update(id: number, updateClientDto: UpdateClientDto, actor?: AuthUser) {
     this.ensurePositiveId(id);
-    await this.findOne(id);
+    const current = await this.findOne(id);
+    const { email, password, ...clientData } = updateClientDto;
+    const normalizedEmail = email?.trim().toLowerCase() || undefined;
+    const hasPassword = Boolean(password);
 
     if (updateClientDto.identification) {
       const existingClient = await this.prisma.client.findUnique({
@@ -86,7 +135,52 @@ export class ClientesService {
       }
     }
 
-    const client = await this.prisma.client.update({ where: { id }, data: updateClientDto });
+    if (normalizedEmail) {
+      const existingUser = await this.prisma.user.findUnique({
+        where: { username: normalizedEmail },
+      });
+
+      if (existingUser && existingUser.id !== current.user?.id) {
+        throw new ConflictException('El correo ya existe');
+      }
+    }
+
+    if (!current.user && (normalizedEmail !== undefined || hasPassword) && (!normalizedEmail || !password)) {
+      throw new BadRequestException(
+        'Para crear el acceso de la app debes indicar correo y contraseña',
+      );
+    }
+
+    const client = await this.prisma.$transaction(async (tx) => {
+      await tx.client.update({ where: { id }, data: clientData });
+
+      if (current.user) {
+        if (normalizedEmail || hasPassword) {
+          await tx.user.update({
+            where: { id: current.user.id },
+            data: {
+              ...(normalizedEmail ? { username: normalizedEmail } : {}),
+              ...(password ? { password: this.hashPassword(password) } : {}),
+            },
+          });
+        }
+      } else if (normalizedEmail && password) {
+        await tx.user.create({
+          data: {
+            clientId: id,
+            username: normalizedEmail,
+            password: this.hashPassword(password),
+            role: Role.CLIENTE,
+            isActive: true,
+          },
+        });
+      }
+
+      return tx.client.findUniqueOrThrow({
+        where: { id },
+        include: this.clientInclude,
+      });
+    });
     await this.auditLogService.log({
       actor,
       module: 'CLIENTES',
@@ -95,7 +189,10 @@ export class ClientesService {
       entityId: client.id,
       entityLabel: `${client.firstName} ${client.lastName}`,
       description: `Actualizo el cliente ${client.firstName} ${client.lastName}`,
-      metadata: { changedFields: Object.keys(updateClientDto) },
+      metadata: {
+        changedFields: Object.keys(updateClientDto),
+        appAccessUpdated: Boolean(normalizedEmail || hasPassword),
+      },
     });
     return client;
   }
@@ -230,6 +327,35 @@ export class ClientesService {
       throw new BadRequestException('El id debe ser un número positivo');
     }
   }
+
+  private resolveCreateCredentials(email?: string, password?: string) {
+    const normalizedEmail = email?.trim().toLowerCase() || undefined;
+
+    if ((normalizedEmail && !password) || (!normalizedEmail && password)) {
+      throw new BadRequestException(
+        'Para crear el acceso de la app debes indicar correo y contraseña',
+      );
+    }
+
+    return { email: normalizedEmail, password };
+  }
+
+  private hashPassword(password: string) {
+    const salt = randomBytes(16).toString('hex');
+    const hash = scryptSync(password, salt, 64).toString('hex');
+
+    return `${salt}:${hash}`;
+  }
+
+  private readonly clientInclude = {
+    user: {
+      select: {
+        id: true,
+        username: true,
+        isActive: true,
+      },
+    },
+  } as const;
 
   private buildReferralCode(firstName: string, id: number) {
     const prefix = firstName

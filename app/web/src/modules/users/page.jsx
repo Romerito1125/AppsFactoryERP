@@ -21,23 +21,39 @@ const roleOptions = [
   { value: 'CONTADOR', label: 'Contador' },
 ]
 
-const createSchema = z.object({
-  clientId: z.number().int().nonnegative('Selecciona un cliente valido').optional(),
-  warehouseId: z.number().int().positive().optional(),
-  email: z.string().email('Ingresa un correo valido'),
-  password: z.string().min(6, 'Minimo 6 caracteres'),
-  role: z.enum(['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR']),
-  isActive: z.boolean(),
-})
+const userRoleSchema = z.enum(['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR'])
 
-const updateSchema = z.object({
-  clientId: z.number().int().nonnegative('Selecciona un cliente valido').optional(),
-  warehouseId: z.number().int().positive().optional(),
-  email: z.string().email('Ingresa un correo valido'),
-  password: z.string().optional(),
-  role: z.enum(['ADMIN', 'CAJERO', 'VENDEDOR', 'BODEGA', 'CONTADOR']),
-  isActive: z.boolean(),
-})
+function requireWarehouseForWarehouseUsers(schema) {
+  return schema.superRefine((values, context) => {
+    if (values.role === 'BODEGA' && !values.warehouseId) {
+      context.addIssue({
+        code: 'custom',
+        path: ['warehouseId'],
+        message: 'Los usuarios Bodega deben tener una bodega asignada.',
+      })
+    }
+  })
+}
+
+const createSchema = requireWarehouseForWarehouseUsers(
+  z.object({
+    warehouseId: z.number().int().nonnegative().optional(),
+    email: z.string().email('Ingresa un correo valido'),
+    password: z.string().min(6, 'Minimo 6 caracteres'),
+    role: userRoleSchema,
+    isActive: z.boolean(),
+  }),
+)
+
+const updateSchema = requireWarehouseForWarehouseUsers(
+  z.object({
+    warehouseId: z.number().int().nonnegative().optional(),
+    email: z.string().email('Ingresa un correo valido'),
+    password: z.string().optional(),
+    role: userRoleSchema,
+    isActive: z.boolean(),
+  }),
+)
 
 function createUsersConfig(clients, warehouses) {
   const clientsMap = new Map(
@@ -54,8 +70,8 @@ function createUsersConfig(clients, warehouses) {
     createButtonLabel: 'Nuevo usuario',
     createTitle: 'Crear usuario',
     editTitle: 'Actualizar usuario',
-    createDescription: 'Registra un nuevo acceso interno usando correo como inicio de sesion.',
-    editDescription: 'Ajusta cliente asociado, correo, clave, rol operativo o estado del usuario.',
+    createDescription: 'Registra un acceso interno usando correo como inicio de sesión y sin cliente asociado.',
+    editDescription: 'Ajusta correo, clave, rol operativo, bodega o estado del usuario.',
     submitCreateLabel: 'Crear usuario',
     submitEditLabel: 'Guardar cambios',
     tableTitle: 'Directorio de accesos',
@@ -71,22 +87,9 @@ function createUsersConfig(clients, warehouses) {
     reactivateSuccessLabel: 'Usuario reactivado',
     reactivateConfirmationLabel:
       'El usuario volvera a quedar disponible para operar en el administrador.',
+    dialogContentClassName: 'sm:max-w-xl',
     statusFilter: 'api',
     fields: [
-      {
-        name: 'clientId',
-        label: 'Cliente asociado',
-        type: 'select',
-        valueType: 'number',
-        placeholder: 'Interno sin cliente o selecciona uno',
-        options: [
-          { value: 0, label: 'Sin cliente · Usuario interno' },
-          ...clients.map((client) => ({
-            value: client.id,
-            label: `${client.firstName} ${client.lastName} · ${client.identification}`,
-          })),
-        ],
-      },
       {
         name: 'email',
         label: 'Correo',
@@ -99,7 +102,6 @@ function createUsersConfig(clients, warehouses) {
         type: 'password',
         placeholder: '******',
         autoComplete: 'new-password',
-        helpText: 'En edicion puedes dejarla vacia para conservar la actual.',
       },
       {
         name: 'role',
@@ -118,31 +120,27 @@ function createUsersConfig(clients, warehouses) {
           { value: 0, label: 'Sin bodega asignada' },
           ...warehouses.map((warehouse) => ({ value: warehouse.id, label: warehouse.location })),
         ],
-        helpText: 'Para usuarios Bodega, limita el POS a esta ubicación.',
       },
       {
         name: 'isActive',
         label: 'Estado activo',
         type: 'switch',
+        fullWidth: true,
         description: 'Permite acceso operativo al usuario.',
       },
     ],
     createSchema,
     updateSchema,
     getDefaultValues: (_, record) => ({
-      clientId: record?.clientId ?? 0,
-      warehouseId: record?.warehouseId ?? 0,
+      warehouseId: record?.warehouseId ?? undefined,
       email: record?.username ?? '',
       password: '',
       role: record?.role ?? 'CAJERO',
       isActive: record?.isActive ?? true,
     }),
     prepareValues: (mode, values) => {
-      const payload = { ...values }
+      const payload = { ...values, clientId: null }
 
-      if (!payload.clientId) {
-        payload.clientId = null
-      }
       if (!payload.warehouseId) {
         payload.warehouseId = null
       }

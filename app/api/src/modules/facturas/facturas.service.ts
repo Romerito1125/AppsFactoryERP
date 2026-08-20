@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   InvoiceSource,
+  DiscountType,
   Prisma,
   Product,
   ProductCost,
@@ -56,6 +57,7 @@ export class FacturasService {
   async findAll(query: ListInvoicesQueryDto) {
     const where = {
       ...this.getStatusWhere(query.status),
+      ...(query.source ? { source: query.source } : {}),
       ...this.getSearchWhere(query.q),
     };
     const { page, limit, skip, take } = resolvePagination(query);
@@ -167,6 +169,32 @@ export class FacturasService {
 
       const groupedItems = this.groupItems(resolvedItems);
 
+      const now = new Date();
+      const specialOffers = await tx.offer.findMany({
+        where: {
+          isActive: true,
+          deletedAt: null,
+          discountType: DiscountType.PRECIO_ESPECIAL,
+          AND: [
+            { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+            { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+            {
+              OR: [
+                { clients: { some: { clientId: client.id } } },
+                { products: { some: { productId: { in: groupedItems.map((item) => item.productId) } } } },
+                {
+                  clients: { none: {} },
+                  products: { none: {} },
+                  productTypes: { none: {} },
+                  tags: { none: {} },
+                },
+              ],
+            },
+          ],
+        },
+        include: { clients: true, products: true },
+      });
+
       const grossInvoiceItems = groupedItems.map((item) => {
         const product = item.product;
 
@@ -189,7 +217,17 @@ export class FacturasService {
           );
         }
 
-        const unitPrice = item.unitPrice ?? Number(productPrice.price);
+        const specialPrices = item.unitPrice === undefined
+          ? specialOffers
+              .filter((offer) =>
+                (!offer.clients.length && !offer.products.length) ||
+                offer.clients.some((target) => target.clientId === client.id) ||
+                offer.products.some((target) => target.productId === product.id),
+              )
+              .map((offer) => Number(offer.discountValue))
+              .filter((price) => Number.isFinite(price) && price >= 0)
+          : [];
+        const unitPrice = item.unitPrice ?? Math.min(Number(productPrice.price), ...(specialPrices.length ? specialPrices : [Number(productPrice.price)]));
         if (!Number.isFinite(unitPrice) || unitPrice < 0) {
           throw new BadRequestException(
             `El precio acordado para ${product.name} no es vÃ¡lido`,

@@ -173,8 +173,8 @@ export function AuditLogPage() {
             </TabsList>
           </Tabs>
 
-          <div className="grid gap-3 xl:grid-cols-[minmax(260px,1fr)_180px_220px_180px_180px_auto] xl:items-end">
-            <div className="relative">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_180px_minmax(280px,1.1fr)_180px_180px_auto] 2xl:grid-cols-[minmax(320px,1.3fr)_200px_minmax(340px,1.3fr)_190px_190px_auto] xl:items-end">
+            <div className="relative min-w-0">
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={search}
@@ -187,7 +187,7 @@ export function AuditLogPage() {
               />
             </div>
 
-            <div className="grid gap-2">
+            <div className="grid min-w-0 gap-2">
               <span className="text-sm font-medium text-foreground">Modulo</span>
               <NativeSelect value={module} onChange={(event) => {
                 setModule(event.target.value)
@@ -199,7 +199,7 @@ export function AuditLogPage() {
               </NativeSelect>
             </div>
 
-            <div className="grid gap-2">
+            <div className="grid min-w-0 gap-2">
               <span className="text-sm font-medium text-foreground">Usuario</span>
               <NativeSelect value={userId} onChange={(event) => {
                 setUserId(event.target.value)
@@ -207,12 +207,12 @@ export function AuditLogPage() {
               }}>
                 <option value="TODOS">Todos</option>
                 {(usersQuery.data ?? []).map((user) => (
-                  <option key={user.id} value={String(user.id)}>{`${user.username} · ${formatRole(user.role)}`}</option>
+                  <option key={user.id} value={String(user.id)}>{user.username}</option>
                 ))}
               </NativeSelect>
             </div>
 
-            <div className="grid gap-2">
+            <div className="grid min-w-0 gap-2">
               <span className="text-sm font-medium text-foreground">Desde</span>
               <Input type="date" value={startDate} onChange={(event) => {
                 setStartDate(event.target.value)
@@ -220,7 +220,7 @@ export function AuditLogPage() {
               }} />
             </div>
 
-            <div className="grid gap-2">
+            <div className="grid min-w-0 gap-2">
               <span className="text-sm font-medium text-foreground">Hasta</span>
               <Input type="date" value={endDate} onChange={(event) => {
                 setEndDate(event.target.value)

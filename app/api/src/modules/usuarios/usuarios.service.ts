@@ -62,6 +62,9 @@ export class UsuariosService {
   }
 
   async create(createUserDto: CreateUserDto, actor: AuthUser) {
+    if (createUserDto.role === Role.BODEGA && !createUserDto.warehouseId) {
+      throw new BadRequestException('Un usuario BODEGA debe tener una bodega asignada');
+    }
     if (createUserDto.clientId) {
       await this.ensureClientExists(createUserDto.clientId);
     }
@@ -172,6 +175,12 @@ export class UsuariosService {
   async update(id: number, updateUserDto: UpdateUserDto, actor: AuthUser) {
     this.ensurePositiveId(id);
     const current = await this.findOne(id);
+    const nextRole = updateUserDto.role ?? current.role;
+    const nextWarehouseId = updateUserDto.warehouseId ?? current.warehouseId;
+
+    if (nextRole === Role.BODEGA && !nextWarehouseId) {
+      throw new BadRequestException('Un usuario BODEGA debe tener una bodega asignada');
+    }
 
     if (updateUserDto.clientId) {
       await this.ensureClientExists(updateUserDto.clientId, id);

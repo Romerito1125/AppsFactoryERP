@@ -245,7 +245,11 @@ export class OfertasService {
           discountType: offer.discountType,
           discountValue: String(offer.discountValue),
           isStackable: offer.isStackable,
-          estimatedDiscount: this.calculateDiscount(offer, item.quantity),
+          estimatedDiscount: this.calculateDiscount(offer, item.quantity, item.unitPrice),
+          specialPrice:
+            offer.discountType === DiscountType.PRECIO_ESPECIAL
+              ? Number(offer.discountValue)
+              : null,
         }));
         const stackableOffers = evaluatedOffers.filter(
           (offer) => offer.isStackable,
@@ -271,8 +275,13 @@ export class OfertasService {
             ) > (bestSingleOffer?.estimatedDiscount ?? 0)
               ? stackableOffers
               : bestSingleOffer
-                ? [bestSingleOffer]
-                : [],
+              ? [bestSingleOffer]
+              : [],
+          effectiveUnitPrice: this.resolveEffectiveUnitPrice(
+            item.unitPrice,
+            applicableOffers,
+            item.quantity,
+          ),
         };
       }),
     };
@@ -331,11 +340,24 @@ export class OfertasService {
     );
   }
 
-  private calculateDiscount(offer, quantity: number) {
+  private calculateDiscount(offer, quantity: number, unitPrice?: number) {
     const value = Number(offer.discountValue);
-    return offer.discountType === DiscountType.PORCENTAJE
-      ? value
-      : value * quantity;
+    if (offer.discountType === DiscountType.PORCENTAJE) return value;
+    if (offer.discountType === DiscountType.PRECIO_ESPECIAL) {
+      return unitPrice === undefined
+        ? 0
+        : Math.max(0, (unitPrice - value) * quantity);
+    }
+    return value * quantity;
+  }
+
+  private resolveEffectiveUnitPrice(itemPrice: number | undefined, offers, quantity: number) {
+    if (itemPrice === undefined || !offers.length) return itemPrice ?? null;
+    const specialPrices = offers
+      .filter((offer) => offer.discountType === DiscountType.PRECIO_ESPECIAL)
+      .map((offer) => Number(offer.discountValue))
+      .filter((price) => Number.isFinite(price) && price >= 0);
+    return specialPrices.length ? Math.min(itemPrice, ...specialPrices) : itemPrice;
   }
 
   private buildOfferClients(ids?: number[]) {

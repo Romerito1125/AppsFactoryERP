@@ -140,7 +140,7 @@ export const navigationGroups = [
         label: 'Compras',
         description: 'Ordenes a proveedores',
         icon: ShoppingCart,
-        allowedRoles: ['ADMIN'],
+        allowedRoles: ['ADMIN', 'BODEGA'],
       },
       {
         path: '/cotizaciones',

@@ -270,6 +270,24 @@ export function PosPage() {
     enabled: Boolean(selectedClientNumericId),
   })
 
+  const specialOffersQuery = useQuery({
+    queryKey: ['pos-ofertas-precio-especial', selectedClientNumericId, cart.map((item) => `${item.productId}:${item.quantity}`).join('|')],
+    queryFn: () => apiClient.post('/ofertas/aplicables', {
+      clientId: selectedClientNumericId,
+      items: cart.map((item) => {
+        const price = getDefaultPrice(item.product)
+        return {
+          productId: item.productId,
+          productPriceId: item.productPriceId,
+          quantity: item.quantity,
+          unitPrice: price ? Number(price.price) : undefined,
+        }
+      }),
+    }),
+    enabled: Boolean(selectedClientNumericId && cart.length),
+    staleTime: 15_000,
+  })
+
   const handleSearchChange = (value) => {
     setSearch(value)
     if (value.trim() !== '') {
@@ -527,7 +545,8 @@ export function PosPage() {
             return null
           }
 
-          const salePrice = item.customUnitPrice ?? Number(price.price)
+          const specialPrice = specialOffersQuery.data?.items?.find((entry) => entry.productId === item.productId)?.effectiveUnitPrice
+          const salePrice = item.customUnitPrice ?? (specialPrice !== null && specialPrice !== undefined ? Number(specialPrice) : Number(price.price))
           const subtotal = salePrice * item.quantity
           const taxes = subtotal * (Number(product.taxRate ?? 0) / 100)
           const total = subtotal + taxes
@@ -543,7 +562,7 @@ export function PosPage() {
           }
         })
         .filter(Boolean),
-    [cart],
+    [cart, specialOffersQuery.data],
   )
 
   const totals = cartItems.reduce(
@@ -1026,6 +1045,9 @@ export function PosPage() {
 
                               <div className="grid gap-1.5 rounded-xl border border-primary/20 bg-primary/5 p-3">
                                 <Label className="text-[11px] font-semibold text-primary">Precio acordado para este cliente</Label>
+                                {item.customUnitPrice === undefined && Number(item.salePrice) < Number(item.price.price) ? (
+                                  <p className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">Oferta de precio especial aplicada</p>
+                                ) : null}
                                 <div className="flex items-center gap-2">
                                   <Input
                                     type="number"
@@ -1038,8 +1060,12 @@ export function PosPage() {
                                   />
                                   <span className="shrink-0 text-[11px] text-muted-foreground">por {getPriceUnitLabel(item.price)}</span>
                                 </div>
-                                <p className="text-[10px] text-muted-foreground">
-                                  Total de lÃ­nea: {formatCurrency(item.total)} Â· Deja vacÃ­o para usar el precio registrado.
+                                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-primary/10 pt-2 text-[10px]">
+                                  <span className="font-medium text-muted-foreground">Total de línea</span>
+                                  <span className="font-bold text-foreground">{formatCurrency(item.total)}</span>
+                                </div>
+                                <p className="text-[10px] leading-relaxed text-muted-foreground">
+                                  Deja vacío para usar el precio registrado.
                                 </p>
                               </div>
 

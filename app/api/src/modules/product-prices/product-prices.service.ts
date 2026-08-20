@@ -27,7 +27,7 @@ export class ProductPricesService {
       ...this.getSearchWhere(query.q),
     };
     const { page, limit, skip, take } = resolvePagination(query);
-    const [total, data] = await Promise.all([
+    const [total, data, activeTotal, defaultTotal] = await Promise.all([
       this.prisma.productPrice.count({ where }),
       this.prisma.productPrice.findMany({
         where,
@@ -36,9 +36,15 @@ export class ProductPricesService {
         skip,
         take,
       }),
+      this.prisma.productPrice.count({ where: { ...where, isActive: true } }),
+      this.prisma.productPrice.count({ where: { ...where, isDefault: true } }),
     ]);
 
-    return buildPaginatedResponse(data, total, page, limit);
+    return {
+      ...buildPaginatedResponse(data, total, page, limit),
+      activeTotal,
+      defaultTotal,
+    };
   }
 
   async findOne(id: number) {

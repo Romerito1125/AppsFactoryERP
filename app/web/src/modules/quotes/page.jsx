@@ -3,7 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
-import { FilePlus2, MoreHorizontal, Plus, Search, Trash2 } from 'lucide-react'
+import { Download, FilePlus2, MoreHorizontal, Plus, Search, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
@@ -53,6 +53,7 @@ import { apiClient } from '@/lib/api-client'
 import { formatCurrency, formatDate, formatNumber } from '@/lib/format'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
 import { LocalPagination } from '@/modules/shared/local-pagination'
+import { downloadQuotePdf } from './quote-pdf'
 
 const PAGE_SIZE = 20
 
@@ -722,6 +723,9 @@ export function QuotesPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-52">
                           <DropdownMenuItem onClick={() => setDetailQuote(quote)}>Ver detalle</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => downloadQuotePdf(quote)}>
+                            <Download className="mr-2 size-4" /> Descargar PDF
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => setEditQuote(quote)}>Editar vigencia</DropdownMenuItem>
                           {quote.status !== 'CONVERTIDA' ? (
                             <DropdownMenuItem onClick={() => setStatusQuote(quote)}>Cambiar estado</DropdownMenuItem>

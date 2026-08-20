@@ -701,6 +701,7 @@ export function ReportsPage() {
   const [selectedEmailSections, setSelectedEmailSections] = useState(() => reportEmailSectionOptions.map((option) => option.value))
   const [activeTab, setActiveTab] = useState('overview')
   const [reportSearch, setReportSearch] = useState('')
+  const [semaphoreColor, setSemaphoreColor] = useState(() => localStorage.getItem('mmm-report-semaphore') ?? 'VERDE')
 
   const reportsQuery = useQuery({
     queryKey: ['reportes-overview'],
@@ -1229,6 +1230,7 @@ export function ReportsPage() {
       tableSubtitle: section.description,
       subtitle: `Corte ${startDate} a ${endDate}`,
       meta: [`Generado ${formatGeneratedAt()}`, `Facturas en corte: ${formatNumber(report.rangedInvoices.length)}`],
+      semaphoreColor,
     })
   }
 
@@ -1404,6 +1406,21 @@ export function ReportsPage() {
             </div>
             <div className="w-full xl:max-w-sm">
               <Input value={reportSearch} onChange={(event) => setReportSearch(event.target.value)} placeholder="Buscar reporte por nombre o descripcion..." />
+            </div>
+            <div className="flex items-center gap-2 xl:max-w-sm">
+              <span className="text-xs font-medium text-muted-foreground">Semaforo manual</span>
+              <NativeSelect
+                value={semaphoreColor}
+                onChange={(event) => {
+                  setSemaphoreColor(event.target.value)
+                  localStorage.setItem('mmm-report-semaphore', event.target.value)
+                }}
+              >
+                <option value="VERDE">Verde · OK</option>
+                <option value="AMARILLO">Amarillo · Revisar</option>
+                <option value="ROJO">Rojo · Critico</option>
+              </NativeSelect>
+              <span className={`size-3 rounded-full ${semaphoreColor === 'ROJO' ? 'bg-red-500' : semaphoreColor === 'AMARILLO' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
             </div>
           </div>
           <Tabs value={activeTab} onValueChange={setActiveTab}>

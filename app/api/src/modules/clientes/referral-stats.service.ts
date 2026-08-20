@@ -103,6 +103,8 @@ export class ReferralStatsService {
         baseProfit: generation.utilidadBaseHistorica,
         commission: generation.descuentoGenerado,
         available: generation.descuentoDisponible,
+        socialWork: generation.obraSocial,
+        isSocialWork: generation.generation === 4,
       })),
     };
   }

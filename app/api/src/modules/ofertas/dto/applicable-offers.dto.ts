@@ -6,6 +6,8 @@ import {
   IsPositive,
   IsOptional,
   ValidateNested,
+  IsNumber,
+  Min,
 } from 'class-validator';
 
 export class ApplicableOfferItemDto {
@@ -24,6 +26,12 @@ export class ApplicableOfferItemDto {
   @IsInt()
   @IsPositive()
   quantity: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  unitPrice?: number;
 }
 
 export class ApplicableOffersDto {

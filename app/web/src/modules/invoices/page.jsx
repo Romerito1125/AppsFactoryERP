@@ -793,6 +793,7 @@ export function InvoicesPage() {
   const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [statusTab, setStatusTab] = useState('ACTIVA')
+  const [sourceFilter, setSourceFilter] = useState('TODOS')
   const [createOpen, setCreateOpen] = useState(false)
   const [detailInvoice, setDetailInvoice] = useState(null)
   const [editInvoice, setEditInvoice] = useState(null)
@@ -803,10 +804,11 @@ export function InvoicesPage() {
   const invoiceIdParam = searchParams.get('invoiceId')
 
   const invoicesQuery = useQuery({
-    queryKey: ['facturas', statusTab, search, currentPage],
+    queryKey: ['facturas', statusTab, sourceFilter, search, currentPage],
     queryFn: () =>
       apiClient.get('/facturas', {
         status: statusTab === 'TODAS' ? undefined : statusTab,
+        source: sourceFilter === 'TODOS' ? undefined : sourceFilter,
         q: search,
         page: currentPage,
         limit: PAGE_SIZE,
@@ -1012,6 +1014,18 @@ export function InvoicesPage() {
                 className="pl-9"
               />
             </div>
+            <NativeSelect
+              value={sourceFilter}
+              onChange={(event) => {
+                setSourceFilter(event.target.value)
+                setCurrentPage(1)
+              }}
+            >
+              <option value="TODOS">Todos los origenes</option>
+              <option value="ADMIN">Administracion</option>
+              <option value="POS">POS</option>
+              <option value="APP_MOVIL">App movil</option>
+            </NativeSelect>
             <Tabs
               value={statusTab}
               onValueChange={(value) => {
