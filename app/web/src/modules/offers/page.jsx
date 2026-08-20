@@ -44,10 +44,16 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { apiClient } from '@/lib/api-client'
 import { formatCurrency, formatDate, formatNumber, toApiStatus } from '@/lib/format'
+import { focusErrorField, getErrorPaths, getFirstErrorPath, pathBelongsToField, stepHasErrors } from '@/modules/shared/form-step-validation'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
 import { DEFAULT_ITEMS_PER_PAGE, LocalPagination } from '@/modules/shared/local-pagination'
 
 const PAGE_SIZE = DEFAULT_ITEMS_PER_PAGE
+const OFFER_FORM_STEP_FIELDS = {
+  basic: ['name', 'discountType', 'description'],
+  rules: ['discountValue', 'isStackable', 'startsAt', 'endsAt', 'minimumProductQuantity', 'maximumProductQuantity'],
+  targets: ['clientIds', 'productIds', 'productTypeIds', 'tagIds'],
+}
 
 const offerSchema = z
   .object({
@@ -189,6 +195,23 @@ function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, i
     }
   }
 
+  function handleInvalid(validationErrors) {
+    const firstErrorPath = getFirstErrorPath(validationErrors)
+    if (!firstErrorPath) {
+      return
+    }
+
+    const nextStep = Object.entries(OFFER_FORM_STEP_FIELDS).find(([, fields]) =>
+      fields.some((fieldName) => pathBelongsToField(firstErrorPath, fieldName)),
+    )
+    if (nextStep) {
+      setStep(nextStep[0])
+    }
+    setTimeout(() => focusErrorField(firstErrorPath), 0)
+  }
+
+  const errorPaths = getErrorPaths(form.formState.errors)
+
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-4xl">
@@ -201,23 +224,25 @@ function OfferFormDialog({ open, onOpenChange, mode, offer, lookups, onSubmit, i
 
         <form
           className="grid gap-4"
-          onSubmit={form.handleSubmit((values) =>
-            onSubmit({
-              ...values,
-              startsAt: values.startsAt || undefined,
-              endsAt: values.endsAt || undefined,
-            }),
+          onSubmit={form.handleSubmit(
+            (values) =>
+              onSubmit({
+                ...values,
+                startsAt: values.startsAt || undefined,
+                endsAt: values.endsAt || undefined,
+              }),
+            handleInvalid,
           )}
         >
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant={step === 'basic' ? 'default' : 'outline'} onClick={() => setStep('basic')}>
-              1. Base
+            <Button type="button" variant={step === 'basic' ? 'default' : 'outline'} onClick={() => setStep('basic')} aria-invalid={stepHasErrors(errorPaths, OFFER_FORM_STEP_FIELDS.basic)}>
+              1. Base{stepHasErrors(errorPaths, OFFER_FORM_STEP_FIELDS.basic) ? ' · Revisar' : ''}
             </Button>
-            <Button type="button" variant={step === 'rules' ? 'default' : 'outline'} onClick={() => setStep('rules')}>
-              2. Reglas
+            <Button type="button" variant={step === 'rules' ? 'default' : 'outline'} onClick={() => setStep('rules')} aria-invalid={stepHasErrors(errorPaths, OFFER_FORM_STEP_FIELDS.rules)}>
+              2. Reglas{stepHasErrors(errorPaths, OFFER_FORM_STEP_FIELDS.rules) ? ' · Revisar' : ''}
             </Button>
-            <Button type="button" variant={step === 'targets' ? 'default' : 'outline'} onClick={() => setStep('targets')}>
-              3. Segmentacion
+            <Button type="button" variant={step === 'targets' ? 'default' : 'outline'} onClick={() => setStep('targets')} aria-invalid={stepHasErrors(errorPaths, OFFER_FORM_STEP_FIELDS.targets)}>
+              3. Segmentacion{stepHasErrors(errorPaths, OFFER_FORM_STEP_FIELDS.targets) ? ' · Revisar' : ''}
             </Button>
           </div>
 

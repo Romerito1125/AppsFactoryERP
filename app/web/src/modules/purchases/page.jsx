@@ -31,10 +31,16 @@ import { apiClient } from '@/lib/api-client'
 import { formatCurrency, formatDate, formatNumber } from '@/lib/format'
 import { LocalPagination } from '@/modules/shared/local-pagination'
 import { ModuleDetailsDrawer } from '@/modules/shared/module-details-drawer'
+import { focusErrorField, getErrorPaths, getFirstErrorPath, pathBelongsToField, stepHasErrors } from '@/modules/shared/form-step-validation'
 import { useAuth } from '@/auth/auth-context'
 import { downloadPurchasePdf, sharePurchaseOnWhatsApp } from './purchase-pdf'
 
 const PAGE_SIZE = 20
+const PURCHASE_FORM_STEP_FIELDS = {
+  basic: ['providerId', 'warehouseId', 'orderedAt', 'expectedAt', 'externalReference', 'notes'],
+  items: ['items'],
+  summary: [],
+}
 
 const purchaseStatusLabels = {
   BORRADOR: 'Borrador',
@@ -231,6 +237,23 @@ function PurchaseFormDialog({
     }
   }
 
+  function handleInvalid(validationErrors) {
+    const firstErrorPath = getFirstErrorPath(validationErrors)
+    if (!firstErrorPath) {
+      return
+    }
+
+    const nextStep = Object.entries(PURCHASE_FORM_STEP_FIELDS).find(([, fields]) =>
+      fields.some((fieldName) => pathBelongsToField(firstErrorPath, fieldName)),
+    )
+    if (nextStep) {
+      setStep(nextStep[0])
+    }
+    setTimeout(() => focusErrorField(firstErrorPath), 0)
+  }
+
+  const errorPaths = getErrorPaths(form.formState.errors)
+
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent className="max-h-[94vh] overflow-y-auto sm:max-w-5xl">
@@ -251,20 +274,29 @@ function PurchaseFormDialog({
         ) : (
           <form
             className="grid gap-5"
-            onSubmit={form.handleSubmit(async (values) => {
-              await onSubmit({
-                ...values,
-                expectedAt: values.expectedAt || undefined,
-                externalReference: values.externalReference || undefined,
-                notes: values.notes || undefined,
-              })
-              form.reset(getDefaultValues())
-            })}
+            onSubmit={form.handleSubmit(
+              async (values) => {
+                await onSubmit({
+                  ...values,
+                  expectedAt: values.expectedAt || undefined,
+                  externalReference: values.externalReference || undefined,
+                  notes: values.notes || undefined,
+                })
+                form.reset(getDefaultValues())
+              },
+              handleInvalid,
+            )}
           >
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant={step === 'basic' ? 'default' : 'outline'} onClick={() => setStep('basic')}>1. Datos base</Button>
-              <Button type="button" variant={step === 'items' ? 'default' : 'outline'} onClick={() => setStep('items')}>2. Lineas</Button>
-              <Button type="button" variant={step === 'summary' ? 'default' : 'outline'} onClick={() => setStep('summary')}>3. Resumen</Button>
+              <Button type="button" variant={step === 'basic' ? 'default' : 'outline'} onClick={() => setStep('basic')} aria-invalid={stepHasErrors(errorPaths, PURCHASE_FORM_STEP_FIELDS.basic)}>
+                1. Datos base{stepHasErrors(errorPaths, PURCHASE_FORM_STEP_FIELDS.basic) ? ' · Revisar' : ''}
+              </Button>
+              <Button type="button" variant={step === 'items' ? 'default' : 'outline'} onClick={() => setStep('items')} aria-invalid={stepHasErrors(errorPaths, PURCHASE_FORM_STEP_FIELDS.items)}>
+                2. Lineas{stepHasErrors(errorPaths, PURCHASE_FORM_STEP_FIELDS.items) ? ' · Revisar' : ''}
+              </Button>
+              <Button type="button" variant={step === 'summary' ? 'default' : 'outline'} onClick={() => setStep('summary')} aria-invalid={stepHasErrors(errorPaths, PURCHASE_FORM_STEP_FIELDS.summary)}>
+                3. Resumen{stepHasErrors(errorPaths, PURCHASE_FORM_STEP_FIELDS.summary) ? ' · Revisar' : ''}
+              </Button>
             </div>
 
             {step === 'basic' ? (

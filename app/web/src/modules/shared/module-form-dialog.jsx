@@ -26,6 +26,13 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { toNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import {
+  getErrorPaths,
+  getFirstErrorPath,
+  focusErrorField,
+  pathBelongsToField,
+  stepHasErrors,
+} from './form-step-validation'
 
 function resolveOptions(options, lookups, record) {
   if (typeof options === 'function') {
@@ -113,6 +120,27 @@ export function ModuleFormDialog({
 
   const currentStep = hasSteps ? formSteps[Math.min(currentStepIndex, formSteps.length - 1)] : null
   const visibleFields = hasSteps ? fields.filter((field) => field.stepId === currentStep?.id) : fields
+  const errorPaths = getErrorPaths(errors)
+
+  function getStepFields(step) {
+    return fields.filter((field) => field.stepId === step.id).map((field) => field.name)
+  }
+
+  function handleInvalid(validationErrors) {
+    const firstErrorPath = getFirstErrorPath(validationErrors)
+    if (!firstErrorPath) {
+      return
+    }
+
+    const errorStepIndex = formSteps.findIndex((step) =>
+      getStepFields(step).some((fieldName) => pathBelongsToField(firstErrorPath, fieldName)),
+    )
+
+    if (errorStepIndex >= 0) {
+      setCurrentStepIndex(errorStepIndex)
+    }
+    setTimeout(() => focusErrorField(firstErrorPath), 0)
+  }
 
   async function handleNextStep() {
     const currentFieldNames = visibleFields.map((field) => field.name)
@@ -149,10 +177,13 @@ export function ModuleFormDialog({
                     'rounded-full border px-3 py-1.5 text-sm transition',
                     index === currentStepIndex
                       ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground',
+                      : stepHasErrors(errorPaths, getStepFields(step))
+                        ? 'border-destructive/50 bg-destructive/10 text-destructive hover:border-destructive/70'
+                        : 'border-border bg-background text-muted-foreground hover:border-primary/40 hover:text-foreground',
                   )}
                 >
                   {index + 1}. {step.title}
+                  {stepHasErrors(errorPaths, getStepFields(step)) ? ' · Revisar' : ''}
                 </button>
               ))}
             </div>
@@ -167,8 +198,9 @@ export function ModuleFormDialog({
 
         <form
           className="grid gap-4"
-          onSubmit={handleSubmit((values) =>
-            onSubmit(config.prepareValues ? config.prepareValues(mode, values, record) : values),
+          onSubmit={handleSubmit(
+            (values) => onSubmit(config.prepareValues ? config.prepareValues(mode, values, record) : values),
+            handleInvalid,
           )}
         >
           <div className="grid gap-4 md:grid-cols-2">
