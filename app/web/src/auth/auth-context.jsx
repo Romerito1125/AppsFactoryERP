@@ -5,7 +5,7 @@ const AUTH_STORAGE_KEY = 'mmm-auth-session'
 const AuthContext = createContext(null)
 
 export const demoCredentials = {
-  'santiago.admin@appsfactory.local': 'Admin123*',
+  'admin@mundotienda.com': 'Admin123*',
   'laura.cajero@appsfactory.local': 'Cajero123*',
   'valentina.ventas@appsfactory.local': 'Ventas123*',
   'diego.bodega@appsfactory.local': 'Bodega123*',
@@ -32,6 +32,10 @@ export function defaultRouteForRole(role) {
 
   if (role === 'CONTADOR') {
     return '/creditos'
+  }
+
+  if (role === 'BODEGA') {
+    return '/compras'
   }
 
   return '/pos'

@@ -55,7 +55,7 @@ export function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { login } = useAuth()
-  const [email, setEmail] = useState('santiago.admin@appsfactory.local')
+  const [email, setEmail] = useState('admin@mundotienda.com')
   const [password, setPassword] = useState('Admin123*')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)

@@ -1,5 +1,7 @@
+import { useRef } from 'react'
 import { Controller } from 'react-hook-form'
 import { z } from 'zod'
+import { FileImage, UploadCloud, X } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -42,12 +44,15 @@ function buildProductTypeFormData(values) {
 }
 
 function ProductTypeImageField({ field: configField, control, setValue, record }) {
+  const inputRef = useRef(null)
+
   return (
     <Controller
       name={configField.name}
       control={control}
       render={({ field }) => {
         const hasCurrentImage = Boolean(record?.imageUrl)
+        const selectedFile = field.value instanceof File ? field.value : null
 
         return (
           <div className="grid gap-3">
@@ -56,7 +61,7 @@ function ProductTypeImageField({ field: configField, control, setValue, record }
                 <ProductImage src={record.imageUrl} alt={record?.name ?? 'Tipo de producto'} className="size-16 rounded-lg" iconClassName="size-4" />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-foreground">Imagen actual</p>
-                  <p className="text-xs text-muted-foreground">Puedes reemplazarla o quitarla del tipo de producto.</p>
+                  <p className="text-xs text-muted-foreground">Puedes reemplazarla o quitarla.</p>
                   <Button
                     type="button"
                     variant="outline"
@@ -65,29 +70,53 @@ function ProductTypeImageField({ field: configField, control, setValue, record }
                     onClick={() => {
                       field.onChange(undefined)
                       setValue('clearImage', true, { shouldDirty: true, shouldValidate: true })
+                      if (inputRef.current) {
+                        inputRef.current.value = ''
+                      }
                     }}
                   >
-                    Quitar imagen
+                    <X className="mr-2 size-4" />
+                    Quitar
                   </Button>
                 </div>
               </div>
             ) : null}
 
-            <input
-              type="file"
-              accept={configField.accept}
-              onChange={(event) => {
-                const file = event.target.files?.[0] ?? undefined
-                field.onChange(file)
-                if (file) {
-                  setValue('clearImage', false, { shouldDirty: true, shouldValidate: true })
-                }
-              }}
-            />
-
-            {field.value?.name ? (
-              <p className="text-xs text-muted-foreground">Archivo seleccionado: {field.value.name}</p>
-            ) : null}
+            <div className="rounded-2xl border border-dashed border-border/80 bg-muted/15 p-3 transition-colors hover:border-primary/50 hover:bg-primary/[0.03]">
+              <input
+                ref={inputRef}
+                id={configField.name}
+                type="file"
+                accept={configField.accept}
+                className="sr-only"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? undefined
+                  field.onChange(file)
+                  if (file) {
+                    setValue('clearImage', false, { shouldDirty: true, shouldValidate: true })
+                  }
+                }}
+              />
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <FileImage className="size-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {selectedFile?.name ?? 'Añade una imagen'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {selectedFile ? `${Math.ceil(selectedFile.size / 1024)} KB · lista para subir` : 'JPG, PNG o WEBP · máximo 5 MB'}
+                    </p>
+                  </div>
+                </div>
+                <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={() => inputRef.current?.click()}>
+                  <UploadCloud className="mr-2 size-4" />
+                  {selectedFile ? 'Cambiar imagen' : 'Seleccionar imagen'}
+                </Button>
+              </div>
+            </div>
           </div>
         )
       }}
@@ -127,7 +156,6 @@ const productTypesConfig = {
       label: 'Imagen',
       render: ProductTypeImageField,
       accept: 'image/jpeg,image/png,image/webp',
-      helpText: 'JPG, PNG o WEBP. Maximo 5 MB.',
       fullWidth: true,
       getPreviewValue: (record) => record?.imageUrl,
     },

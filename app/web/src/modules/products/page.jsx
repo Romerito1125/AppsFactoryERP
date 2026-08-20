@@ -123,6 +123,10 @@ function getSelectableProviders(lookups) {
   return (lookups.providers ?? []).filter((provider) => provider.isActive !== false)
 }
 
+function getSelectableProductTypes(lookups) {
+  return (lookups.productTypes ?? []).filter((productType) => productType.isActive !== false)
+}
+
 function getSecondaryProviderIds(product) {
   return getAssociatedProviders(product)
     .filter((provider) => !provider.isPrimary)
@@ -691,6 +695,7 @@ function PackagingProfileField({ control, register, errors }) {
 }
 
 function createProductsConfig(lookups, barcodeSearch, favorites) {
+  const selectableProductTypes = getSelectableProductTypes(lookups)
   const selectableProviders = getSelectableProviders(lookups)
 
   return {
@@ -743,7 +748,7 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="TODOS">Todos los tipos</SelectItem>
-            {lookups.productTypes.map((item) => (
+            {selectableProductTypes.map((item) => (
               <SelectItem key={item.id} value={String(item.id)}>
                 {item.name}
               </SelectItem>
@@ -872,7 +877,7 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
         render: SearchableSelectField,
         placeholder: 'Selecciona un tipo',
         stepId: 'basico',
-        options: lookups.productTypes.map((item) => ({
+        options: selectableProductTypes.map((item) => ({
           value: item.id,
           label: item.name,
         })),
