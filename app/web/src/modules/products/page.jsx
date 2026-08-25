@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { ImageUp, Plus, ScanLine, Star, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { BarcodeReaderDialog } from '@/components/barcode-reader-dialog'
 import { BarcodeScannerDialog } from '@/components/barcode-scanner-dialog'
 import { ProductImage } from '@/components/product-image'
 import { Badge } from '@/components/ui/badge'
@@ -841,6 +842,11 @@ function createProductsConfig(lookups, barcodeSearch, favorites) {
           Escanear codigo
         </Button>
 
+        <Button type="button" variant="outline" onClick={() => barcodeSearch.onOpenReader(updateFilters)}>
+          <ScanLine className="mr-2 size-4" />
+          Escanear con lector
+        </Button>
+
         <Button
           type="button"
           variant="outline"
@@ -1331,6 +1337,7 @@ export function ProductsPage() {
   const queryClient = useQueryClient()
   const [barcodeFilterApply, setBarcodeFilterApply] = useState(null)
   const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false)
+  const [barcodeReaderOpen, setBarcodeReaderOpen] = useState(false)
   const [scanLoading, setScanLoading] = useState(false)
 
   const productTypesQuery = useQuery({
@@ -1439,6 +1446,10 @@ export function ProductsPage() {
         setBarcodeFilterApply(() => updateFilters)
         setBarcodeScannerOpen(true)
       },
+      onOpenReader(updateFilters) {
+        setBarcodeFilterApply(() => updateFilters)
+        setBarcodeReaderOpen(true)
+      },
       onOpenImagePicker(updateFilters) {
         setBarcodeFilterApply(() => updateFilters)
         document.getElementById('product-barcode-image-input')?.click()
@@ -1465,6 +1476,14 @@ export function ProductsPage() {
         onDetected={(result) => applyScannedBarcode(result.code)}
         title="Escanear codigo para buscar producto"
         description="Lee el codigo desde camara para aplicarlo al filtro de productos."
+      />
+
+      <BarcodeReaderDialog
+        open={barcodeReaderOpen}
+        onOpenChange={setBarcodeReaderOpen}
+        onDetected={(result) => applyScannedBarcode(result.code)}
+        title="Escanear código para buscar producto"
+        description="Usa el lector conectado al computador para aplicar el código al filtro de productos."
       />
     </>
   )

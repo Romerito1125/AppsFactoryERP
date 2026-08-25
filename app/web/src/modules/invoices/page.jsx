@@ -7,6 +7,7 @@ import { Eye, FileDown, FilePlus2, ImageUp, MoreHorizontal, Plus, ScanLine, Sear
 import { useSearchParams } from 'react-router-dom'
 import { toast } from 'sonner'
 
+import { BarcodeReaderDialog } from '@/components/barcode-reader-dialog'
 import { BarcodeScannerDialog } from '@/components/barcode-scanner-dialog'
 import { Badge } from '@/components/ui/badge'
 import { ProductImage } from '@/components/product-image'
@@ -186,6 +187,7 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
   const [catalogTargetIndex, setCatalogTargetIndex] = useState(null)
   const [scanLoading, setScanLoading] = useState(false)
   const [cameraScannerOpen, setCameraScannerOpen] = useState(false)
+  const [readerOpen, setReaderOpen] = useState(false)
   const barcodeImageInputRef = useRef(null)
 
   const favoritesQuery = useQuery({
@@ -361,6 +363,15 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
       } catch (error) {
         toast.error(error.message)
       }
+    },
+    [handleCatalogSelection],
+  )
+
+  const handleBarcodeReaderDetected = useCallback(
+    async (result) => {
+      const product = await apiClient.get(`/productos/codigo-barras/${encodeURIComponent(result.code)}`)
+      handleCatalogSelection(product)
+      toast.success(`Producto detectado por codigo ${result.code}`)
     },
     [handleCatalogSelection],
   )
@@ -697,6 +708,10 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
                     <ScanLine className="mr-2 size-4" />
                     Escanear
                   </Button>
+                  <Button type="button" variant="outline" onClick={() => setReaderOpen(true)} className="shrink-0">
+                    <ScanLine className="mr-2 size-4" />
+                    Escanear con lector
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
@@ -748,6 +763,14 @@ function CreateInvoiceDialog({ open, onOpenChange, clients, clientsLoading, prod
           onDetected={handleBarcodeDetected}
           title="Escanear producto para la factura"
           description="Lee el codigo de barras con la camara para agregar el producto a la siguiente linea disponible."
+        />
+
+        <BarcodeReaderDialog
+          open={readerOpen}
+          onOpenChange={setReaderOpen}
+          onDetected={handleBarcodeReaderDetected}
+          title="Escanear producto para la factura"
+          description="Usa el lector conectado al computador para agregar el producto a la siguiente línea disponible."
         />
       </DialogContent>
     </Dialog>

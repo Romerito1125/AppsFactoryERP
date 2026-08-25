@@ -1,6 +1,7 @@
-import { getStoredSession } from '@/auth/auth-context'
+import { getStoredSession, storeSession } from '@/auth/auth-context'
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
+let refreshPromise = null
 
 function getBaseUrl() {
   return new URL(API_BASE_URL, window.location.origin)
@@ -58,9 +59,91 @@ function parseResponsePayload(text) {
   }
 }
 
-async function request(path, options = {}, params) {
+function isAuthPath(path) {
+  return path === '/auth/login' || path === '/auth/registro' || path === '/auth/refresh'
+}
+
+function getAccessTokenExpiration(token) {
+  try {
+    const encodedPayload = token.split('.')[1]
+
+    if (!encodedPayload) {
+      return null
+    }
+
+    const normalizedPayload = encodedPayload.replace(/-/g, '+').replace(/_/g, '/')
+    const paddedPayload = normalizedPayload.padEnd(Math.ceil(normalizedPayload.length / 4) * 4, '=')
+    const payload = JSON.parse(atob(paddedPayload))
+
+    return Number.isFinite(Number(payload.exp)) ? Number(payload.exp) : null
+  } catch {
+    return null
+  }
+}
+
+function shouldRefreshAccessToken(token) {
+  const expiresAt = getAccessTokenExpiration(token)
+
+  if (!expiresAt) {
+    return false
+  }
+
+  return expiresAt - Math.floor(Date.now() / 1000) <= 300
+}
+
+async function refreshAccessToken() {
+  const storedSession = getStoredSession()
+  const refreshToken = storedSession?.refreshToken
+
+  if (!refreshToken) {
+    storeSession(null)
+    return false
+  }
+
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      let response
+
+      try {
+        response = await fetch(buildUrl('/auth/refresh'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken }),
+        })
+      } catch {
+        return false
+      }
+
+      const payload = parseResponsePayload(await response.text())
+
+      if (!response.ok || !payload?.accessToken || !payload?.refreshToken) {
+        storeSession(null)
+        return false
+      }
+
+      storeSession({
+        ...storedSession,
+        accessToken: payload.accessToken,
+        refreshToken: payload.refreshToken,
+      })
+
+      return true
+    })().finally(() => {
+      refreshPromise = null
+    })
+  }
+
+  return refreshPromise
+}
+
+async function request(path, options = {}, params, allowRefresh = true) {
   const isFormData = isFormDataBody(options.body)
-  const accessToken = getStoredSession()?.accessToken
+  let accessToken = getStoredSession()?.accessToken
+
+  if (accessToken && allowRefresh && !isAuthPath(path) && shouldRefreshAccessToken(accessToken)) {
+    await refreshAccessToken()
+    accessToken = getStoredSession()?.accessToken
+  }
 
   let response
 
@@ -79,6 +162,20 @@ async function request(path, options = {}, params) {
 
   const text = await response.text()
   const payload = parseResponsePayload(text)
+
+  if (response.status === 401 && accessToken && allowRefresh && !isAuthPath(path)) {
+    const refreshed = await refreshAccessToken()
+
+    if (refreshed) {
+      return request(path, options, params, false)
+    }
+
+    if (!getStoredSession()?.refreshToken) {
+      throw new Error('Tu sesión expiró y no pudo renovarse. Inicia sesión nuevamente.')
+    }
+
+    throw new Error('No se pudo renovar la sesión. Verifica tu conexión e inténtalo nuevamente.')
+  }
 
   if (!response.ok) {
     throw new Error(getErrorMessage(payload, 'No se pudo completar la solicitud'))

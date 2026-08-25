@@ -3,6 +3,7 @@ import { Controller, useFieldArray, useWatch } from 'react-hook-form'
 import { ImageUp, Plus, ScanLine, Star, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { BarcodeReaderDialog } from '@/components/barcode-reader-dialog'
 import { BarcodeScannerDialog } from '@/components/barcode-scanner-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -42,6 +43,7 @@ export function ProductBarcodesField({ control, errors }) {
   const values = useWatch({ control, name: 'barcodes' }) ?? []
   const fileInputRef = useRef(null)
   const [scannerOpen, setScannerOpen] = useState(false)
+  const [readerOpen, setReaderOpen] = useState(false)
   const [scanLoading, setScanLoading] = useState(false)
 
   function applyBarcodeResult(result) {
@@ -139,6 +141,10 @@ export function ProductBarcodesField({ control, errors }) {
             <Button type="button" variant="outline" size="sm" onClick={() => setScannerOpen(true)}>
               <ScanLine className="size-4" />
               Escanear camara
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => setReaderOpen(true)}>
+              <ScanLine className="size-4" />
+              Escanear con lector
             </Button>
             <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={scanLoading}>
               <ImageUp className="size-4" />
@@ -244,6 +250,17 @@ export function ProductBarcodesField({ control, errors }) {
         }}
         title="Escanear codigo del producto"
         description="Apunta la camara al codigo del empaque para agregarlo al producto en creacion."
+      />
+
+      <BarcodeReaderDialog
+        open={readerOpen}
+        onOpenChange={setReaderOpen}
+        onDetected={(result) => {
+          applyBarcodeResult(result)
+          toast.success(`Codigo detectado: ${result.code}`)
+        }}
+        title="Escanear código del producto"
+        description="Usa el lector conectado al computador para agregar el código al producto en creación."
       />
     </>
   )

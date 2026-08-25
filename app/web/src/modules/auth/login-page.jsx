@@ -117,6 +117,7 @@ export function LoginPage() {
 
       login({
         accessToken: authResponse.accessToken,
+        refreshToken: authResponse.refreshToken,
         id: sessionUser.id,
         username: sessionUser.username,
         role: authResponse.role,

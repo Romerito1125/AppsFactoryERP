@@ -48,6 +48,7 @@ import {
 import { apiClient } from '@/lib/api-client'
 import { formatCurrency, formatDate, formatInvoiceSource, formatNumber, formatRole } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { useBarcodeKeyboardScanner } from '@/hooks/use-barcode-keyboard-scanner'
 
 function PosSkeleton() {
   return (
@@ -621,6 +622,29 @@ export function PosPage() {
       return [...current, { productId: product.id, productPriceId: defaultPrice.id, warehouseId: productWarehouseId, quantity: 1, product }]
     })
   }
+
+  async function handleBarcodeReaderDetected(result) {
+    try {
+      const product = await apiClient.get(`/productos/codigo-barras/${encodeURIComponent(result.code)}`)
+      const stock = getWarehouseStock(product, effectiveWarehouseId)
+
+      if (!getDefaultPrice(product)) {
+        throw new Error('El producto escaneado no tiene un precio activo.')
+      }
+
+      if (stock <= 0) {
+        throw new Error('El producto escaneado no tiene existencias en la bodega seleccionada.')
+      }
+
+      setSearch('')
+      addProduct(product)
+      toast.success(`Producto agregado: ${product.name}`)
+    } catch (error) {
+      toast.error(error?.message ?? 'No se pudo agregar el producto escaneado.')
+    }
+  }
+
+  useBarcodeKeyboardScanner({ onDetected: handleBarcodeReaderDetected })
 
   function updateQuantity(productId, productPriceId, warehouseId, nextQuantity) {
     if (nextQuantity <= 0) {
@@ -1379,6 +1403,7 @@ export function PosPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   )
 }

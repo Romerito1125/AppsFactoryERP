@@ -6,6 +6,7 @@ interface EnvVars {
   DATABASE_URL: string;
   JWT_SECRET?: string;
   JWT_EXPIRES_IN?: string;
+  JWT_REFRESH_EXPIRES_IN?: string;
   RESEND_API_KEY?: string;
   RESEND_FROM_EMAIL?: string;
   RESEND_REPLY_TO_EMAIL?: string;
@@ -23,6 +24,7 @@ const envSchema = Joi.object<EnvVars>({
 
   JWT_SECRET: Joi.string().default('dev-jwt-secret-change-me'),
   JWT_EXPIRES_IN: Joi.string().default('1d'),
+  JWT_REFRESH_EXPIRES_IN: Joi.string().default('never'),
 
   RESEND_API_KEY: Joi.string().allow('').optional(),
   RESEND_FROM_EMAIL: Joi.string().email({ tlds: { allow: false } }).allow('').optional(),
@@ -60,6 +62,7 @@ export const envs = {
   jwt: {
     secret: envVars.JWT_SECRET,
     expiresIn: envVars.JWT_EXPIRES_IN,
+    refreshExpiresIn: envVars.JWT_REFRESH_EXPIRES_IN,
   },
   resend: {
     apiKey: envVars.RESEND_API_KEY || null,

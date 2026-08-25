@@ -57,25 +57,27 @@ export class AuthService {
       include: this.userInclude,
     });
 
-    if (!user || !user.isActive) {
+    if (!user) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    if (user.role === Role.BODEGA && !user.warehouseId) {
-      throw new UnauthorizedException('El usuario de bodega no tiene una bodega asignada');
-    }
-
-    if (user.client && !user.client.isActive) {
-      throw new UnauthorizedException('Credenciales inválidas');
-    }
-
-    if (user.employee && !user.employee.isActive) {
-      throw new UnauthorizedException('Credenciales inválidas');
-    }
+    this.ensureUserCanAuthenticate(user);
 
     if (!this.verifyPassword(loginDto.password, user.password)) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
+
+    return this.authResponse(user);
+  }
+
+  async refresh(refreshToken: string) {
+    const payload = this.jwtStrategy.validate(refreshToken, 'refresh');
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+      include: this.userInclude,
+    });
+
+    this.ensureUserCanAuthenticate(user);
 
     return this.authResponse(user);
   }
@@ -125,11 +127,30 @@ export class AuthService {
 
     return {
       accessToken: this.jwtStrategy.sign(payload),
+      refreshToken: this.jwtStrategy.signRefresh(payload),
       user: safeUser,
       client,
       employee,
       role: user.role,
     };
+  }
+
+  private ensureUserCanAuthenticate(user) {
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    if (user.role === Role.BODEGA && !user.warehouseId) {
+      throw new UnauthorizedException('El usuario de bodega no tiene una bodega asignada');
+    }
+
+    if (user.client && !user.client.isActive) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    if (user.employee && !user.employee.isActive) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
   }
 
   private readonly userInclude = {

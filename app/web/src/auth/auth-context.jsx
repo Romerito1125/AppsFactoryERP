@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 
-const AUTH_STORAGE_KEY = 'mmm-auth-session'
+export const AUTH_STORAGE_KEY = 'mmm-auth-session'
 
 const AuthContext = createContext(null)
 
@@ -25,6 +25,16 @@ export function getStoredSession() {
   }
 }
 
+export function storeSession(nextSession) {
+  if (nextSession) {
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextSession))
+  } else {
+    localStorage.removeItem(AUTH_STORAGE_KEY)
+  }
+
+  window.dispatchEvent(new CustomEvent('auth:session-updated', { detail: nextSession }))
+}
+
 export function defaultRouteForRole(role) {
   if (role === 'ADMIN') {
     return '/dashboard'
@@ -44,14 +54,24 @@ export function defaultRouteForRole(role) {
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(() => getStoredSession())
 
+  useEffect(() => {
+    function handleSessionUpdated(event) {
+      setSession(event.detail ?? getStoredSession())
+    }
+
+    window.addEventListener('auth:session-updated', handleSessionUpdated)
+
+    return () => window.removeEventListener('auth:session-updated', handleSessionUpdated)
+  }, [])
+
   function login(nextSession) {
     setSession(nextSession)
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextSession))
+    storeSession(nextSession)
   }
 
   function logout() {
     setSession(null)
-    localStorage.removeItem(AUTH_STORAGE_KEY)
+    storeSession(null)
   }
 
   const value = useMemo(

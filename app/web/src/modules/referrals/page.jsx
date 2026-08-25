@@ -19,7 +19,6 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
-import { getStoredSession } from '@/auth/auth-context'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -200,34 +199,7 @@ function normalizeGenerationRows(networkPayload, statsPayload, policies) {
 }
 
 async function putProfitConfiguration(payload) {
-  if (typeof apiClient.put === 'function') {
-    return apiClient.put(PROFIT_CONFIGURATION_PATH, payload)
-  }
-
-  const baseUrl = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
-  const response = await fetch(`${baseUrl}${PROFIT_CONFIGURATION_PATH}`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(getStoredSession()?.accessToken ? { Authorization: `Bearer ${getStoredSession().accessToken}` } : {}),
-    },
-    body: JSON.stringify(payload),
-  })
-  const text = await response.text()
-  let responsePayload
-
-  try {
-    responsePayload = text ? JSON.parse(text) : null
-  } catch {
-    responsePayload = text
-  }
-
-  if (!response.ok) {
-    const message = Array.isArray(responsePayload?.message) ? responsePayload.message.join(', ') : responsePayload?.message
-    throw new Error(message || 'No se pudo guardar la configuracion de utilidades')
-  }
-
-  return responsePayload
+  return apiClient.put(PROFIT_CONFIGURATION_PATH, payload)
 }
 
 const createReferralSchema = z.object({

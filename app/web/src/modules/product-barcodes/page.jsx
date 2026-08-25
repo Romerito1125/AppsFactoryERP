@@ -7,6 +7,7 @@ import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { z } from 'zod'
 
+import { BarcodeReaderDialog } from '@/components/barcode-reader-dialog'
 import { BarcodeScannerDialog } from '@/components/barcode-scanner-dialog'
 import { ProductImage } from '@/components/product-image'
 import { Badge } from '@/components/ui/badge'
@@ -84,6 +85,7 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
   const fileInputRef = useRef(null)
   const [scanLoading, setScanLoading] = useState(false)
   const [cameraScannerOpen, setCameraScannerOpen] = useState(false)
+  const [readerOpen, setReaderOpen] = useState(false)
   const [productSearch, setProductSearch] = useState('')
   const [productPage, setProductPage] = useState(1)
   const deferredProductSearch = useDeferredValue(productSearch)
@@ -199,7 +201,7 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
           <DialogTitle>{mode === 'create' ? 'Nuevo codigo de barras' : 'Actualizar codigo de barras'}</DialogTitle>
           <DialogDescription>
             {mode === 'create'
-              ? 'Asocia varios codigos a un producto, busca por foto y tambien puedes leer un codigo desde camara o imagen.'
+              ? 'Asocia varios codigos a un producto, busca por foto y tambien puedes leer un codigo desde camara, imagen o lector.'
               : 'Actualiza el codigo, su formato o el indicador principal del registro seleccionado.'}
           </DialogDescription>
         </DialogHeader>
@@ -298,6 +300,10 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
                           <ScanLine className="mr-2 size-4" />
                           Escanear camara
                         </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => setReaderOpen(true)}>
+                          <ScanLine className="mr-2 size-4" />
+                          Escanear con lector
+                        </Button>
                         <Button
                           type="button"
                           variant="outline"
@@ -380,6 +386,14 @@ function BarcodeFormDialog({ open, onOpenChange, mode, barcode, preset, onSubmit
           onDetected={handleScannerDetected}
           title="Escanear codigo para el producto"
           description="Usa la camara para leer el codigo y completar el formulario automaticamente."
+        />
+
+        <BarcodeReaderDialog
+          open={readerOpen}
+          onOpenChange={setReaderOpen}
+          onDetected={handleScannerDetected}
+          title="Escanear código para el producto"
+          description="Usa el lector conectado al computador para completar el código automáticamente."
         />
       </DialogContent>
     </Dialog>
