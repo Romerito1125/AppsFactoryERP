@@ -1,236 +1,187 @@
-import { getStoredSession, storeSession } from '@/auth/auth-context'
+const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "/api").replace(
+  /\/$/,
+  "",
+);
+const AUTH_STORAGE_KEY = "mmm-auth-session";
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL ?? '/api').replace(/\/$/, '')
-let refreshPromise = null
+let refreshPromise = null;
 
-function getBaseUrl() {
-  return new URL(API_BASE_URL, window.location.origin)
+export function getStoredSession() {
+  try {
+    const value = localStorage.getItem(AUTH_STORAGE_KEY);
+    return value ? JSON.parse(value) : null;
+  } catch {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    return null;
+  }
 }
 
-function isFormDataBody(body) {
-  return typeof FormData !== 'undefined' && body instanceof FormData
+export function storeSession(session) {
+  if (session) localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+  else localStorage.removeItem(AUTH_STORAGE_KEY);
+  window.dispatchEvent(
+    new CustomEvent("auth:session-updated", { detail: session }),
+  );
 }
 
 function buildUrl(path, params) {
-  const baseUrl = getBaseUrl()
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`
-  const url = new URL(`${baseUrl.pathname.replace(/\/$/, '')}${normalizedPath}`, baseUrl.origin)
-
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const url = new URL(
+    `${API_BASE_URL}${normalizedPath}`,
+    window.location.origin,
+  );
   Object.entries(params ?? {}).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === '') {
-      return
-    }
-
-    url.searchParams.set(key, String(value))
-  })
-
-  return baseUrl.origin === window.location.origin ? `${url.pathname}${url.search}` : url.toString()
+    if (value !== undefined && value !== null && value !== "")
+      url.searchParams.set(key, String(value));
+  });
+  return url.toString();
 }
 
-function getErrorMessage(payload, fallback) {
-  if (!payload) {
-    return fallback
-  }
-
-  if (typeof payload === 'string') {
-    return payload
-  }
-
-  if (Array.isArray(payload.message)) {
-    return payload.message.join(', ')
-  }
-
-  if (payload.message) {
-    return payload.message
-  }
-
-  return fallback
-}
-
-function parseResponsePayload(text) {
-  if (!text) {
-    return null
-  }
-
+function parsePayload(text) {
+  if (!text) return null;
   try {
-    return JSON.parse(text)
+    return JSON.parse(text);
   } catch {
-    return text
+    return text;
   }
+}
+
+function errorMessage(payload, fallback) {
+  if (Array.isArray(payload?.message)) return payload.message.join(", ");
+  if (payload?.message) return payload.message;
+  if (typeof payload === "string" && payload) return payload;
+  return fallback;
 }
 
 function isAuthPath(path) {
-  return path === '/auth/login' || path === '/auth/registro' || path === '/auth/refresh'
+  return ["/auth/login", "/auth/refresh"].includes(path);
 }
 
-function getAccessTokenExpiration(token) {
+function tokenIsNearExpiry(token) {
   try {
-    const encodedPayload = token.split('.')[1]
-
-    if (!encodedPayload) {
-      return null
-    }
-
-    const normalizedPayload = encodedPayload.replace(/-/g, '+').replace(/_/g, '/')
-    const paddedPayload = normalizedPayload.padEnd(Math.ceil(normalizedPayload.length / 4) * 4, '=')
-    const payload = JSON.parse(atob(paddedPayload))
-
-    return Number.isFinite(Number(payload.exp)) ? Number(payload.exp) : null
+    const encoded = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(
+      atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "=")),
+    );
+    return Number(payload.exp) - Math.floor(Date.now() / 1000) <= 300;
   } catch {
-    return null
+    return false;
   }
-}
-
-function shouldRefreshAccessToken(token) {
-  const expiresAt = getAccessTokenExpiration(token)
-
-  if (!expiresAt) {
-    return false
-  }
-
-  return expiresAt - Math.floor(Date.now() / 1000) <= 300
 }
 
 async function refreshAccessToken() {
-  const storedSession = getStoredSession()
-  const refreshToken = storedSession?.refreshToken
-
-  if (!refreshToken) {
-    storeSession(null)
-    return false
-  }
-
+  const current = getStoredSession();
+  if (!current?.refreshToken) return false;
   if (!refreshPromise) {
-    refreshPromise = (async () => {
-      let response
-
-      try {
-        response = await fetch(buildUrl('/auth/refresh'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken }),
-        })
-      } catch {
-        return false
-      }
-
-      const payload = parseResponsePayload(await response.text())
-
-      if (!response.ok || !payload?.accessToken || !payload?.refreshToken) {
-        storeSession(null)
-        return false
-      }
-
-      storeSession({
-        ...storedSession,
-        accessToken: payload.accessToken,
-        refreshToken: payload.refreshToken,
-      })
-
-      return true
-    })().finally(() => {
-      refreshPromise = null
+    refreshPromise = fetch(buildUrl("/auth/refresh"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken: current.refreshToken }),
     })
+      .then(async (response) => {
+        const payload = parsePayload(await response.text());
+        if (!response.ok || !payload?.accessToken || !payload?.refreshToken) {
+          storeSession(null);
+          return false;
+        }
+        storeSession({ ...current, ...payload });
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => {
+        refreshPromise = null;
+      });
   }
-
-  return refreshPromise
+  return refreshPromise;
 }
 
 async function request(path, options = {}, params, allowRefresh = true) {
-  const isFormData = isFormDataBody(options.body)
-  let accessToken = getStoredSession()?.accessToken
-
-  if (accessToken && allowRefresh && !isAuthPath(path) && shouldRefreshAccessToken(accessToken)) {
-    await refreshAccessToken()
-    accessToken = getStoredSession()?.accessToken
+  let session = getStoredSession();
+  if (
+    session?.accessToken &&
+    allowRefresh &&
+    !isAuthPath(path) &&
+    tokenIsNearExpiry(session.accessToken)
+  ) {
+    await refreshAccessToken();
+    session = getStoredSession();
   }
-
-  let response
-
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
+  let response;
   try {
     response = await fetch(buildUrl(path, params), {
+      ...options,
       headers: {
-        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...(isFormData ? {} : { "Content-Type": "application/json" }),
+        ...(session?.accessToken
+          ? { Authorization: `Bearer ${session.accessToken}` }
+          : {}),
         ...(options.headers ?? {}),
       },
-      ...options,
-    })
+    });
   } catch {
-    throw new Error('No se pudo conectar con el servidor. Verifica que el API local este iniciado.')
+    throw new Error(
+      "No se pudo conectar con el API. Verifica que el servidor esté iniciado.",
+    );
   }
-
-  const text = await response.text()
-  const payload = parseResponsePayload(text)
-
-  if (response.status === 401 && accessToken && allowRefresh && !isAuthPath(path)) {
-    const refreshed = await refreshAccessToken()
-
-    if (refreshed) {
-      return request(path, options, params, false)
-    }
-
-    if (!getStoredSession()?.refreshToken) {
-      throw new Error('Tu sesión expiró y no pudo renovarse. Inicia sesión nuevamente.')
-    }
-
-    throw new Error('No se pudo renovar la sesión. Verifica tu conexión e inténtalo nuevamente.')
+  const payload = parsePayload(await response.text());
+  if (
+    response.status === 401 &&
+    session?.accessToken &&
+    allowRefresh &&
+    !isAuthPath(path)
+  ) {
+    if (await refreshAccessToken())
+      return request(path, options, params, false);
+    throw new Error("Tu sesión expiró. Inicia sesión nuevamente.");
   }
-
-  if (!response.ok) {
-    throw new Error(getErrorMessage(payload, 'No se pudo completar la solicitud'))
+  if (response.status === 401 && !session?.accessToken && !isAuthPath(path)) {
+    throw new Error("Necesitas iniciar sesión para realizar esta acción.");
   }
-
-  return payload
-}
-
-function withBody(body) {
-  if (body === undefined) {
-    return undefined
-  }
-
-  return isFormDataBody(body) ? body : JSON.stringify(body)
+  if (!response.ok)
+    throw new Error(errorMessage(payload, "No se pudo completar la solicitud"));
+  return payload;
 }
 
 export const apiClient = {
-  get: (path, params) => request(path, { method: 'GET' }, params),
-  getAllPages: async (path, params = {}, options = {}) => {
-    const pageSize = options.limit ?? 200
-    const firstPage = await request(path, { method: 'GET' }, { ...params, page: 1, limit: pageSize })
-
-    if (Array.isArray(firstPage)) {
-      return firstPage
-    }
-
-    const totalPages = Number(firstPage?.totalPages ?? 1)
-    const pages = [firstPage]
-
-    if (totalPages > 1) {
-      const remainingPages = await Promise.all(
-        Array.from({ length: totalPages - 1 }, (_, index) =>
-          request(path, { method: 'GET' }, { ...params, page: index + 2, limit: pageSize }),
-        ),
-      )
-
-      pages.push(...remainingPages)
-    }
-
-    return pages.flatMap((payload) => payload?.data ?? [])
+  get: (path, params) => request(path, { method: "GET" }, params),
+  getAllPages: async (path, params = {}) => {
+    const first = await request(
+      path,
+      { method: "GET" },
+      { ...params, page: 1, limit: 250 },
+    );
+    if (Array.isArray(first)) return first;
+    const pages = [first];
+    const totalPages = Number(first?.totalPages ?? 1);
+    if (totalPages > 1)
+      pages.push(
+        ...(await Promise.all(
+          Array.from({ length: totalPages - 1 }, (_, index) =>
+            request(
+              path,
+              { method: "GET" },
+              { ...params, page: index + 2, limit: 250 },
+            ),
+          ),
+        )),
+      );
+    return pages.flatMap((page) => page?.data ?? []);
   },
   post: (path, body) =>
-    request(path, {
-      method: 'POST',
-      body: withBody(body),
-    }),
-  put: (path, body) =>
-    request(path, {
-      method: 'PUT',
-      body: withBody(body),
-    }),
+    request(path, { method: "POST", body: JSON.stringify(body) }),
   patch: (path, body) =>
-    request(path, {
-      method: 'PATCH',
-      body: withBody(body),
-    }),
-  delete: (path) => request(path, { method: 'DELETE' }),
-}
+    request(path, { method: "PATCH", body: JSON.stringify(body) }),
+  delete: (path) => request(path, { method: "DELETE" }),
+  upload: (path, formData, method = "PATCH") =>
+    request(path, { method, body: formData }),
+  login: async (email, password) => {
+    const session = await request("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+    storeSession(session);
+    return session;
+  },
+};

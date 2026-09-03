@@ -23,28 +23,66 @@ const DEFAULT_CATEGORY_THEME: ImageTheme = {
 
 const THEME_BY_KEYWORD: Array<{ keywords: string[]; theme: ImageTheme }> = [
   {
-    keywords: ['cafe', 'coffee', 'bebida', 'bebidas', 'lacteo', 'lacteos', 'te'],
-    theme: { bgStart: '#4a2c1d', bgEnd: '#8a5a35', accent: '#f6ad55', badge: '#fff7ed' },
+    keywords: [
+      'cafe',
+      'coffee',
+      'bebida',
+      'bebidas',
+      'lacteo',
+      'lacteos',
+      'te',
+    ],
+    theme: {
+      bgStart: '#4a2c1d',
+      bgEnd: '#8a5a35',
+      accent: '#f6ad55',
+      badge: '#fff7ed',
+    },
   },
   {
     keywords: ['condimento', 'condimentos', 'especia', 'especias', 'sazon'],
-    theme: { bgStart: '#5b2c06', bgEnd: '#b45309', accent: '#fcd34d', badge: '#fffbeb' },
+    theme: {
+      bgStart: '#5b2c06',
+      bgEnd: '#b45309',
+      accent: '#fcd34d',
+      badge: '#fffbeb',
+    },
   },
   {
     keywords: ['snack', 'desayuno', 'galleta', 'granola'],
-    theme: { bgStart: '#43315c', bgEnd: '#7c3aed', accent: '#f9a8d4', badge: '#faf5ff' },
+    theme: {
+      bgStart: '#43315c',
+      bgEnd: '#7c3aed',
+      accent: '#f9a8d4',
+      badge: '#faf5ff',
+    },
   },
   {
     keywords: ['limpieza', 'aseo', 'hogar', 'detergente'],
-    theme: { bgStart: '#0f3d5e', bgEnd: '#0284c7', accent: '#a5f3fc', badge: '#ecfeff' },
+    theme: {
+      bgStart: '#0f3d5e',
+      bgEnd: '#0284c7',
+      accent: '#a5f3fc',
+      badge: '#ecfeff',
+    },
   },
   {
     keywords: ['cuidado', 'personal', 'higiene', 'belleza'],
-    theme: { bgStart: '#5b2157', bgEnd: '#c026d3', accent: '#f5d0fe', badge: '#fdf4ff' },
+    theme: {
+      bgStart: '#5b2157',
+      bgEnd: '#c026d3',
+      accent: '#f5d0fe',
+      badge: '#fdf4ff',
+    },
   },
   {
     keywords: ['abarrote', 'despensa', 'arroz', 'aceite', 'atun', 'pasta'],
-    theme: { bgStart: '#24411f', bgEnd: '#4d7c0f', accent: '#fde68a', badge: '#fefce8' },
+    theme: {
+      bgStart: '#24411f',
+      bgEnd: '#4d7c0f',
+      accent: '#fde68a',
+      badge: '#fefce8',
+    },
   },
 ];
 
@@ -103,7 +141,10 @@ export function buildCatalogImageDataUri(
   const theme = pickTheme(label, kind);
   const initials = toInitials(label, kind);
   const badge = kind === 'category' ? 'Categoria' : 'Producto';
-  const subtitle = String(label ?? '').trim().slice(0, 28) || badge;
+  const subtitle =
+    String(label ?? '')
+      .trim()
+      .slice(0, 28) || badge;
 
   const svg = `
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img" aria-label="${escapeSvgText(

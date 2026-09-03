@@ -111,7 +111,6 @@ export class ProductPricesService {
         },
         include: { product: true },
       });
-
     });
 
     await this.auditLogService.log({
@@ -300,8 +299,10 @@ export class ProductPricesService {
         ? new Date(dto.endsAt)
         : null
       : undefined;
-    const finalStartsAt = startsAt === undefined ? current?.startsAt ?? undefined : startsAt;
-    const finalEndsAt = endsAt === undefined ? current?.endsAt ?? undefined : endsAt;
+    const finalStartsAt =
+      startsAt === undefined ? (current?.startsAt ?? undefined) : startsAt;
+    const finalEndsAt =
+      endsAt === undefined ? (current?.endsAt ?? undefined) : endsAt;
 
     if (finalStartsAt && finalEndsAt && finalEndsAt <= finalStartsAt) {
       throw new BadRequestException(

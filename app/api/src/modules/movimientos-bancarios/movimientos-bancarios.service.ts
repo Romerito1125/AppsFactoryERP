@@ -24,7 +24,9 @@ export class MovimientosBancariosService {
   async findAll(query: ListBankMovementsQueryDto) {
     const where = {
       ...this.getTypeWhere(query.movementType),
-      ...(query.appliesGmf === undefined ? {} : { appliesGmf: query.appliesGmf }),
+      ...(query.appliesGmf === undefined
+        ? {}
+        : { appliesGmf: query.appliesGmf }),
       ...this.getSearchWhere(query.q),
     };
     const { page, limit, skip, take } = resolvePagination(query);
@@ -204,9 +206,15 @@ export class MovimientosBancariosService {
 
     return {
       OR: [
-        { bankAccount: { name: { contains: q, mode: 'insensitive' as const } } },
+        {
+          bankAccount: { name: { contains: q, mode: 'insensitive' as const } },
+        },
         { description: { contains: q, mode: 'insensitive' as const } },
-        { invoice: { consecutive: { contains: q, mode: 'insensitive' as const } } },
+        {
+          invoice: {
+            consecutive: { contains: q, mode: 'insensitive' as const },
+          },
+        },
       ],
     };
   }

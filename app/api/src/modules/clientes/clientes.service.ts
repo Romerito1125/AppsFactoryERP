@@ -145,7 +145,11 @@ export class ClientesService {
       }
     }
 
-    if (!current.user && (normalizedEmail !== undefined || hasPassword) && (!normalizedEmail || !password)) {
+    if (
+      !current.user &&
+      (normalizedEmail !== undefined || hasPassword) &&
+      (!normalizedEmail || !password)
+    ) {
       throw new BadRequestException(
         'Para crear el acceso de la app debes indicar correo y contraseña',
       );

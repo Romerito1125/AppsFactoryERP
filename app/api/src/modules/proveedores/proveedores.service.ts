@@ -85,7 +85,9 @@ export class ProveedoresService {
       where: { id },
       data: {
         ...dto,
-        ...(dto.taxId !== undefined ? { taxId: dto.taxId?.trim() || null } : {}),
+        ...(dto.taxId !== undefined
+          ? { taxId: dto.taxId?.trim() || null }
+          : {}),
       },
     });
     await this.auditLogService.log({

@@ -29,6 +29,7 @@
     "db:seed:quick-access": "bun scripts/seed-quick-access-and-mobile-orders.js",
     "db:seed:barcode-examples": "bun scripts/seed-product-barcode-examples.js",
     "db:seed:business-examples": "bun scripts/seed-business-examples.js",
+    "db:seed:payables-examples": "bun scripts/seed-payables-examples.js",
     "db:seed:product-type-images": "bun scripts/fill-product-type-images.js",
     "db:seed:fix-demo-product-images": "bun scripts/fix-demo-product-images.js"
   },

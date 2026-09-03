@@ -123,9 +123,12 @@ export class AuditLogService {
       APROBACIONES: ['APPROVE', 'VALIDATE'],
       MOVIMIENTOS: ['EXIT', 'TRANSFER', 'ADJUSTMENT'],
     };
-    const prefixes = actionGroupPrefixes[query.actionGroup?.trim().toUpperCase() ?? ''];
+    const prefixes =
+      actionGroupPrefixes[query.actionGroup?.trim().toUpperCase() ?? ''];
     if (prefixes?.length) {
-      and.push({ OR: prefixes.map((prefix) => ({ action: { startsWith: prefix } })) });
+      and.push({
+        OR: prefixes.map((prefix) => ({ action: { startsWith: prefix } })),
+      });
     }
 
     if (query.startDate || query.endDate) {
@@ -140,14 +143,16 @@ export class AuditLogService {
     }
 
     if (q) {
-      and.push({ OR: [
-        { username: { contains: q, mode: 'insensitive' } },
-        { module: { contains: q, mode: 'insensitive' } },
-        { action: { contains: q, mode: 'insensitive' } },
-        { entityType: { contains: q, mode: 'insensitive' } },
-        { entityLabel: { contains: q, mode: 'insensitive' } },
-        { description: { contains: q, mode: 'insensitive' } },
-      ] });
+      and.push({
+        OR: [
+          { username: { contains: q, mode: 'insensitive' } },
+          { module: { contains: q, mode: 'insensitive' } },
+          { action: { contains: q, mode: 'insensitive' } },
+          { entityType: { contains: q, mode: 'insensitive' } },
+          { entityLabel: { contains: q, mode: 'insensitive' } },
+          { description: { contains: q, mode: 'insensitive' } },
+        ],
+      });
     }
 
     if (and.length) where.AND = and;

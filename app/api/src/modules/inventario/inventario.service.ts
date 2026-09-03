@@ -77,7 +77,10 @@ export class InventarioService {
             productType: true,
             primaryProvider: true,
             packagingProfile: true,
-            providers: { include: { provider: true }, orderBy: { providerId: 'asc' } },
+            providers: {
+              include: { provider: true },
+              orderBy: { providerId: 'asc' },
+            },
           },
         },
         warehouse: true,
@@ -102,7 +105,10 @@ export class InventarioService {
             productType: true,
             primaryProvider: true,
             packagingProfile: true,
-            providers: { include: { provider: true }, orderBy: { providerId: 'asc' } },
+            providers: {
+              include: { provider: true },
+              orderBy: { providerId: 'asc' },
+            },
           },
         },
         warehouse: true,
@@ -306,8 +312,10 @@ export class InventarioService {
       action: 'APPROVE_TRANSFER',
       entityType: 'InventoryTransferTicket',
       entityId: movement.transferTicket?.id ?? movement.id,
-      entityLabel: movement.transferTicket?.ticketNumber ?? movement.product?.name,
-      description: `Aprobo el traslado ${movement.transferTicket?.ticketNumber ?? ''}`.trim(),
+      entityLabel:
+        movement.transferTicket?.ticketNumber ?? movement.product?.name,
+      description:
+        `Aprobo el traslado ${movement.transferTicket?.ticketNumber ?? ''}`.trim(),
       metadata: {
         movementId: movement.id,
         ticketNumber: movement.transferTicket?.ticketNumber,
@@ -525,10 +533,30 @@ export class InventarioService {
       OR: [
         { name: { contains: q, mode: 'insensitive' as const } },
         { brand: { contains: q, mode: 'insensitive' as const } },
-        { productType: { name: { contains: q, mode: 'insensitive' as const } } },
-        { primaryProvider: { name: { contains: q, mode: 'insensitive' as const } } },
-        { providers: { some: { provider: { name: { contains: q, mode: 'insensitive' as const } } } } },
-        { warehouses: { some: { warehouse: { location: { contains: q, mode: 'insensitive' as const } } } } },
+        {
+          productType: { name: { contains: q, mode: 'insensitive' as const } },
+        },
+        {
+          primaryProvider: {
+            name: { contains: q, mode: 'insensitive' as const },
+          },
+        },
+        {
+          providers: {
+            some: {
+              provider: { name: { contains: q, mode: 'insensitive' as const } },
+            },
+          },
+        },
+        {
+          warehouses: {
+            some: {
+              warehouse: {
+                location: { contains: q, mode: 'insensitive' as const },
+              },
+            },
+          },
+        },
       ],
     };
   }
@@ -561,8 +589,16 @@ export class InventarioService {
     return {
       OR: [
         { product: { name: { contains: q, mode: 'insensitive' as const } } },
-        { fromWarehouse: { location: { contains: q, mode: 'insensitive' as const } } },
-        { toWarehouse: { location: { contains: q, mode: 'insensitive' as const } } },
+        {
+          fromWarehouse: {
+            location: { contains: q, mode: 'insensitive' as const },
+          },
+        },
+        {
+          toWarehouse: {
+            location: { contains: q, mode: 'insensitive' as const },
+          },
+        },
         { reason: { contains: q, mode: 'insensitive' as const } },
         {
           transferTicket: {

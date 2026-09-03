@@ -10,7 +10,11 @@ export class JwtStrategy {
   sign(payload: AuthUser, tokenType: TokenType = 'access') {
     const header = this.encode({ alg: 'HS256', typ: 'JWT' });
     const now = Math.floor(Date.now() / 1000);
-    const expiresIn = this.parseExpiresIn(tokenType === 'refresh' ? envs.jwt.refreshExpiresIn ?? 'never' : envs.jwt.expiresIn ?? '1d');
+    const expiresIn = this.parseExpiresIn(
+      tokenType === 'refresh'
+        ? (envs.jwt.refreshExpiresIn ?? 'never')
+        : (envs.jwt.expiresIn ?? '1d'),
+    );
     const body = this.encode({
       ...payload,
       tokenType,

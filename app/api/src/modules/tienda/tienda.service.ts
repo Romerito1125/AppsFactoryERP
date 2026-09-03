@@ -44,7 +44,10 @@ export class TiendaService {
     return buildPaginatedResponse(data, total, page, limit);
   }
 
-  async findClientOrders(clientId: number | null | undefined, query: ListStoreOrdersQueryDto) {
+  async findClientOrders(
+    clientId: number | null | undefined,
+    query: ListStoreOrdersQueryDto,
+  ) {
     if (!clientId) {
       throw new ForbiddenException('La sesión no tiene un cliente asociado');
     }
@@ -158,9 +161,14 @@ export class TiendaService {
     });
   }
 
-  async createOrder(createStoreOrderDto: CreateStoreOrderDto, authUser: AuthUser) {
+  async createOrder(
+    createStoreOrderDto: CreateStoreOrderDto,
+    authUser: AuthUser,
+  ) {
     if (authUser.clientId !== createStoreOrderDto.clientId) {
-      throw new ForbiddenException('Solo puedes crear pedidos para tu propia cuenta');
+      throw new ForbiddenException(
+        'Solo puedes crear pedidos para tu propia cuenta',
+      );
     }
 
     return this.facturasService.create(
@@ -240,7 +248,8 @@ export class TiendaService {
     const currentPrices = product.prices.filter((price) =>
       this.isPriceActive(price, now),
     );
-    const currentPrice = currentPrices.find((price) => price.isDefault) ?? currentPrices[0];
+    const currentPrice =
+      currentPrices.find((price) => price.isDefault) ?? currentPrices[0];
     const { offers: productTypeOffers, ...productType } = product.productType;
     const tags = product.tags.map((item) => {
       const { offers, ...tag } = item.tag;
@@ -409,12 +418,28 @@ export class TiendaService {
     return {
       OR: [
         { consecutive: { contains: q, mode: 'insensitive' as const } },
-        { client: { firstName: { contains: q, mode: 'insensitive' as const } } },
+        {
+          client: { firstName: { contains: q, mode: 'insensitive' as const } },
+        },
         { client: { lastName: { contains: q, mode: 'insensitive' as const } } },
-        { client: { identification: { contains: q, mode: 'insensitive' as const } } },
-        { delivery: { address: { contains: q, mode: 'insensitive' as const } } },
-        { delivery: { recipientName: { contains: q, mode: 'insensitive' as const } } },
-        { delivery: { recipientPhone: { contains: q, mode: 'insensitive' as const } } },
+        {
+          client: {
+            identification: { contains: q, mode: 'insensitive' as const },
+          },
+        },
+        {
+          delivery: { address: { contains: q, mode: 'insensitive' as const } },
+        },
+        {
+          delivery: {
+            recipientName: { contains: q, mode: 'insensitive' as const },
+          },
+        },
+        {
+          delivery: {
+            recipientPhone: { contains: q, mode: 'insensitive' as const },
+          },
+        },
       ],
     };
   }

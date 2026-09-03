@@ -55,7 +55,10 @@ export class ReferralsService {
       }),
     ]);
 
-    const byGeneration = new Map<number, { generated: number; available: number; used: number; socialWork: number }>();
+    const byGeneration = new Map<
+      number,
+      { generated: number; available: number; used: number; socialWork: number }
+    >();
     const ensureGeneration = (generation: number) => {
       const current = byGeneration.get(generation);
       if (current) return current;
@@ -101,7 +104,9 @@ export class ReferralsService {
         .sort(([left], [right]) => left - right)
         .map(([generation, values]) => ({
           generation,
-          ...Object.fromEntries(Object.entries(values).map(([key, value]) => [key, round(value)])),
+          ...Object.fromEntries(
+            Object.entries(values).map(([key, value]) => [key, round(value)]),
+          ),
         })),
     };
   }
@@ -135,8 +140,13 @@ export class ReferralsService {
         include: this.referralInclude,
       });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictException('El cliente ya fue registrado como referido');
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'El cliente ya fue registrado como referido',
+        );
       }
 
       throw error;
@@ -144,8 +154,10 @@ export class ReferralsService {
   }
 
   async validate(validateReferralDto: ValidateReferralDto, actor?: AuthUser) {
-    const { referrerClient } =
-      await this.validateReferralRules(validateReferralDto, actor);
+    const { referrerClient } = await this.validateReferralRules(
+      validateReferralDto,
+      actor,
+    );
 
     return {
       valid: true,
@@ -157,9 +169,17 @@ export class ReferralsService {
     };
   }
 
-  private async validateReferralRules(dto: ValidateReferralDto, actor?: AuthUser) {
-    if (actor?.role === Role.CLIENTE && actor.clientId !== dto.referredClientId) {
-      throw new ForbiddenException('Solo puedes vincular un referido a tu propia cuenta');
+  private async validateReferralRules(
+    dto: ValidateReferralDto,
+    actor?: AuthUser,
+  ) {
+    if (
+      actor?.role === Role.CLIENTE &&
+      actor.clientId !== dto.referredClientId
+    ) {
+      throw new ForbiddenException(
+        'Solo puedes vincular un referido a tu propia cuenta',
+      );
     }
 
     const codeUsed = dto.codeUsed.trim().toUpperCase();
@@ -320,7 +340,8 @@ export class ReferralsService {
           create: {
             generation: policy.generation,
             percentage: policy.percentage,
-            isActive: policy.generation === 4 ? true : policy.isActive ?? true,
+            isActive:
+              policy.generation === 4 ? true : (policy.isActive ?? true),
             isSocialWork: policy.generation === 4,
           },
           update: {
@@ -379,7 +400,10 @@ export class ReferralsService {
             isActive: true,
             isSocialWork: policy.generation === 4,
           },
-          update: { isSocialWork: policy.generation === 4, ...(policy.generation === 4 ? { isActive: true } : {}) },
+          update: {
+            isSocialWork: policy.generation === 4,
+            ...(policy.generation === 4 ? { isActive: true } : {}),
+          },
         }),
       ),
     );

@@ -1,5 +1,11 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsInt, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsArray,
+  IsInt,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 
 export class UpdateTagDto {
   @IsOptional()

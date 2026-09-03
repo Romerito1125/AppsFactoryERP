@@ -31,9 +31,13 @@ export class ComprasService {
 
   async findAll(query: ListPurchaseOrdersQueryDto, authUser?: AuthUser) {
     const warehouseId = this.resolveWarehouseScope(query.warehouseId, authUser);
-    const todayRange = authUser?.role === Role.BODEGA ? this.buildTodayRange() : undefined;
+    const todayRange =
+      authUser?.role === Role.BODEGA ? this.buildTodayRange() : undefined;
     const where: Prisma.PurchaseOrderWhereInput = {
-      status: authUser?.role === Role.BODEGA ? PurchaseOrderStatus.ORDENADA : query.status,
+      status:
+        authUser?.role === Role.BODEGA
+          ? PurchaseOrderStatus.ORDENADA
+          : query.status,
       providerId: query.providerId,
       warehouseId,
       ...(todayRange ? { expectedAt: todayRange } : {}),
@@ -70,7 +74,12 @@ export class ComprasService {
       orderBy: [{ expectedAt: 'asc' }, { id: 'asc' }],
     });
 
-    return buildPaginatedResponse(data, data.length, 1, Math.max(1, data.length));
+    return buildPaginatedResponse(
+      data,
+      data.length,
+      1,
+      Math.max(1, data.length),
+    );
   }
 
   async findOne(id: number, authUser?: AuthUser) {
@@ -474,9 +483,8 @@ export class ComprasService {
       }))
       .sort((a, b) => Number(b.total) - Number(a.total))
       .slice(0, query.topProducts ?? 10);
-    const byProductProvider = this.buildProductProviderBreakdown(
-      productProviderLines,
-    );
+    const byProductProvider =
+      this.buildProductProviderBreakdown(productProviderLines);
 
     return {
       totalPurchases: allSummary._count._all,
@@ -570,9 +578,13 @@ export class ComprasService {
         ...item,
         averageUnitCost:
           item.receivedQuantity > 0
-            ? item.unitCostWeighted.div(item.receivedQuantity).toDecimalPlaces(2)
+            ? item.unitCostWeighted
+                .div(item.receivedQuantity)
+                .toDecimalPlaces(2)
             : item.orderedQuantity > 0
-              ? item.unitCostWeighted.div(item.orderedQuantity).toDecimalPlaces(2)
+              ? item.unitCostWeighted
+                  .div(item.orderedQuantity)
+                  .toDecimalPlaces(2)
               : this.zero,
       }))
       .sort((a, b) => Number(b.total) - Number(a.total));
@@ -732,7 +744,9 @@ export class ComprasService {
     }
     const otherProvider = products.find(
       (product) =>
-        !product.providers.some((relation) => relation.providerId === providerId),
+        !product.providers.some(
+          (relation) => relation.providerId === providerId,
+        ),
     );
     if (otherProvider) {
       throw new BadRequestException(
@@ -863,16 +877,24 @@ export class ComprasService {
     }
   }
 
-  private resolveWarehouseScope(requestedWarehouseId?: number, authUser?: AuthUser) {
+  private resolveWarehouseScope(
+    requestedWarehouseId?: number,
+    authUser?: AuthUser,
+  ) {
     if (authUser?.role !== Role.BODEGA) return requestedWarehouseId;
     if (!authUser.warehouseId) {
-      throw new BadRequestException('El usuario de bodega no tiene una bodega asignada');
+      throw new BadRequestException(
+        'El usuario de bodega no tiene una bodega asignada',
+      );
     }
     return authUser.warehouseId;
   }
 
   private ensureWarehouseAccess(warehouseId: number, authUser?: AuthUser) {
-    if (authUser?.role === Role.BODEGA && warehouseId !== authUser.warehouseId) {
+    if (
+      authUser?.role === Role.BODEGA &&
+      warehouseId !== authUser.warehouseId
+    ) {
       throw new NotFoundException('Orden de compra no encontrada');
     }
   }

@@ -162,10 +162,14 @@ export class FacturasService {
 
       if (authUser.role === PrismaRole.BODEGA) {
         const invalidWarehouse = resolvedItems.some(
-          (item) => (item.warehouseId ?? createInvoiceDto.warehouseId) !== authUser.warehouseId,
+          (item) =>
+            (item.warehouseId ?? createInvoiceDto.warehouseId) !==
+            authUser.warehouseId,
         );
         if (invalidWarehouse || !authUser.warehouseId) {
-          throw new BadRequestException('El usuario de bodega solo puede facturar desde su bodega asignada');
+          throw new BadRequestException(
+            'El usuario de bodega solo puede facturar desde su bodega asignada',
+          );
         }
       }
 
@@ -182,9 +186,37 @@ export class FacturasService {
             {
               OR: [
                 { clients: { some: { clientId: client.id } } },
-                { products: { some: { productId: { in: groupedItems.map((item) => item.productId) } } } },
-                { productTypes: { some: { productTypeId: { in: groupedItems.map((item) => item.product.productTypeId) } } } },
-                { tags: { some: { tagId: { in: groupedItems.flatMap((item) => item.product.tags.map((tag) => tag.tagId)) } } } },
+                {
+                  products: {
+                    some: {
+                      productId: {
+                        in: groupedItems.map((item) => item.productId),
+                      },
+                    },
+                  },
+                },
+                {
+                  productTypes: {
+                    some: {
+                      productTypeId: {
+                        in: groupedItems.map(
+                          (item) => item.product.productTypeId,
+                        ),
+                      },
+                    },
+                  },
+                },
+                {
+                  tags: {
+                    some: {
+                      tagId: {
+                        in: groupedItems.flatMap((item) =>
+                          item.product.tags.map((tag) => tag.tagId),
+                        ),
+                      },
+                    },
+                  },
+                },
                 {
                   clients: { none: {} },
                   products: { none: {} },
@@ -248,9 +280,7 @@ export class FacturasService {
           );
         }
         const taxRate = Number(product.taxRate);
-        const grossSubtotal = this.roundMoney(
-          catalogUnitPrice * item.quantity,
-        );
+        const grossSubtotal = this.roundMoney(catalogUnitPrice * item.quantity);
         const netSubtotal = this.roundMoney(unitPrice * item.quantity);
         const currentCost = product.costs[0];
         let unitCost: number | null = null;
@@ -286,7 +316,10 @@ export class FacturasService {
         };
       });
 
-      if ((createInvoiceDto.source ?? InvoiceSource.ADMIN) === InvoiceSource.APP_MOVIL) {
+      if (
+        (createInvoiceDto.source ?? InvoiceSource.ADMIN) ===
+        InvoiceSource.APP_MOVIL
+      ) {
         await this.assignStoreWarehouses(tx, grossInvoiceItems);
       }
 
@@ -359,16 +392,17 @@ export class FacturasService {
         ),
       );
       await this.decrementInvoiceStock(tx, grossInvoiceItems);
-      const availableBenefits = referralDiscount && createInvoiceDto.clientId
-        ? await tx.referralBenefit.findMany({
-            where: {
-              beneficiaryClientId: client.id,
-              status: ReferralBenefitStatus.DISPONIBLE,
-              remainingAmount: { gt: 0 },
-            },
-            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-          })
-        : [];
+      const availableBenefits =
+        referralDiscount && createInvoiceDto.clientId
+          ? await tx.referralBenefit.findMany({
+              where: {
+                beneficiaryClientId: client.id,
+                status: ReferralBenefitStatus.DISPONIBLE,
+                remainingAmount: { gt: 0 },
+              },
+              orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            })
+          : [];
       const availableDiscount = this.roundMoney(
         availableBenefits.reduce(
           (sum, benefit) => sum + Number(benefit.remainingAmount),
@@ -400,7 +434,8 @@ export class FacturasService {
       const invoice = await tx.invoice.create({
         data: {
           consecutive: this.generateConsecutive(),
-          validationStatus: authUser.role === PrismaRole.VENDEDOR ? 'PENDIENTE' : 'VALIDADA',
+          validationStatus:
+            authUser.role === PrismaRole.VENDEDOR ? 'PENDIENTE' : 'VALIDADA',
           clientId: client.id,
           warehouseId: this.resolveInvoiceWarehouseId(grossInvoiceItems),
           createdByUserId: creatorId,
@@ -454,7 +489,11 @@ export class FacturasService {
       entityId: invoice.id,
       entityLabel: invoice.consecutive,
       description: `Creo la factura ${invoice.consecutive}`,
-      metadata: { source: invoice.source, warehouseId: invoice.warehouseId, total: Number(invoice.total) },
+      metadata: {
+        source: invoice.source,
+        warehouseId: invoice.warehouseId,
+        total: Number(invoice.total),
+      },
     });
     return invoice;
   }
@@ -490,7 +529,11 @@ export class FacturasService {
     }
     return this.prisma.invoice.update({
       where: { id },
-      data: { validationStatus: 'VALIDADA', validatedAt: new Date(), validatedByUserId: actor.sub },
+      data: {
+        validationStatus: 'VALIDADA',
+        validatedAt: new Date(),
+        validatedByUserId: actor.sub,
+      },
       include: this.invoiceInclude,
     });
   }
@@ -792,7 +835,14 @@ export class FacturasService {
 
         if (policy.isSocialWork || generation === 4) {
           await tx.referralSocialContribution.create({
-            data: { buyerClientId, originInvoiceId, generation, baseProfit, percentage, amount },
+            data: {
+              buyerClientId,
+              originInvoiceId,
+              generation,
+              baseProfit,
+              percentage,
+              amount,
+            },
           });
           await this.notificacionesService.createSocialWorkNotification(tx, {
             invoiceId: originInvoiceId,
@@ -859,25 +909,51 @@ export class FacturasService {
   }
 
   private resolveInvoiceWarehouseId(items: Array<{ warehouseId?: number }>) {
-    const ids = [...new Set(items.map((item) => item.warehouseId).filter(Boolean))];
+    const ids = [
+      ...new Set(items.map((item) => item.warehouseId).filter(Boolean)),
+    ];
     return ids.length === 1 ? ids[0] : undefined;
   }
 
-  private async decrementInvoiceStock(tx: Prisma.TransactionClient, items: Array<{ productId: number; quantity: number; warehouseId?: number; productPriceId?: number; product: ResolvedInvoiceProduct }>) {
+  private async decrementInvoiceStock(
+    tx: Prisma.TransactionClient,
+    items: Array<{
+      productId: number;
+      quantity: number;
+      warehouseId?: number;
+      productPriceId?: number;
+      product: ResolvedInvoiceProduct;
+    }>,
+  ) {
     for (const item of items) {
       if (!item.warehouseId) continue;
-      const price = item.product.prices.find((candidate) => candidate.id === item.productPriceId);
+      const price = item.product.prices.find(
+        (candidate) => candidate.id === item.productPriceId,
+      );
       if (!price) continue;
-      const stockUnits = this.convertPriceQuantity(item.quantity * Number(price.quantity), price.unit, item.product, item.product.unit);
+      const stockUnits = this.convertPriceQuantity(
+        item.quantity * Number(price.quantity),
+        price.unit,
+        item.product,
+        item.product.unit,
+      );
       if (stockUnits === null || !Number.isInteger(stockUnits)) {
-        throw new BadRequestException(`No se puede convertir el empaque del producto ${item.product.name} a inventario`);
+        throw new BadRequestException(
+          `No se puede convertir el empaque del producto ${item.product.name} a inventario`,
+        );
       }
       const updated = await tx.productWarehouse.updateMany({
-        where: { productId: item.productId, warehouseId: item.warehouseId, quantity: { gte: stockUnits } },
+        where: {
+          productId: item.productId,
+          warehouseId: item.warehouseId,
+          quantity: { gte: stockUnits },
+        },
         data: { quantity: { decrement: stockUnits } },
       });
       if (updated.count !== 1) {
-        throw new BadRequestException(`Stock insuficiente de ${item.product.name} en la bodega seleccionada`);
+        throw new BadRequestException(
+          `Stock insuficiente de ${item.product.name} en la bodega seleccionada`,
+        );
       }
     }
   }
@@ -898,7 +974,9 @@ export class FacturasService {
       productUnits *= packaging.unitsPerPackage * packaging.packagesPerBox;
     }
     if (fromUnit === 'PAQUETE' || fromUnit === 'CAJA') {
-      return toUnit === product.unit ? productUnits : convertQuantity(productUnits, product.unit, toUnit);
+      return toUnit === product.unit
+        ? productUnits
+        : convertQuantity(productUnits, product.unit, toUnit);
     }
     return convertQuantity(quantity, fromUnit, toUnit);
   }
@@ -953,7 +1031,10 @@ export class FacturasService {
     return `FAC-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   }
 
-  private findSaleablePrice(product: ResolvedInvoiceProduct, productPriceId?: number) {
+  private findSaleablePrice(
+    product: ResolvedInvoiceProduct,
+    productPriceId?: number,
+  ) {
     const now = new Date();
     const isInSaleWindow = (price: ProductPrice) =>
       price.isActive &&
@@ -989,9 +1070,15 @@ export class FacturasService {
       OR: [
         { consecutive: { contains: q, mode: 'insensitive' as const } },
         {
-          client: { is: { firstName: { contains: q, mode: 'insensitive' as const } } },
+          client: {
+            is: { firstName: { contains: q, mode: 'insensitive' as const } },
+          },
         },
-        { client: { is: { lastName: { contains: q, mode: 'insensitive' as const } } } },
+        {
+          client: {
+            is: { lastName: { contains: q, mode: 'insensitive' as const } },
+          },
+        },
         {
           client: {
             is: {

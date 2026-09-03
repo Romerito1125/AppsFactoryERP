@@ -4,6 +4,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  Min,
   MinLength,
   Validate,
 } from 'class-validator';
@@ -103,7 +104,7 @@ export class InventoryAdjustmentDto {
 
   @Type(() => Number)
   @IsInt()
-  @IsPositive()
+  @Min(0)
   quantity: number;
 
   @IsString()

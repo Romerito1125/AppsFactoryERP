@@ -1,9 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  InvoiceSource,
-  NotificationType,
-  Prisma,
-} from '@prisma/client';
+import { InvoiceSource, NotificationType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 
 type InvoiceNotificationPayload = {
@@ -61,7 +57,8 @@ export class NotificacionesService {
       invoice.createdByRole,
       invoice.createdByUsername,
     );
-    const clientName = `${invoice.client.firstName} ${invoice.client.lastName}`.trim();
+    const clientName =
+      `${invoice.client.firstName} ${invoice.client.lastName}`.trim();
     const total = Number(invoice.total ?? 0);
 
     return tx.notification.create({

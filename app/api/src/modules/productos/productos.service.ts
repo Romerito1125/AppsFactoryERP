@@ -208,7 +208,8 @@ export class ProductosService {
       providerIds || productData.providerId
         ? this.resolveProviderIds(
             productData.providerId ?? currentProduct.providerId,
-            providerIds ?? currentProduct.providers.map((item) => item.providerId),
+            providerIds ??
+              currentProduct.providers.map((item) => item.providerId),
           )
         : null;
     const uploadedImage = image
@@ -454,6 +455,7 @@ export class ProductosService {
       orderBy: { warehouseId: 'asc' },
     },
     barcodes: { orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }] },
+    costs: { orderBy: [{ isActive: 'desc' }, { startsAt: 'desc' }] },
   };
 
   private readonly productBarcodeLookupInclude: Prisma.ProductInclude = {
@@ -506,8 +508,10 @@ export class ProductosService {
       });
     }
 
-    const providers = Array.from(providersById.values()).sort((left, right) =>
-      Number(right.isPrimary) - Number(left.isPrimary) || Number(left.id) - Number(right.id),
+    const providers = Array.from(providersById.values()).sort(
+      (left, right) =>
+        Number(right.isPrimary) - Number(left.isPrimary) ||
+        Number(left.id) - Number(right.id),
     );
 
     const totalStock = (product.warehouses ?? []).reduce(
@@ -703,7 +707,9 @@ export class ProductosService {
   }
 
   private async countFilteredProducts(filter: FilterProductsDto) {
-    const [row] = await this.prisma.$queryRaw<Array<{ total: bigint | number }>>(
+    const [row] = await this.prisma.$queryRaw<
+      Array<{ total: bigint | number }>
+    >(
       Prisma.sql`
         SELECT COUNT(*)::bigint AS total
         FROM "Product" p
@@ -883,10 +889,14 @@ export class ProductosService {
     }
   }
 
-  private resolveProviderIds(primaryProviderId: number, providerIds?: number[]) {
-    const relatedProviderIds = [primaryProviderId, ...(providerIds ?? [])].filter(
-      (value): value is number => Number.isInteger(value) && value > 0,
-    );
+  private resolveProviderIds(
+    primaryProviderId: number,
+    providerIds?: number[],
+  ) {
+    const relatedProviderIds = [
+      primaryProviderId,
+      ...(providerIds ?? []),
+    ].filter((value): value is number => Number.isInteger(value) && value > 0);
 
     return [...new Set(relatedProviderIds)];
   }

@@ -75,7 +75,12 @@ export function calculateOfferDiscount(
 ) {
   const value = Number(offer.discountValue);
 
-  if (!Number.isFinite(value) || value <= 0 || unitPrice <= 0 || quantity <= 0) {
+  if (
+    !Number.isFinite(value) ||
+    value <= 0 ||
+    unitPrice <= 0 ||
+    quantity <= 0
+  ) {
     return 0;
   }
 
@@ -90,11 +95,13 @@ export function calculateOfferDiscount(
   return Math.min(unitPrice, value) * quantity;
 }
 
-export function resolveOfferPricing<TOffer extends OfferTarget & {
-  discountType: DiscountType;
-  discountValue: unknown;
-  isStackable?: boolean | null;
-}>(
+export function resolveOfferPricing<
+  TOffer extends OfferTarget & {
+    discountType: DiscountType;
+    discountValue: unknown;
+    isStackable?: boolean | null;
+  },
+>(
   unitPrice: number | undefined,
   offers: TOffer[],
   context: OfferPricingContext,
@@ -118,16 +125,12 @@ export function resolveOfferPricing<TOffer extends OfferTarget & {
       calculateOfferDiscount(offer, unitPrice, context.quantity),
     ),
   }));
-  const stackableOffers = evaluatedOffers.filter(
-    (offer) => offer.isStackable,
-  );
+  const stackableOffers = evaluatedOffers.filter((offer) => offer.isStackable);
   const bestSingleOffer = evaluatedOffers.reduce<
     (typeof evaluatedOffers)[number] | undefined
   >(
     (best, offer) =>
-      !best || offer.estimatedDiscount > best.estimatedDiscount
-        ? offer
-        : best,
+      !best || offer.estimatedDiscount > best.estimatedDiscount ? offer : best,
     undefined,
   );
   const stackableDiscount = stackableOffers.reduce(
@@ -141,10 +144,10 @@ export function resolveOfferPricing<TOffer extends OfferTarget & {
         ? [bestSingleOffer]
         : [];
   const selectedDiscount = roundMoney(
-    Math.min(unitPrice * context.quantity, selectedOffers.reduce(
-      (sum, offer) => sum + offer.estimatedDiscount,
-      0,
-    )),
+    Math.min(
+      unitPrice * context.quantity,
+      selectedOffers.reduce((sum, offer) => sum + offer.estimatedDiscount, 0),
+    ),
   );
   const effectiveUnitPrice = roundMoney(
     Math.max(0, unitPrice - selectedDiscount / context.quantity),

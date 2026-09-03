@@ -200,9 +200,15 @@ export class CotizacionesService {
     return {
       OR: [
         { consecutive: { contains: q, mode: 'insensitive' as const } },
-        { client: { firstName: { contains: q, mode: 'insensitive' as const } } },
+        {
+          client: { firstName: { contains: q, mode: 'insensitive' as const } },
+        },
         { client: { lastName: { contains: q, mode: 'insensitive' as const } } },
-        { client: { identification: { contains: q, mode: 'insensitive' as const } } },
+        {
+          client: {
+            identification: { contains: q, mode: 'insensitive' as const },
+          },
+        },
       ],
     };
   }

@@ -108,7 +108,9 @@ export class AuthService {
   ) {
     const [client, user] = await Promise.all([
       this.prisma.client.findUnique({ where: { identification } }),
-      this.prisma.user.findUnique({ where: { username: email.trim().toLowerCase() } }),
+      this.prisma.user.findUnique({
+        where: { username: email.trim().toLowerCase() },
+      }),
     ]);
 
     if (client) throw new ConflictException('La identificación ya existe');
@@ -141,7 +143,9 @@ export class AuthService {
     }
 
     if (user.role === Role.BODEGA && !user.warehouseId) {
-      throw new UnauthorizedException('El usuario de bodega no tiene una bodega asignada');
+      throw new UnauthorizedException(
+        'El usuario de bodega no tiene una bodega asignada',
+      );
     }
 
     if (user.client && !user.client.isActive) {

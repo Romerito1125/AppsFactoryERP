@@ -26,7 +26,12 @@ export class CuentasBancariasService {
     const { page, limit, skip, take } = resolvePagination(filter);
     const [total, data] = await Promise.all([
       this.prisma.bankAccount.count({ where }),
-      this.prisma.bankAccount.findMany({ where, orderBy: { id: 'asc' }, skip, take }),
+      this.prisma.bankAccount.findMany({
+        where,
+        orderBy: { id: 'asc' },
+        skip,
+        take,
+      }),
     ]);
 
     return buildPaginatedResponse(data, total, page, limit);

@@ -221,7 +221,9 @@ export class TagsService {
     });
 
     if (products.length !== productIds.length) {
-      throw new BadRequestException('Uno o mas productos no existen o estan inactivos');
+      throw new BadRequestException(
+        'Uno o mas productos no existen o estan inactivos',
+      );
     }
   }
 
@@ -234,7 +236,9 @@ export class TagsService {
     });
 
     if (offers.length !== offerIds.length) {
-      throw new BadRequestException('Una o mas ofertas no existen o estan inactivas');
+      throw new BadRequestException(
+        'Una o mas ofertas no existen o estan inactivas',
+      );
     }
   }
 

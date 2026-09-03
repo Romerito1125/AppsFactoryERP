@@ -404,11 +404,47 @@ export class OfertasService {
       OR: [
         { name: { contains: q, mode: 'insensitive' as const } },
         { description: { contains: q, mode: 'insensitive' as const } },
-        { clients: { some: { client: { firstName: { contains: q, mode: 'insensitive' as const } } } } },
-        { clients: { some: { client: { lastName: { contains: q, mode: 'insensitive' as const } } } } },
-        { products: { some: { product: { name: { contains: q, mode: 'insensitive' as const } } } } },
-        { productTypes: { some: { productType: { name: { contains: q, mode: 'insensitive' as const } } } } },
-        { tags: { some: { tag: { name: { contains: q, mode: 'insensitive' as const } } } } },
+        {
+          clients: {
+            some: {
+              client: {
+                firstName: { contains: q, mode: 'insensitive' as const },
+              },
+            },
+          },
+        },
+        {
+          clients: {
+            some: {
+              client: {
+                lastName: { contains: q, mode: 'insensitive' as const },
+              },
+            },
+          },
+        },
+        {
+          products: {
+            some: {
+              product: { name: { contains: q, mode: 'insensitive' as const } },
+            },
+          },
+        },
+        {
+          productTypes: {
+            some: {
+              productType: {
+                name: { contains: q, mode: 'insensitive' as const },
+              },
+            },
+          },
+        },
+        {
+          tags: {
+            some: {
+              tag: { name: { contains: q, mode: 'insensitive' as const } },
+            },
+          },
+        },
       ],
     };
   }

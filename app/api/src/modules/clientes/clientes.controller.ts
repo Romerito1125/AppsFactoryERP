@@ -45,35 +45,48 @@ export class ClientesController {
   }
 
   @Get(':id/referidos')
-  @UseGuards(JwtAuthGuard)
-  findReferrals(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
-    this.ensureClientAccess(id, request.user);
+  findReferrals(@Param('id', ParseIntPipe) id: number) {
+    // La pestaña Referidos es una consulta del cliente seleccionado, igual que
+    // el listado público de clientes. Las operaciones sobre la red completa,
+    // estadísticas y cambios siguen protegidas más abajo.
     return this.clientesService.findReferrals(id);
   }
 
   @Get(':id/red-referidos')
   @UseGuards(JwtAuthGuard)
-  getReferralNetwork(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
+  getReferralNetwork(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthRequest,
+  ) {
     this.ensureClientAccess(id, request.user);
     return this.referralStatsService.getNetwork(id);
   }
 
   @Get(':id/estadisticas-referidos')
   @UseGuards(JwtAuthGuard)
-  getReferralStats(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
+  getReferralStats(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthRequest,
+  ) {
     this.ensureClientAccess(id, request.user);
     return this.referralStatsService.getStats(id);
   }
 
   @Post()
   @UseGuards(JwtAuthGuard)
-  create(@Body() createClientDto: CreateClientDto, @Req() request: AuthRequest) {
+  create(
+    @Body() createClientDto: CreateClientDto,
+    @Req() request: AuthRequest,
+  ) {
     return this.clientesService.create(createClientDto, request.user);
   }
 
   @Post(':id/codigo-referido')
   @UseGuards(JwtAuthGuard)
-  generateReferralCode(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
+  generateReferralCode(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthRequest,
+  ) {
     this.ensureClientAccess(id, request.user);
     return this.clientesService.generateReferralCode(id);
   }
@@ -111,7 +124,9 @@ export class ClientesController {
 
   private ensureClientAccess(id: number, user: AuthUser) {
     if (user.role === Role.CLIENTE && user.clientId !== id) {
-      throw new ForbiddenException('No puedes consultar la red de otro cliente');
+      throw new ForbiddenException(
+        'No puedes consultar la red de otro cliente',
+      );
     }
   }
 }

@@ -146,7 +146,10 @@ export class ProductProfitService {
   }
 
   private formatAmount(value: number) {
-    return value.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+    return value
+      .toFixed(2)
+      .replace(/\.00$/, '')
+      .replace(/(\.\d)0$/, '$1');
   }
 
   private ensurePositiveId(id: number) {

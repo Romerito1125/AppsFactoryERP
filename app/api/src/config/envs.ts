@@ -27,8 +27,14 @@ const envSchema = Joi.object<EnvVars>({
   JWT_REFRESH_EXPIRES_IN: Joi.string().default('never'),
 
   RESEND_API_KEY: Joi.string().allow('').optional(),
-  RESEND_FROM_EMAIL: Joi.string().email({ tlds: { allow: false } }).allow('').optional(),
-  RESEND_REPLY_TO_EMAIL: Joi.string().email({ tlds: { allow: false } }).allow('').optional(),
+  RESEND_FROM_EMAIL: Joi.string()
+    .email({ tlds: { allow: false } })
+    .allow('')
+    .optional(),
+  RESEND_REPLY_TO_EMAIL: Joi.string()
+    .email({ tlds: { allow: false } })
+    .allow('')
+    .optional(),
 
   CLOUDFLARE_R2_ACCOUNT_ID: Joi.string().allow('').optional(),
   CLOUDFLARE_R2_ACCESS_KEY_ID: Joi.string().allow('').optional(),

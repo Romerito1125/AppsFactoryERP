@@ -156,7 +156,11 @@ export class DeliveriesService {
         { address: { contains: q, mode: 'insensitive' as const } },
         { recipientName: { contains: q, mode: 'insensitive' as const } },
         { recipientPhone: { contains: q, mode: 'insensitive' as const } },
-        { invoice: { consecutive: { contains: q, mode: 'insensitive' as const } } },
+        {
+          invoice: {
+            consecutive: { contains: q, mode: 'insensitive' as const },
+          },
+        },
       ],
     };
   }

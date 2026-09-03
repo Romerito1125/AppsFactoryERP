@@ -29,9 +29,12 @@ export class CreditosService {
       throw new BadRequestException('Ingresa el monto total del credito');
     }
 
-    const client = await this.prisma.client.findUnique({ where: { id: dto.clientId } });
+    const client = await this.prisma.client.findUnique({
+      where: { id: dto.clientId },
+    });
     if (!client) throw new NotFoundException('Cliente no encontrado');
-    if (!client.isActive) throw new BadRequestException('El cliente esta inactivo');
+    if (!client.isActive)
+      throw new BadRequestException('El cliente esta inactivo');
 
     return this.prisma.invoiceCredit.create({
       data: {
@@ -194,14 +197,40 @@ export class CreditosService {
     if (!q) return undefined;
 
     return {
-        OR: [
-          { invoice: { consecutive: { contains: q, mode: 'insensitive' as const } } },
-          { client: { firstName: { contains: q, mode: 'insensitive' as const } } },
-          { client: { lastName: { contains: q, mode: 'insensitive' as const } } },
-          { client: { identification: { contains: q, mode: 'insensitive' as const } } },
-          { invoice: { client: { firstName: { contains: q, mode: 'insensitive' as const } } } },
-          { invoice: { client: { lastName: { contains: q, mode: 'insensitive' as const } } } },
-          { invoice: { client: { identification: { contains: q, mode: 'insensitive' as const } } } },
+      OR: [
+        {
+          invoice: {
+            consecutive: { contains: q, mode: 'insensitive' as const },
+          },
+        },
+        {
+          client: { firstName: { contains: q, mode: 'insensitive' as const } },
+        },
+        { client: { lastName: { contains: q, mode: 'insensitive' as const } } },
+        {
+          client: {
+            identification: { contains: q, mode: 'insensitive' as const },
+          },
+        },
+        {
+          invoice: {
+            client: {
+              firstName: { contains: q, mode: 'insensitive' as const },
+            },
+          },
+        },
+        {
+          invoice: {
+            client: { lastName: { contains: q, mode: 'insensitive' as const } },
+          },
+        },
+        {
+          invoice: {
+            client: {
+              identification: { contains: q, mode: 'insensitive' as const },
+            },
+          },
+        },
       ],
     };
   }

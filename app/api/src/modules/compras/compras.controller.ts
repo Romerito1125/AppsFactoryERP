@@ -29,13 +29,19 @@ export class ComprasController {
   constructor(private readonly comprasService: ComprasService) {}
 
   @Get()
-  findAll(@Query() query: ListPurchaseOrdersQueryDto, @Req() request: Request & { user: AuthUser }) {
+  findAll(
+    @Query() query: ListPurchaseOrdersQueryDto,
+    @Req() request: Request & { user: AuthUser },
+  ) {
     return this.comprasService.findAll(query, request.user);
   }
 
   @Get('reportes/resumen')
   @Roles(Role.ADMIN, Role.CONTADOR)
-  getSummary(@Query() query: PurchaseReportQueryDto, @Req() request: Request & { user: AuthUser }) {
+  getSummary(
+    @Query() query: PurchaseReportQueryDto,
+    @Req() request: Request & { user: AuthUser },
+  ) {
     return this.comprasService.getSummary(query, request.user);
   }
 
@@ -46,7 +52,10 @@ export class ComprasController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number, @Req() request: Request & { user: AuthUser }) {
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: Request & { user: AuthUser },
+  ) {
     return this.comprasService.findOne(id, request.user);
   }
 

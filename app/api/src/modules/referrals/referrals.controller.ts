@@ -79,13 +79,19 @@ export class ReferralsController {
 
   @Post()
   @UseGuards(JwtAuthGuard)
-  create(@Body() createReferralDto: CreateReferralDto, @Req() request: AuthRequest) {
+  create(
+    @Body() createReferralDto: CreateReferralDto,
+    @Req() request: AuthRequest,
+  ) {
     return this.referralsService.create(createReferralDto, request.user);
   }
 
   @Post('validar')
   @UseGuards(JwtAuthGuard)
-  validate(@Body() validateReferralDto: ValidateReferralDto, @Req() request: AuthRequest) {
+  validate(
+    @Body() validateReferralDto: ValidateReferralDto,
+    @Req() request: AuthRequest,
+  ) {
     return this.referralsService.validate(validateReferralDto, request.user);
   }
 }

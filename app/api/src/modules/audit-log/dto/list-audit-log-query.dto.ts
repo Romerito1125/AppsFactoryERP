@@ -1,5 +1,11 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsInt, IsOptional, IsPositive, IsString } from 'class-validator';
+import {
+  IsDateString,
+  IsInt,
+  IsOptional,
+  IsPositive,
+  IsString,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination-query.dto';
 
 export class ListAuditLogQueryDto extends PaginationQueryDto {

@@ -116,41 +116,45 @@ export class ReferralStatsService {
     const clientIds = generations.flatMap((generation) =>
       generation.clients.map((client) => client.id),
     );
-    const [invoices, benefits, policies, socialContributions] = await Promise.all([
-      clientIds.length
-        ? this.prisma.invoice.findMany({
-            where: {
-              clientId: { in: clientIds },
-              status: InvoiceStatus.ACTIVA,
-            },
-            select: {
-              clientId: true,
-              total: true,
-              items: { select: { profitAmount: true } },
-            },
-          })
-        : [],
-      this.prisma.referralBenefit.findMany({
-        where: {
-          beneficiaryClientId,
-          status: { not: ReferralBenefitStatus.ANULADO },
-        },
-        select: {
-          buyerClientId: true,
-          generation: true,
-          amount: true,
-          remainingAmount: true,
-        },
-      }),
-      this.prisma.referralProfitPolicy.findMany({
-        where: { isActive: true },
-        select: { generation: true, percentage: true },
-      }),
-      this.prisma.referralSocialContribution.findMany({
-        where: { buyerClientId: { in: clientIds }, originInvoice: { status: InvoiceStatus.ACTIVA } },
-        select: { buyerClientId: true, generation: true, amount: true },
-      }),
-    ]);
+    const [invoices, benefits, policies, socialContributions] =
+      await Promise.all([
+        clientIds.length
+          ? this.prisma.invoice.findMany({
+              where: {
+                clientId: { in: clientIds },
+                status: InvoiceStatus.ACTIVA,
+              },
+              select: {
+                clientId: true,
+                total: true,
+                items: { select: { profitAmount: true } },
+              },
+            })
+          : [],
+        this.prisma.referralBenefit.findMany({
+          where: {
+            beneficiaryClientId,
+            status: { not: ReferralBenefitStatus.ANULADO },
+          },
+          select: {
+            buyerClientId: true,
+            generation: true,
+            amount: true,
+            remainingAmount: true,
+          },
+        }),
+        this.prisma.referralProfitPolicy.findMany({
+          where: { isActive: true },
+          select: { generation: true, percentage: true },
+        }),
+        this.prisma.referralSocialContribution.findMany({
+          where: {
+            buyerClientId: { in: clientIds },
+            originInvoice: { status: InvoiceStatus.ACTIVA },
+          },
+          select: { buyerClientId: true, generation: true, amount: true },
+        }),
+      ]);
     const metricsByClient = new Map<number, ReferralMetrics>();
     const policyByGeneration = new Map(
       policies.map((policy) => [policy.generation, Number(policy.percentage)]),
@@ -194,7 +198,9 @@ export class ReferralStatsService {
     for (const contribution of socialContributions) {
       const metrics = metricsByClient.get(contribution.buyerClientId);
       if (!metrics) continue;
-      metrics.obraSocial = this.roundMoney(metrics.obraSocial + Number(contribution.amount));
+      metrics.obraSocial = this.roundMoney(
+        metrics.obraSocial + Number(contribution.amount),
+      );
     }
 
     return generations.map((generation) => {

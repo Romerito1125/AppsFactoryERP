@@ -51,7 +51,11 @@ export class ProductPricesController {
     @Body() createProductPriceDto: CreateProductPriceDto,
     @Req() request: AuthRequest,
   ) {
-    return this.productPricesService.create(id, createProductPriceDto, request.user);
+    return this.productPricesService.create(
+      id,
+      createProductPriceDto,
+      request.user,
+    );
   }
 
   @Patch('precios-producto/:id')
@@ -62,7 +66,11 @@ export class ProductPricesController {
     @Body() updateProductPriceDto: UpdateProductPriceDto,
     @Req() request: AuthRequest,
   ) {
-    return this.productPricesService.update(id, updateProductPriceDto, request.user);
+    return this.productPricesService.update(
+      id,
+      updateProductPriceDto,
+      request.user,
+    );
   }
 
   @Delete('precios-producto/:id')
@@ -75,7 +83,10 @@ export class ProductPricesController {
   @Patch('precios-producto/:id/default')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
-  markDefault(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
+  markDefault(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthRequest,
+  ) {
     return this.productPricesService.markDefault(id, request.user);
   }
 

@@ -7,7 +7,12 @@ import { FacturasController } from './facturas.controller';
 import { FacturasService } from './facturas.service';
 
 @Module({
-  imports: [NotificacionesModule, AuthModule, AuditLogModule, SharedProductsModule],
+  imports: [
+    NotificacionesModule,
+    AuthModule,
+    AuditLogModule,
+    SharedProductsModule,
+  ],
   controllers: [FacturasController],
   providers: [FacturasService],
   exports: [FacturasService],

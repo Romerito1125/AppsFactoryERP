@@ -63,7 +63,9 @@ export class UsuariosService {
 
   async create(createUserDto: CreateUserDto, actor: AuthUser) {
     if (createUserDto.role === Role.BODEGA && !createUserDto.warehouseId) {
-      throw new BadRequestException('Un usuario BODEGA debe tener una bodega asignada');
+      throw new BadRequestException(
+        'Un usuario BODEGA debe tener una bodega asignada',
+      );
     }
     if (createUserDto.clientId) {
       await this.ensureClientExists(createUserDto.clientId);
@@ -179,7 +181,9 @@ export class UsuariosService {
     const nextWarehouseId = updateUserDto.warehouseId ?? current.warehouseId;
 
     if (nextRole === Role.BODEGA && !nextWarehouseId) {
-      throw new BadRequestException('Un usuario BODEGA debe tener una bodega asignada');
+      throw new BadRequestException(
+        'Un usuario BODEGA debe tener una bodega asignada',
+      );
     }
 
     if (updateUserDto.clientId) {
@@ -227,7 +231,9 @@ export class UsuariosService {
       description: `Actualizo el usuario ${user.username}`,
       metadata: {
         userId: user.id,
-        changedFields: Object.keys(updateUserDto).filter((field) => field !== 'password'),
+        changedFields: Object.keys(updateUserDto).filter(
+          (field) => field !== 'password',
+        ),
         previousRole: current.role,
         nextRole: user.role,
         passwordChanged: Boolean(updateUserDto.password),
@@ -316,9 +322,13 @@ export class UsuariosService {
   }
 
   private async ensureWarehouseExists(warehouseId: number) {
-    const warehouse = await this.prisma.warehouse.findUnique({ where: { id: warehouseId } });
+    const warehouse = await this.prisma.warehouse.findUnique({
+      where: { id: warehouseId },
+    });
     if (!warehouse || !warehouse.isActive) {
-      throw new BadRequestException('La bodega seleccionada no existe o está inactiva');
+      throw new BadRequestException(
+        'La bodega seleccionada no existe o está inactiva',
+      );
     }
   }
 

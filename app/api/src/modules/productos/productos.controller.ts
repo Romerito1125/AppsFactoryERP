@@ -100,7 +100,12 @@ export class ProductosController {
     @UploadedFile() image?: Express.Multer.File,
     @Req() request?: AuthRequest,
   ) {
-    return this.productosService.update(id, updateProductDto, image, request?.user);
+    return this.productosService.update(
+      id,
+      updateProductDto,
+      image,
+      request?.user,
+    );
   }
 
   @Patch(':id/imagen')
@@ -127,7 +132,10 @@ export class ProductosController {
   @Patch(':id/reactivar')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
-  reactivate(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
+  reactivate(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthRequest,
+  ) {
     return this.productosService.reactivate(id, request.user);
   }
 }

@@ -9,11 +9,16 @@ import { envs } from '../../config/envs';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { SendReportEmailDto } from './dto/send-report-email.dto';
 import { ReportesEmail } from './emails/reportes-email';
-import type { ReportEmailMetric, ReportEmailTableRow } from './report-email.types';
+import type {
+  ReportEmailMetric,
+  ReportEmailTableRow,
+} from './report-email.types';
 
 @Injectable()
 export class ReportesService {
-  private readonly resend = envs.resend.apiKey ? new Resend(envs.resend.apiKey) : null;
+  private readonly resend = envs.resend.apiKey
+    ? new Resend(envs.resend.apiKey)
+    : null;
 
   async sendEmail(payload: SendReportEmailDto, user: AuthUser) {
     if (!this.resend || !envs.resend.fromEmail) {
@@ -52,7 +57,9 @@ export class ReportesService {
     });
 
     if (error) {
-      throw new InternalServerErrorException(error.message || 'No se pudo enviar el correo del reporte');
+      throw new InternalServerErrorException(
+        error.message || 'No se pudo enviar el correo del reporte',
+      );
     }
 
     return {
@@ -62,7 +69,9 @@ export class ReportesService {
     };
   }
 
-  private normalizeMetrics(items?: Array<Record<string, unknown>>): ReportEmailMetric[] {
+  private normalizeMetrics(
+    items?: Array<Record<string, unknown>>,
+  ): ReportEmailMetric[] {
     return (items ?? []).map((item) => ({
       label: String(item.label ?? ''),
       value: String(item.value ?? ''),
@@ -70,9 +79,16 @@ export class ReportesService {
     }));
   }
 
-  private normalizeRows(items?: Array<Record<string, unknown>>): ReportEmailTableRow[] {
+  private normalizeRows(
+    items?: Array<Record<string, unknown>>,
+  ): ReportEmailTableRow[] {
     return (items ?? []).map((item) =>
-      Object.fromEntries(Object.entries(item).map(([key, value]) => [key, value == null ? '' : String(value)])),
+      Object.fromEntries(
+        Object.entries(item).map(([key, value]) => [
+          key,
+          value == null ? '' : String(value),
+        ]),
+      ),
     );
   }
 }
