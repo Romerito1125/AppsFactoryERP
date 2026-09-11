@@ -12,6 +12,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { Permissions } from '../../common/decorators/permissions.decorator';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '../../common/enums/role.enum';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -44,8 +46,9 @@ export class ProductPricesController {
   }
 
   @Post('productos/:id/precios')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PRODUCTS_EDIT')
   create(
     @Param('id', ParseIntPipe) id: number,
     @Body() createProductPriceDto: CreateProductPriceDto,
@@ -59,8 +62,9 @@ export class ProductPricesController {
   }
 
   @Patch('precios-producto/:id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PRODUCTS_EDIT')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateProductPriceDto: UpdateProductPriceDto,
@@ -74,15 +78,17 @@ export class ProductPricesController {
   }
 
   @Delete('precios-producto/:id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PRODUCTS_EDIT')
   remove(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
     return this.productPricesService.remove(id, request.user);
   }
 
   @Patch('precios-producto/:id/default')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PRODUCTS_EDIT')
   markDefault(
     @Param('id', ParseIntPipe) id: number,
     @Req() request: AuthRequest,

@@ -13,7 +13,9 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { Role } from '../../common/enums/role.enum';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
@@ -29,25 +31,31 @@ export class RetencionesController {
   constructor(private readonly retencionesService: RetencionesService) {}
 
   @Get()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('RETENTIONS_VIEW')
   findAll(@Query() filter: FilterRetentionsDto) {
     return this.retencionesService.findAll(filter);
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('RETENTIONS_VIEW')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.retencionesService.findOne(id);
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('RETENTIONS_EDIT')
   create(@Body() dto: CreateRetentionDto, @Req() request: AuthRequest) {
     return this.retencionesService.create(dto, request.user);
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('RETENTIONS_EDIT')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateRetentionDto,
@@ -57,15 +65,17 @@ export class RetencionesController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('RETENTIONS_EDIT')
   remove(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
     return this.retencionesService.remove(id, request.user);
   }
 
   @Patch(':id/reactivar')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('RETENTIONS_EDIT')
   reactivate(
     @Param('id', ParseIntPipe) id: number,
     @Req() request: AuthRequest,

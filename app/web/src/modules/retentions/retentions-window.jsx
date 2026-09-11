@@ -28,38 +28,9 @@ const emptyRetention = {
   isActive: true,
   ranges: [],
 };
-const demoRetentions = [
-  {
-    ...emptyRetention,
-    id: 1,
-    code: "C25",
-    description: "RETENCIÓN EN COMPRAS DEL 2,5%",
-    minimumBase: 764000,
-    operationCode: "RC25",
-    operationDescription: "RETENCIÓN COMPRAS 2,5% DECLARANTES",
-    ranges: [
-      { minimum: 0, maximum: 764000, percentage: 0 },
-      { minimum: 764000.01, maximum: 999999999.99, percentage: 2.5 },
-    ],
-  },
-  {
-    ...emptyRetention,
-    id: 2,
-    code: "IVA",
-    description: "RETENCIÓN DE IVA",
-    minimumBase: 1000000,
-    operationCode: "RIVA",
-    operationDescription: "RETENCIÓN IVA COMPRAS",
-    ranges: [
-      { minimum: 0, maximum: 1000000, percentage: 0 },
-      { minimum: 1000000.01, maximum: 999999999.99, percentage: 15 },
-    ],
-  },
-];
-
-export function RetentionsWindow({ onClose, onRequestLogin }) {
-  const [retentions, setRetentions] = useState(demoRetentions);
-  const [selectedId, setSelectedId] = useState(1);
+export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
+  const [retentions, setRetentions] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("main");
   const [editing, setEditing] = useState(false);
@@ -77,11 +48,10 @@ export function RetentionsWindow({ onClose, onRequestLogin }) {
     apiClient
       .getAllPages("/retenciones", { estado: "todos" })
       .then((items) => {
-        if (!cancelled && items.length) {
-          const next = items.map(mapRetention);
-          setRetentions(next);
-          setSelectedId(next[0].id);
-        }
+        if (cancelled) return;
+        const next = items.map(mapRetention);
+        setRetentions(next);
+        setSelectedId(next[0]?.id ?? null);
       })
       .catch((requestError) => {
         if (!cancelled) setError(requestError.message);
@@ -106,6 +76,7 @@ export function RetentionsWindow({ onClose, onRequestLogin }) {
   const selectedRetention =
     retentions.find((retention) => retention.id === selectedId) ?? null;
   const shownRetention = editing ? draft : selectedRetention;
+  const canEdit = canAccess?.("RETENTIONS_EDIT") ?? true;
 
   function selectRetention(id) {
     setSelectedId(id);
@@ -117,6 +88,7 @@ export function RetentionsWindow({ onClose, onRequestLogin }) {
     setDraft((current) => ({ ...current, [field]: value }));
   }
   function handleAdd() {
+    if (!canEdit) return;
     setSelectedId(null);
     setDraft({
       ...emptyRetention,
@@ -127,6 +99,7 @@ export function RetentionsWindow({ onClose, onRequestLogin }) {
     setError("");
   }
   function handleEdit() {
+    if (!canEdit) return;
     if (selectedRetention) {
       setDraft({
         ...selectedRetention,
@@ -137,6 +110,7 @@ export function RetentionsWindow({ onClose, onRequestLogin }) {
     }
   }
   async function handleSave() {
+    if (!canEdit) return;
     setError("");
     const body = {
       code: draft.code.trim(),
@@ -175,6 +149,7 @@ export function RetentionsWindow({ onClose, onRequestLogin }) {
     }
   }
   async function handleDelete() {
+    if (!canEdit) return;
     if (!selectedId || !window.confirm("¿Deseas desactivar esta retención?"))
       return;
     try {
@@ -344,11 +319,11 @@ export function RetentionsWindow({ onClose, onRequestLogin }) {
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">
           {editing ? (
-            <button type="button" onClick={handleSave}>
+            <button type="button" onClick={handleSave} disabled={!canEdit}>
               <Check size={14} /> Guardar
             </button>
           ) : (
-            <button type="button" onClick={handleAdd}>
+            <button type="button" onClick={handleAdd} disabled={!canEdit}>
               <Plus size={14} /> Agregar
             </button>
           )}
@@ -356,7 +331,7 @@ export function RetentionsWindow({ onClose, onRequestLogin }) {
             <button
               type="button"
               onClick={handleEdit}
-              disabled={!selectedRetention}
+              disabled={!selectedRetention || !canEdit}
             >
               <Edit3 size={14} /> Modificar
             </button>
@@ -365,7 +340,7 @@ export function RetentionsWindow({ onClose, onRequestLogin }) {
             <button
               type="button"
               onClick={handleDelete}
-              disabled={!selectedRetention}
+              disabled={!selectedRetention || !canEdit}
             >
               <Trash2 size={14} /> Borrar
             </button>

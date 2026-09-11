@@ -9,6 +9,7 @@ import {
   Post,
   Query,
   Req,
+  Put,
   UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
@@ -21,6 +22,7 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateUserPermissionsDto } from './dto/update-user-permissions.dto';
 import { UsuariosService } from './usuarios.service';
 
 type AuthRequest = Request & { user: AuthUser };
@@ -30,11 +32,33 @@ export class UsuariosController {
   constructor(private readonly usuariosService: UsuariosService) {}
 
   @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   findAll(@Query() query: ListUsersQueryDto) {
     return this.usuariosService.findAll(query);
   }
 
+  @Get(':id/permisos')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  getPermissions(@Param('id', ParseIntPipe) id: number) {
+    return this.usuariosService.getPermissions(id);
+  }
+
+  @Put(':id/permisos')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  updatePermissions(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateUserPermissionsDto,
+    @Req() request: AuthRequest,
+  ) {
+    return this.usuariosService.updatePermissions(id, dto, request.user);
+  }
+
   @Get(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.usuariosService.findOne(id);
   }

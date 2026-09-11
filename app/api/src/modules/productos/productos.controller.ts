@@ -15,6 +15,8 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Permissions } from '../../common/decorators/permissions.decorator';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '../../common/enums/role.enum';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -61,8 +63,9 @@ export class ProductosController {
   }
 
   @Get('codigo-barras/:code')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN, Role.BODEGA, Role.VENDEDOR)
+  @Permissions('PRODUCTS_VIEW')
   findByBarcode(@Param('code') code: string) {
     return this.productosService.findByBarcode(code);
   }
@@ -73,8 +76,9 @@ export class ProductosController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PRODUCTS_EDIT')
   @UseInterceptors(
     FileInterceptor('image', imageUploadOptions),
     ParseProductMultipartInterceptor,
@@ -88,8 +92,9 @@ export class ProductosController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PRODUCTS_EDIT')
   @UseInterceptors(
     FileInterceptor('image', imageUploadOptions),
     ParseProductMultipartInterceptor,
@@ -109,6 +114,8 @@ export class ProductosController {
   }
 
   @Patch(':id/imagen')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('PRODUCTS_EDIT')
   @UseInterceptors(FileInterceptor('image', imageUploadOptions))
   updateImage(
     @Param('id', ParseIntPipe) id: number,
@@ -118,20 +125,24 @@ export class ProductosController {
   }
 
   @Delete(':id/imagen')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('PRODUCTS_EDIT')
   removeImage(@Param('id', ParseIntPipe) id: number) {
     return this.productosService.removeImage(id);
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PRODUCTS_EDIT')
   remove(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
     return this.productosService.remove(id, request.user);
   }
 
   @Patch(':id/reactivar')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PRODUCTS_EDIT')
   reactivate(
     @Param('id', ParseIntPipe) id: number,
     @Req() request: AuthRequest,

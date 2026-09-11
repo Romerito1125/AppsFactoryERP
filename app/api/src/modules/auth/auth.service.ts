@@ -7,6 +7,7 @@ import {
 import { ClientType, Role } from '@prisma/client';
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { effectivePermissionCodes } from '../../common/permissions/permission.constants';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { AuthUser } from './interfaces/auth-user.interface';
@@ -99,6 +100,8 @@ export class AuthService {
       client,
       employee,
       role: user.role,
+      permissions: effectivePermissionCodes(user.role, user.permissions),
+      permissionOverrides: user.permissions,
     };
   }
 
@@ -134,6 +137,8 @@ export class AuthService {
       client,
       employee,
       role: user.role,
+      permissions: effectivePermissionCodes(user.role, user.permissions),
+      permissionOverrides: user.permissions,
     };
   }
 
@@ -164,6 +169,7 @@ export class AuthService {
       },
     },
     employee: true,
+    permissions: { select: { code: true, isAllowed: true } },
   } as const;
 
   private hashPassword(password: string) {

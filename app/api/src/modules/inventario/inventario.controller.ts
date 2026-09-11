@@ -10,6 +10,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
+import { Permissions } from '../../common/decorators/permissions.decorator';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '../../common/enums/role.enum';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -27,8 +29,9 @@ import { InventarioService } from './inventario.service';
 type AuthRequest = Request & { user: AuthUser };
 
 @Controller('inventario')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 @Roles(Role.ADMIN, Role.CONTADOR, Role.BODEGA)
+@Permissions('PRODUCTS_VIEW')
 export class InventarioController {
   constructor(private readonly inventarioService: InventarioService) {}
 
@@ -48,21 +51,25 @@ export class InventarioController {
   }
 
   @Post('entrada')
+  @Permissions('INVENTORY_EDIT')
   entry(@Body() dto: InventoryEntryDto, @Req() request: AuthRequest) {
     return this.inventarioService.entry(dto, request.user);
   }
 
   @Post('salida')
+  @Permissions('INVENTORY_EDIT')
   exit(@Body() dto: InventoryExitDto, @Req() request: AuthRequest) {
     return this.inventarioService.exit(dto, request.user);
   }
 
   @Post('traslado')
+  @Permissions('INVENTORY_EDIT')
   transfer(@Body() dto: InventoryTransferDto, @Req() request: AuthRequest) {
     return this.inventarioService.transfer(dto, request.user);
   }
 
   @Post('ajuste')
+  @Permissions('INVENTORY_EDIT')
   adjustment(@Body() dto: InventoryAdjustmentDto, @Req() request: AuthRequest) {
     return this.inventarioService.adjustment(dto, request.user);
   }

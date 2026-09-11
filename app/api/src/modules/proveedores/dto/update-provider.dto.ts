@@ -1,4 +1,12 @@
-import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsEmail,
+  IsInt,
+  IsOptional,
+  IsString,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 export class UpdateProviderDto {
   @IsOptional()
@@ -25,7 +33,27 @@ export class UpdateProviderDto {
 
   @IsOptional()
   @IsString()
+  address2?: string;
+
+  @IsOptional()
+  @IsString()
   country?: string;
+
+  @IsOptional()
+  @IsString()
+  department?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @IsOptional()
+  @IsString()
+  municipality?: string;
+
+  @IsOptional()
+  @IsString()
+  postalCode?: string;
 
   @IsOptional()
   @IsString()
@@ -36,10 +64,32 @@ export class UpdateProviderDto {
   phoneSecondary?: string;
 
   @IsOptional()
+  @IsString()
+  fax?: string;
+
+  @IsOptional()
   @IsEmail()
   email?: string;
 
   @IsOptional()
   @IsString()
   legalRepresentative?: string;
+
+  @IsOptional()
+  @IsString()
+  className?: string;
+
+  @IsOptional()
+  @IsString()
+  withholdingType?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  creditDays?: number;
+
+  @IsOptional()
+  @IsString()
+  observations?: string;
 }

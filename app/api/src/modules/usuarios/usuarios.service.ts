@@ -8,6 +8,10 @@ import { Role } from '@prisma/client';
 import { randomBytes, scryptSync } from 'crypto';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
 import {
+  defaultPermissionCodesByRole,
+  effectivePermissionCodes,
+} from '../../common/permissions/permission.constants';
+import {
   buildPaginatedResponse,
   resolvePagination,
 } from '../../common/utils/pagination.util';
@@ -18,6 +22,7 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListUsersQueryDto } from './dto/list-users-query.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateUserPermissionsDto } from './dto/update-user-permissions.dto';
 
 @Injectable()
 export class UsuariosService {
@@ -59,6 +64,78 @@ export class UsuariosService {
     }
 
     return user;
+  }
+
+  async getPermissions(id: number) {
+    this.ensurePositiveId(id);
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        role: true,
+        permissions: {
+          select: { code: true, isAllowed: true },
+          orderBy: { code: 'asc' },
+        },
+      },
+    });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+    return {
+      userId: user.id,
+      role: user.role,
+      permissions: user.permissions,
+      effective: effectivePermissionCodes(user.role, user.permissions),
+    };
+  }
+
+  async updatePermissions(
+    id: number,
+    dto: UpdateUserPermissionsDto,
+    actor: AuthUser,
+  ) {
+    this.ensurePositiveId(id);
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true, role: true, username: true },
+    });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+
+    const uniqueCodes = new Set<string>();
+    const permissions = dto.permissions.filter((item) => {
+      if (uniqueCodes.has(item.code)) return false;
+      uniqueCodes.add(item.code);
+      return true;
+    });
+    const defaults = new Set(defaultPermissionCodesByRole[user.role] ?? []);
+    const explicitOverrides = permissions.filter(
+      (item) => item.isAllowed !== defaults.has(item.code),
+    );
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.userPermission.deleteMany({ where: { userId: id } });
+      if (explicitOverrides.length) {
+        await tx.userPermission.createMany({
+          data: explicitOverrides.map((item) => ({
+            userId: id,
+            code: item.code,
+            isAllowed: item.isAllowed,
+          })),
+        });
+      }
+    });
+
+    await this.auditLogService.log({
+      actor,
+      module: 'USUARIOS',
+      action: 'UPDATE_PERMISSIONS',
+      entityType: 'UserPermission',
+      entityId: id,
+      entityLabel: user.username,
+      description: `Actualizo los accesos de ${user.username}`,
+      metadata: { role: user.role, overrideCount: explicitOverrides.length },
+    });
+
+    return this.getPermissions(id);
   }
 
   async create(createUserDto: CreateUserDto, actor: AuthUser) {
@@ -317,6 +394,10 @@ export class UsuariosService {
           lastName: true,
           isActive: true,
         },
+      },
+      permissions: {
+        select: { code: true, isAllowed: true },
+        orderBy: { code: 'asc' as const },
       },
     };
   }

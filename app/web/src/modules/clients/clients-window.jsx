@@ -31,7 +31,7 @@ const emptyClient = {
   user: null,
 };
 
-export function ClientsWindow({ onClose, onRequestLogin }) {
+export function ClientsWindow({ onClose, onRequestLogin, canAccess }) {
   const [clients, setClients] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -97,6 +97,7 @@ export function ClientsWindow({ onClose, onRequestLogin }) {
   );
   const selectedClient =
     clients.find((client) => client.id === selectedId) ?? null;
+  const canEdit = canAccess?.("CLIENTS_EDIT") ?? true;
 
   function selectClient(id) {
     setSelectedId(id);
@@ -112,6 +113,7 @@ export function ClientsWindow({ onClose, onRequestLogin }) {
   }
 
   function handleAdd() {
+    if (!canEdit) return;
     setSelectedId(null);
     setDraft({ ...emptyClient });
     setEditing(true);
@@ -120,6 +122,7 @@ export function ClientsWindow({ onClose, onRequestLogin }) {
   }
 
   function handleEdit() {
+    if (!canEdit) return;
     if (!selectedClient) return;
     setDraft(toDraft(selectedClient));
     setEditing(true);
@@ -127,6 +130,7 @@ export function ClientsWindow({ onClose, onRequestLogin }) {
   }
 
   async function handleSave() {
+    if (!canEdit) return;
     setSaving(true);
     setError("");
     const body = {
@@ -155,6 +159,7 @@ export function ClientsWindow({ onClose, onRequestLogin }) {
   }
 
   async function handleDelete() {
+    if (!canEdit) return;
     if (!selectedId || !window.confirm("¿Deseas desactivar este cliente?"))
       return;
     setError("");
@@ -351,11 +356,15 @@ export function ClientsWindow({ onClose, onRequestLogin }) {
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">
           {editing ? (
-            <button type="button" disabled={saving} onClick={handleSave}>
+            <button
+              type="button"
+              disabled={saving || !canEdit}
+              onClick={handleSave}
+            >
               <Check size={14} /> {saving ? "Guardando…" : "Guardar"}
             </button>
           ) : (
-            <button type="button" onClick={handleAdd}>
+            <button type="button" onClick={handleAdd} disabled={!canEdit}>
               <Plus size={14} /> Agregar
             </button>
           )}
@@ -363,7 +372,7 @@ export function ClientsWindow({ onClose, onRequestLogin }) {
             <button
               type="button"
               onClick={handleEdit}
-              disabled={!selectedClient}
+              disabled={!selectedClient || !canEdit}
             >
               <Edit3 size={14} /> Modificar
             </button>
@@ -372,7 +381,7 @@ export function ClientsWindow({ onClose, onRequestLogin }) {
             <button
               type="button"
               onClick={handleDelete}
-              disabled={!selectedClient}
+              disabled={!selectedClient || !canEdit}
             >
               <Trash2 size={14} /> Borrar
             </button>

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { SharedProductsModule } from '../../shared/products/products.module';
 import { StorageModule } from '../../shared/storage/storage.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
@@ -17,6 +18,6 @@ import { ProductosService } from './productos.service';
     ProductFavoritesModule,
   ],
   controllers: [ProductosController],
-  providers: [ProductosService, ProductProfitService],
+  providers: [ProductosService, ProductProfitService, PermissionsGuard],
 })
 export class ProductosModule {}

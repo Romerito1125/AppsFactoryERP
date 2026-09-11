@@ -13,7 +13,9 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { Role } from '../../common/enums/role.enum';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
@@ -29,25 +31,31 @@ export class ProveedoresController {
   constructor(private readonly proveedoresService: ProveedoresService) {}
 
   @Get()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('PROVIDERS_VIEW')
   findAll(@Query() filter: FilterProvidersDto) {
     return this.proveedoresService.findAll(filter);
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('PROVIDERS_VIEW')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.proveedoresService.findOne(id);
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PROVIDERS_EDIT')
   create(@Body() dto: CreateProviderDto, @Req() request: AuthRequest) {
     return this.proveedoresService.create(dto, request.user);
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PROVIDERS_EDIT')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateProviderDto,
@@ -57,15 +65,17 @@ export class ProveedoresController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PROVIDERS_EDIT')
   remove(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
     return this.proveedoresService.remove(id, request.user);
   }
 
   @Patch(':id/reactivar')
-  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)
+  @Permissions('PROVIDERS_EDIT')
   reactivate(
     @Param('id', ParseIntPipe) id: number,
     @Req() request: AuthRequest,

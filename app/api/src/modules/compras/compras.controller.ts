@@ -12,7 +12,9 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { Role } from '../../common/enums/role.enum';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
@@ -23,8 +25,9 @@ import { PurchaseReportQueryDto } from './dto/purchase-report-query.dto';
 import { UpdatePurchaseOrderDto } from './dto/update-purchase-order.dto';
 
 @Controller('compras')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
 @Roles(Role.ADMIN, Role.CONTADOR, Role.BODEGA)
+@Permissions('PURCHASES_VIEW')
 export class ComprasController {
   constructor(private readonly comprasService: ComprasService) {}
 
@@ -37,7 +40,7 @@ export class ComprasController {
   }
 
   @Get('reportes/resumen')
-  @Roles(Role.ADMIN, Role.CONTADOR)
+  @Roles(Role.ADMIN, Role.CONTADOR, Role.BODEGA)
   getSummary(
     @Query() query: PurchaseReportQueryDto,
     @Req() request: Request & { user: AuthUser },
@@ -60,13 +63,15 @@ export class ComprasController {
   }
 
   @Post()
-  @Roles(Role.ADMIN, Role.CONTADOR)
+  @Roles(Role.ADMIN, Role.CONTADOR, Role.BODEGA)
+  @Permissions('PURCHASES_EDIT')
   create(@Body() dto: CreatePurchaseOrderDto) {
     return this.comprasService.create(dto);
   }
 
   @Patch(':id')
-  @Roles(Role.ADMIN, Role.CONTADOR)
+  @Roles(Role.ADMIN, Role.CONTADOR, Role.BODEGA)
+  @Permissions('PURCHASES_EDIT')
   updateDraft(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdatePurchaseOrderDto,
@@ -75,19 +80,22 @@ export class ComprasController {
   }
 
   @Post(':id/ordenar')
-  @Roles(Role.ADMIN, Role.CONTADOR)
+  @Roles(Role.ADMIN, Role.CONTADOR, Role.BODEGA)
+  @Permissions('PURCHASES_EDIT')
   order(@Param('id', ParseIntPipe) id: number) {
     return this.comprasService.order(id);
   }
 
   @Post(':id/recibir')
-  @Roles(Role.ADMIN, Role.CONTADOR)
+  @Roles(Role.ADMIN, Role.CONTADOR, Role.BODEGA)
+  @Permissions('PURCHASES_EDIT')
   receive(@Param('id', ParseIntPipe) id: number) {
     return this.comprasService.receive(id);
   }
 
   @Patch(':id/anular')
   @Roles(Role.ADMIN, Role.CONTADOR)
+  @Permissions('PURCHASES_EDIT')
   cancel(@Param('id', ParseIntPipe) id: number) {
     return this.comprasService.cancel(id);
   }

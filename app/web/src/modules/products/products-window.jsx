@@ -68,6 +68,7 @@ export function ProductsWindow({
   onClose,
   onRequestLogin,
   initialProductId = null,
+  canAccess,
 }) {
   const [products, setProducts] = useState([]);
   const [selectedId, setSelectedId] = useState(initialProductId ?? null);
@@ -94,24 +95,44 @@ export function ProductsWindow({
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
+    Promise.allSettled([
       apiClient.getAllPages("/productos", { estado: "todos" }),
       apiClient.getAllPages("/tipos-producto", { estado: "activos" }),
       apiClient.getAllPages("/proveedores", { estado: "activos" }),
       apiClient.getAllPages("/bodegas", { estado: "activos" }),
     ])
-      .then(([productItems, typeItems, providerItems, warehouseItems]) => {
+      .then(
+        ([productResult, typeResult, providerResult, warehouseResult]) => {
         if (cancelled) return;
-        const next = productItems.map(mapProduct);
+        if (productResult.status === "rejected") throw productResult.reason;
+        const next = productResult.value.map(mapProduct);
         const requested = next.find(
           (item) => item.recordId === Number(initialProductId),
         );
         setProducts(next);
         setSelectedId(requested?.recordId ?? next[0]?.recordId ?? null);
-        setProductTypes(typeItems);
-        setProviders(providerItems);
-        setWarehouses(warehouseItems);
-      })
+        setProductTypes(
+          typeResult.status === "fulfilled" ? typeResult.value : [],
+        );
+        setProviders(
+          providerResult.status === "fulfilled" ? providerResult.value : [],
+        );
+        setWarehouses(
+          warehouseResult.status === "fulfilled"
+            ? warehouseResult.value
+            : [],
+        );
+        const unavailable = [
+          typeResult.status === "rejected" ? "tipos de producto" : null,
+          providerResult.status === "rejected" ? "proveedores" : null,
+          warehouseResult.status === "rejected" ? "bodegas" : null,
+        ].filter(Boolean);
+        if (unavailable.length)
+          setError(
+            `Productos cargados, pero no se pudieron consultar: ${unavailable.join(", ")}.`,
+          );
+      },
+      )
       .catch((requestError) => {
         if (!cancelled) setError(requestError.message);
       })
@@ -135,6 +156,8 @@ export function ProductsWindow({
   const selectedProduct =
     products.find((product) => product.recordId === selectedId) ?? null;
   const shownProduct = editing ? draft : selectedProduct;
+  const canEdit = canAccess?.("PRODUCTS_EDIT") ?? true;
+  const canInventoryEdit = canAccess?.("INVENTORY_EDIT") ?? true;
 
   function selectProduct(recordId) {
     setSelectedId(recordId);
@@ -162,6 +185,7 @@ export function ProductsWindow({
   }
 
   function handleAdd() {
+    if (!canEdit) return;
     setSelectedId(null);
     setDraft({
       ...emptyProduct,
@@ -175,6 +199,7 @@ export function ProductsWindow({
     setError("");
   }
   function handleEdit() {
+    if (!canEdit) return;
     if (selectedProduct) {
       setDraft({ ...selectedProduct });
       setEditing(true);
@@ -183,6 +208,7 @@ export function ProductsWindow({
   }
 
   async function handleSave() {
+    if (!canEdit) return;
     if (!draft.productTypeId || !draft.providerId) {
       setError("Selecciona el tipo de producto y el proveedor principal.");
       return;
@@ -220,6 +246,7 @@ export function ProductsWindow({
     }
   }
   async function handleDelete() {
+    if (!canEdit) return;
     if (!selectedId || !window.confirm("¿Deseas desactivar este producto?"))
       return;
     try {
@@ -230,6 +257,7 @@ export function ProductsWindow({
     }
   }
   async function handleImageUpload(event) {
+    if (!canEdit) return;
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file || !selectedId) return;
@@ -248,6 +276,7 @@ export function ProductsWindow({
     }
   }
   async function handleRemoveImage() {
+    if (!canEdit) return;
     if (!selectedId || !shownProduct?.imageUrl) return;
     try {
       await apiClient.delete(`/productos/${selectedId}/imagen`);
@@ -271,6 +300,7 @@ export function ProductsWindow({
   }
 
   function openInventoryEditor(item = null) {
+    if (!canInventoryEdit) return;
     const warehouseId = item?.warehouseId ?? warehouses[0]?.id;
     if (!warehouseId) {
       setError("No hay bodegas activas disponibles para ajustar existencias.");
@@ -289,6 +319,7 @@ export function ProductsWindow({
   }
 
   async function saveInventory() {
+    if (!canInventoryEdit) return;
     if (!selectedId || !inventoryEditor) return;
     const quantity = Number(inventoryEditor.quantity);
     if (!Number.isInteger(quantity) || quantity < 0) {
@@ -310,12 +341,14 @@ export function ProductsWindow({
   }
 
   function openPriceEditor(price = null) {
+    if (!canEdit) return;
     setError("");
     setPriceEditor(
       price ? toPriceDraft(price) : createPriceDraft(shownProduct),
     );
   }
   async function savePrice() {
+    if (!canEdit) return;
     if (!selectedId || !priceEditor) return;
     try {
       const body = buildPriceBody(priceEditor, Boolean(priceEditor.id));
@@ -329,6 +362,7 @@ export function ProductsWindow({
     }
   }
   async function deletePrice(price) {
+    if (!canEdit) return;
     if (
       !price.id ||
       !window.confirm(`¿Deseas desactivar el precio ${price.name}?`)
@@ -342,6 +376,7 @@ export function ProductsWindow({
     }
   }
   async function markPriceDefault(price) {
+    if (!canEdit) return;
     if (!price.id) return;
     try {
       await apiClient.patch(`/precios-producto/${price.id}/default`, {});
@@ -352,6 +387,7 @@ export function ProductsWindow({
   }
 
   function startUnitsEdit() {
+    if (!canEdit) return;
     const packaging = shownProduct?.packagingProfile ?? {};
     setUnitsEditor({
       unitsPerPackage: packaging.unitsPerPackage ?? "",
@@ -361,6 +397,7 @@ export function ProductsWindow({
     });
   }
   async function saveUnits() {
+    if (!canEdit) return;
     if (!selectedId || !unitsEditor) return;
     try {
       const saved = await apiClient.patch(`/productos/${selectedId}`, {
@@ -385,6 +422,7 @@ export function ProductsWindow({
   }
 
   function openBarcodeEditor(barcode = null) {
+    if (!canEdit) return;
     setError("");
     setBarcodeEditor(
       barcode
@@ -398,6 +436,7 @@ export function ProductsWindow({
     );
   }
   async function saveBarcode() {
+    if (!canEdit) return;
     if (!selectedId || !barcodeEditor?.code.trim()) {
       setError("Escribe o escanea un código de barras.");
       return;
@@ -419,6 +458,7 @@ export function ProductsWindow({
     }
   }
   async function deleteBarcode(barcode) {
+    if (!canEdit) return;
     if (
       !barcode.id ||
       !window.confirm(`¿Deseas desactivar el código ${barcode.code}?`)
@@ -432,6 +472,7 @@ export function ProductsWindow({
     }
   }
   async function markBarcodePrimary(barcode) {
+    if (!canEdit) return;
     if (!barcode.id) return;
     try {
       await apiClient.patch(`/codigos-barras/${barcode.id}/principal`, {});
@@ -613,6 +654,8 @@ export function ProductsWindow({
               onChangeInventory={setInventoryEditor}
               onSaveInventory={saveInventory}
               onCancelInventory={() => setInventoryEditor(null)}
+              canEdit={canEdit}
+              canInventoryEdit={canInventoryEdit}
             />
           ) : (
             <div className="provider-tab-panel empty-provider-panel">
@@ -629,11 +672,11 @@ export function ProductsWindow({
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">
           {editing ? (
-            <button type="button" onClick={handleSave}>
+            <button type="button" onClick={handleSave} disabled={!canEdit}>
               <Check size={14} /> Guardar
             </button>
           ) : (
-            <button type="button" onClick={handleAdd}>
+            <button type="button" onClick={handleAdd} disabled={!canEdit}>
               <Plus size={14} /> Agregar
             </button>
           )}
@@ -641,7 +684,7 @@ export function ProductsWindow({
             <button
               type="button"
               onClick={handleEdit}
-              disabled={!selectedProduct}
+              disabled={!selectedProduct || !canEdit}
             >
               <Edit3 size={14} /> Modificar
             </button>
@@ -650,7 +693,7 @@ export function ProductsWindow({
             <button
               type="button"
               onClick={handleDelete}
-              disabled={!selectedProduct}
+              disabled={!selectedProduct || !canEdit}
             >
               <Trash2 size={14} /> Borrar
             </button>
@@ -728,6 +771,7 @@ function ProductDetails({
         onChangeInventory={actions.onChangeInventory}
         onSaveInventory={actions.onSaveInventory}
         onCancelInventory={actions.onCancelInventory}
+        canInventoryEdit={actions.canInventoryEdit}
       />
     );
   if (activeTab === "barcodes")
@@ -739,6 +783,7 @@ function ProductDetails({
         editing={editing}
         onUpload={onUpload}
         onRemoveImage={onRemoveImage}
+        canEdit={actions.canEdit}
       />
       <ProductField
         label="Tipo de producto"
@@ -865,6 +910,7 @@ function InventoryPanel({
   onChangeInventory,
   onSaveInventory,
   onCancelInventory,
+  canInventoryEdit = true,
 }) {
   const inventory = product.warehouses ?? [];
 
@@ -878,6 +924,7 @@ function InventoryPanel({
             type="button"
             className="inline-action"
             onClick={() => onOpenInventory()}
+            disabled={!canInventoryEdit}
           >
             <Edit3 size={14} /> Ajustar existencias
           </button>
@@ -1028,6 +1075,7 @@ function PricesPanel({
   onCancelPrice,
   onDeletePrice,
   onDefaultPrice,
+  canEdit = true,
 }) {
   return (
     <div className="provider-tab-panel data-panel">
@@ -1039,6 +1087,7 @@ function PricesPanel({
             type="button"
             className="inline-action"
             onClick={() => onOpenPrice()}
+            disabled={!canEdit}
           >
             <Plus size={14} /> Agregar precio
           </button>
@@ -1083,6 +1132,7 @@ function PricesPanel({
           onCancel={onCancelPrice}
           onDelete={onDeletePrice}
           onDefault={onDefaultPrice}
+          canEdit={canEdit}
         />
       )}
     </div>
@@ -1095,6 +1145,7 @@ function PriceEditor({
   onCancel,
   onDelete,
   onDefault,
+  canEdit = true,
 }) {
   return (
     <div className="inline-editor">
@@ -1179,16 +1230,26 @@ function PriceEditor({
             type="button"
             onClick={() => onDelete(editor)}
             className="danger-action"
+            disabled={!canEdit}
           >
             <Trash2 size={13} /> Desactivar
           </button>
         )}
         {editor.id && !editor.isDefault && (
-          <button type="button" onClick={() => onDefault(editor)}>
+          <button
+            type="button"
+            onClick={() => onDefault(editor)}
+            disabled={!canEdit}
+          >
             Marcar principal
           </button>
         )}
-        <button type="button" onClick={onSave} className="primary-action">
+        <button
+          type="button"
+          onClick={onSave}
+          className="primary-action"
+          disabled={!canEdit}
+        >
           <Check size={13} /> Guardar precio
         </button>
       </div>
@@ -1203,6 +1264,7 @@ function UnitsPanel({
   onChangeUnits,
   onSaveUnits,
   onCancelUnits,
+  canEdit = true,
 }) {
   const packaging = product.packagingProfile ?? {};
   const values = unitsEditor ?? packaging;
@@ -1217,6 +1279,7 @@ function UnitsPanel({
               type="button"
               className="inline-action"
               onClick={onSaveUnits}
+              disabled={!canEdit}
             >
               <Check size={14} /> Guardar unidades
             </button>
@@ -1225,6 +1288,7 @@ function UnitsPanel({
               type="button"
               className="inline-action"
               onClick={onStartUnitsEdit}
+              disabled={!canEdit}
             >
               <Edit3 size={14} /> Modificar
             </button>
@@ -1333,6 +1397,7 @@ function BarcodePanel({
   onOpenReader,
   onOpenCamera,
   onDetectedBarcode,
+  canEdit = true,
 }) {
   return (
     <div className="provider-tab-panel data-panel">
@@ -1345,6 +1410,7 @@ function BarcodePanel({
               type="button"
               className="inline-action"
               onClick={onOpenCamera}
+              disabled={!canEdit}
             >
               <Camera size={14} /> Cámara
             </button>
@@ -1352,16 +1418,18 @@ function BarcodePanel({
               type="button"
               className="inline-action"
               onClick={onOpenReader}
+              disabled={!canEdit}
             >
               <ScanLine size={14} /> Lector físico
             </button>
-            <label className="inline-action">
+            <label className={`inline-action ${!canEdit ? "is-disabled" : ""}`}>
               <Upload size={14} /> Leer imagen
               <input
                 type="file"
                 accept="image/*"
                 className="hidden-file"
                 onChange={async (event) => {
+                  if (!canEdit) return;
                   const file = event.target.files?.[0];
                   event.target.value = "";
                   if (!file) return;
@@ -1381,6 +1449,7 @@ function BarcodePanel({
               type="button"
               className="inline-action"
               onClick={() => onOpenBarcode()}
+              disabled={!canEdit}
             >
               <Plus size={14} /> Agregar
             </button>
@@ -1415,6 +1484,7 @@ function BarcodePanel({
           onCancel={onCancelBarcode}
           onDelete={onDeleteBarcode}
           onPrimary={onPrimaryBarcode}
+          canEdit={canEdit}
         />
       )}
     </div>
@@ -1427,6 +1497,7 @@ function BarcodeEditor({
   onCancel,
   onDelete,
   onPrimary,
+  canEdit = true,
 }) {
   return (
     <div className="inline-editor">
@@ -1486,16 +1557,26 @@ function BarcodeEditor({
             type="button"
             onClick={() => onDelete(editor)}
             className="danger-action"
+            disabled={!canEdit}
           >
             <Trash2 size={13} /> Desactivar
           </button>
         )}
         {editor.id && !editor.isPrimary && (
-          <button type="button" onClick={() => onPrimary(editor)}>
+          <button
+            type="button"
+            onClick={() => onPrimary(editor)}
+            disabled={!canEdit}
+          >
             Marcar principal
           </button>
         )}
-        <button type="button" onClick={onSave} className="primary-action">
+        <button
+          type="button"
+          onClick={onSave}
+          className="primary-action"
+          disabled={!canEdit}
+        >
           <Check size={13} /> Guardar código
         </button>
       </div>
@@ -1626,7 +1707,13 @@ function previousCost(costs, current) {
   );
   return previous?.cost ?? 0;
 }
-function ProductImage({ product, editing, onUpload, onRemoveImage }) {
+function ProductImage({
+  product,
+  editing,
+  onUpload,
+  onRemoveImage,
+  canEdit = true,
+}) {
   return (
     <div className="product-image-field">
       <label>Imagen</label>
@@ -1638,7 +1725,7 @@ function ProductImage({ product, editing, onUpload, onRemoveImage }) {
         )}
         <span>{product.imageUrl ? "Imagen del producto" : "Sin imagen"}</span>
       </div>
-      {editing && (
+      {editing && onUpload && canEdit && (
         <div className="product-image-actions">
           <label className="image-upload-button">
             <Upload size={13} /> Cargar

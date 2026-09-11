@@ -43,7 +43,7 @@ const emptyOrder = {
   notes: "",
 };
 
-export function AccountsPayableWindow({ onClose, onRequestLogin }) {
+export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
   const [providers, setProviders] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
   const [products, setProducts] = useState([]);
@@ -64,21 +64,51 @@ export function AccountsPayableWindow({ onClose, onRequestLogin }) {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
+    Promise.allSettled([
       apiClient.getAllPages("/proveedores", { estado: "todos" }),
       apiClient.getAllPages("/bodegas", { estado: "activos" }),
       apiClient.getAllPages("/productos", { estado: "activos" }),
       apiClient.getAllPages("/compras"),
     ])
-      .then(([providerItems, warehouseItems, productItems, orderItems]) => {
-        if (cancelled) return;
-        const nextProviders = providerItems.map(mapProvider);
-        setProviders(nextProviders);
-        setWarehouses(warehouseItems);
-        setProducts(productItems);
-        setOrders(orderItems);
-        setSelectedProviderId(nextProviders[0]?.id ?? null);
-      })
+      .then(
+        ([providersResult, warehousesResult, productsResult, ordersResult]) => {
+          if (cancelled) return;
+          if (providersResult.status === "rejected")
+            throw providersResult.reason;
+
+          const providerItems = providersResult.value;
+          const warehouseItems =
+            warehousesResult.status === "fulfilled"
+              ? warehousesResult.value
+              : [];
+          const productItems =
+            productsResult.status === "fulfilled" ? productsResult.value : [];
+          const orderItems =
+            ordersResult.status === "fulfilled" ? ordersResult.value : [];
+          const nextProviders = providerItems.map(mapProvider);
+          setProviders(nextProviders);
+          setWarehouses(warehouseItems);
+          setProducts(productItems);
+          setOrders(orderItems);
+          setSelectedProviderId(nextProviders[0]?.id ?? null);
+          const unavailable = [
+            warehousesResult.status === "rejected" ? "bodegas" : null,
+            productsResult.status === "rejected" ? "productos" : null,
+            ordersResult.status === "rejected" ? "compras" : null,
+          ].filter(Boolean);
+          if (unavailable.length) {
+            setError(
+              `Proveedores cargados, pero no se pudieron consultar: ${unavailable.join(", ")}.`,
+            );
+            const failedResult = [
+              warehousesResult,
+              productsResult,
+              ordersResult,
+            ].find((result) => result.status === "rejected");
+            if (isAuthError(failedResult?.reason)) onRequestLogin?.();
+          }
+        },
+      )
       .catch((requestError) => {
         if (cancelled) return;
         setError(requestError.message);
@@ -102,6 +132,9 @@ export function AccountsPayableWindow({ onClose, onRequestLogin }) {
 
   const selectedProvider =
     providers.find((provider) => provider.id === selectedProviderId) ?? null;
+  const canEdit =
+    (canAccess?.("PAYABLES_EDIT") ?? true) &&
+    (canAccess?.("PURCHASES_EDIT") ?? true);
   const allProviderOrders = useMemo(
     () =>
       orders.filter(
@@ -128,6 +161,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin }) {
   }
 
   function startNewOrder() {
+    if (!canEdit) return;
     setOrderEditor({
       ...emptyOrder,
       providerId: String(selectedProviderId ?? ""),
@@ -142,6 +176,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin }) {
   }
 
   function startEditOrder(order) {
+    if (!canEdit) return;
     if (order.status !== "BORRADOR") return;
     const firstItem = order.items?.[0];
     setOrderEditor({
@@ -164,6 +199,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin }) {
   }
 
   async function saveOrder() {
+    if (!canEdit) return;
     if (!orderEditor) return;
     const body = buildOrderBody(orderEditor);
     if (!body.providerId || !body.warehouseId || !body.items[0]?.productId) {
@@ -195,6 +231,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin }) {
   }
 
   async function transitionOrder(order, action, confirmation) {
+    if (!canEdit) return;
     if (!window.confirm(confirmation)) return;
     try {
       const saved =
@@ -338,6 +375,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin }) {
             <OperationsPanel
               onNewOrder={startNewOrder}
               onSelectView={selectPayableView}
+              canEdit={canEdit}
             />
           ) : (
             <AccountStatementPanel
@@ -347,6 +385,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin }) {
               onStatusFilter={setStatusFilter}
               onEdit={startEditOrder}
               onTransition={transitionOrder}
+              canEdit={canEdit}
             />
           )}
           {orderEditor && (
@@ -370,10 +409,10 @@ export function AccountsPayableWindow({ onClose, onRequestLogin }) {
       )}
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">
-          <button
-            type="button"
-            onClick={startNewOrder}
-            disabled={!selectedProviderId}
+            <button
+              type="button"
+              onClick={startNewOrder}
+              disabled={!selectedProviderId || !canEdit}
           >
             <Plus size={14} /> Nueva compra
           </button>
@@ -402,7 +441,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin }) {
   );
 }
 
-function OperationsPanel({ onNewOrder, onSelectView }) {
+function OperationsPanel({ onNewOrder, onSelectView, canEdit }) {
   const operations = [
     [
       "Facturas",
@@ -440,7 +479,7 @@ function OperationsPanel({ onNewOrder, onSelectView }) {
       () => onSelectView("statement", "ANULADA"),
       "Consultar documentos anulados",
     ],
-    ["Nueva compra", Plus, onNewOrder, "Crear un borrador en el API"],
+    ["Nueva compra", Plus, onNewOrder, "Crear un borrador en el API", true],
     [
       "Anular compra",
       CircleX,
@@ -457,12 +496,14 @@ function OperationsPanel({ onNewOrder, onSelectView }) {
         </span>
       </div>
       <div className="payable-operation-grid">
-        {operations.map(([label, Icon, onClick, description]) => (
+        {operations.map(
+          ([label, Icon, onClick, description, requiresEdit = false]) => (
           <button
             type="button"
             className="payable-operation-card"
             key={label}
             onClick={onClick}
+            disabled={requiresEdit && !canEdit}
           >
             <span className="payable-operation-icon">
               <Icon size={15} />
@@ -473,7 +514,8 @@ function OperationsPanel({ onNewOrder, onSelectView }) {
             </span>
             <ChevronRight size={14} />
           </button>
-        ))}
+          ),
+        )}
       </div>
     </div>
   );
@@ -486,6 +528,7 @@ function AccountStatementPanel({
   onStatusFilter,
   onEdit,
   onTransition,
+  canEdit,
 }) {
   if (activeTab === "due") {
     const openOrders = orders.filter((order) =>
@@ -611,7 +654,7 @@ function AccountStatementPanel({
       <div className="provider-data-table-wrap">
         <div className="provider-table-caption">
           {activeTab === "pending" ? "Pendientes" : "Estado de cuenta"} · doble
-          clic para editar borradores
+          clic para editar borradores{canEdit ? "" : " (solo lectura)"}
         </div>
         {visibleOrders.length ? (
           <table className="provider-data-table payable-data-table">
@@ -630,7 +673,7 @@ function AccountStatementPanel({
               {visibleOrders.map((order) => (
                 <tr
                   key={order.id}
-                  onDoubleClick={() => onEdit(order)}
+                  onDoubleClick={canEdit ? () => onEdit(order) : undefined}
                   title={
                     order.status === "BORRADOR"
                       ? "Doble clic para editar"
@@ -668,6 +711,7 @@ function AccountStatementPanel({
                       {order.status === "BORRADOR" && (
                         <button
                           type="button"
+                          disabled={!canEdit}
                           onClick={() =>
                             onTransition(
                               order,
@@ -682,6 +726,7 @@ function AccountStatementPanel({
                       {order.status === "ORDENADA" && (
                         <button
                           type="button"
+                          disabled={!canEdit}
                           onClick={() =>
                             onTransition(
                               order,
@@ -698,6 +743,7 @@ function AccountStatementPanel({
                           <button
                             type="button"
                             className="danger-text-button"
+                            disabled={!canEdit}
                             onClick={() =>
                               onTransition(
                                 order,

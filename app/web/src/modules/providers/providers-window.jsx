@@ -19,115 +19,6 @@ import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { apiClient } from "@/lib/api-client";
 import { ProductsWindow } from "@/modules/products/products-window";
 
-const demoProviders = [
-  {
-    id: "000001",
-    name: "CENTRAL DE ABASTOS SAS",
-    description: "CENTRAL DE ABASTOS SAS",
-    type: "JURÍDICO",
-    supplierType: "Nacional",
-    taxId: "800123456-9",
-    className: "Mayorista",
-    representative: "María Fernanda Rojas",
-    address1: "Carrera 5 # 24-18",
-    address2: "",
-    country: "COLOMBIA",
-    department: "TOLIMA",
-    city: "MELGAR",
-    municipality: "MELGAR",
-    postalCode: "734001",
-    phones: "3752255",
-    mobile: "310 555 0198",
-    fax: "",
-    email: "compras@centralabastos.co",
-    startDate: "16/07/2014",
-    active: true,
-    withholdingType: "Contribuyente",
-    hasIslrWithholding: true,
-    creditDays: "30",
-    observations: "Proveedor principal de abarrotes.",
-    pendingBalance: "0.0",
-    advances: "0.0",
-    lastPurchase: "18/08/2026",
-    lastPayment: "25/08/2026",
-    maxCredit: "15.000.000",
-    averagePaymentDays: "28",
-    withholdings: "0.0",
-  },
-  {
-    id: "000002",
-    name: "CARNES DON PEPITO",
-    description: "CARNES DON PEPITO",
-    type: "NATURAL",
-    firstName: "Carlos",
-    middleName: "",
-    lastName: "Pérez",
-    secondLastName: "",
-    supplierType: "Nacional",
-    taxId: "900456789-2",
-    className: "Minorista",
-    representative: "Carlos Pérez",
-    address1: "Calle 11 # 8-42",
-    address2: "",
-    country: "COLOMBIA",
-    department: "BOLÍVAR",
-    city: "CARMEN DE BOLÍVAR",
-    municipality: "CARMEN DE BOLÍVAR",
-    postalCode: "131001",
-    phones: "6861022",
-    mobile: "315 440 1288",
-    fax: "",
-    email: "ventas@donpepito.co",
-    startDate: "08/01/2020",
-    active: true,
-    withholdingType: "Exento de retención",
-    hasIslrWithholding: false,
-    creditDays: "0",
-    observations: "Compra directa de productos cárnicos.",
-    pendingBalance: "0.0",
-    advances: "0.0",
-    lastPurchase: "12/08/2026",
-    lastPayment: "12/08/2026",
-    maxCredit: "0.0",
-    averagePaymentDays: "0",
-    withholdings: "0.0",
-  },
-  {
-    id: "80000000",
-    name: "SMARTTECH SAS",
-    description: "SMARTTECH SAS",
-    type: "JURÍDICO",
-    supplierType: "Nacional",
-    taxId: "901235460-7",
-    className: "Tecnología",
-    representative: "Equipo comercial",
-    address1: "Avenida El Dorado # 68-12",
-    address2: "Oficina 402",
-    country: "COLOMBIA",
-    department: "CUNDINAMARCA",
-    city: "BOGOTÁ D.C.",
-    municipality: "BOGOTÁ D.C.",
-    postalCode: "110931",
-    phones: "601 742 8800",
-    mobile: "",
-    fax: "",
-    email: "contacto@smarttech.co",
-    startDate: "22/03/2022",
-    active: true,
-    withholdingType: "Autorretenedor",
-    hasIslrWithholding: true,
-    creditDays: "15",
-    observations: "Proveedor de equipos y servicios tecnológicos.",
-    pendingBalance: "0.0",
-    advances: "0.0",
-    lastPurchase: "02/08/2026",
-    lastPayment: "20/08/2026",
-    maxCredit: "8.000.000",
-    averagePaymentDays: "16",
-    withholdings: "125.000",
-  },
-];
-
 const tabs = [
   { id: "statistics", label: "Estadística", icon: Sigma },
   { id: "products", label: "Productos", icon: Package },
@@ -190,23 +81,31 @@ function mapProvider(provider) {
     taxId: provider.taxId || "",
     representative: provider.legalRepresentative || "",
     address1: provider.address || "",
+    address2: provider.address2 || "",
+    department: provider.department || "",
+    city: provider.city || "",
+    municipality: provider.municipality || "",
+    postalCode: provider.postalCode || "",
     phones: provider.phonePrimary || "",
     mobile: provider.phoneSecondary || "",
+    fax: provider.fax || "",
     email: provider.email || "",
     active: provider.isActive !== false,
+    className: provider.className || "",
+    withholdingType: provider.withholdingType || "",
+    creditDays:
+      provider.creditDays === null || provider.creditDays === undefined
+        ? ""
+        : String(provider.creditDays),
+    observations: provider.observations || "",
     purchaseCount: provider._count?.purchaseOrders ?? 0,
     productCount: provider._count?.productLinks ?? 0,
   };
 }
 
-export function ProvidersWindow({ onClose, onRequestLogin }) {
-  const [providers, setProviders] = useState(() =>
-    demoProviders.map((provider) => ({
-      ...provider,
-      recordId: Number(provider.id),
-    })),
-  );
-  const [selectedId, setSelectedId] = useState(Number(demoProviders[0].id));
+export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
+  const [providers, setProviders] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("main");
   const [editing, setEditing] = useState(false);
@@ -226,10 +125,10 @@ export function ProvidersWindow({ onClose, onRequestLogin }) {
     apiClient
       .getAllPages("/proveedores", { estado: "todos" })
       .then((items) => {
-        if (cancelled || !items.length) return;
+        if (cancelled) return;
         const nextProviders = items.map(mapProvider);
         setProviders(nextProviders);
-        setSelectedId(nextProviders[0].recordId);
+        setSelectedId(nextProviders[0]?.recordId ?? null);
       })
       .catch((requestError) => {
         if (!cancelled) setError(requestError.message);
@@ -245,6 +144,7 @@ export function ProvidersWindow({ onClose, onRequestLogin }) {
   const selectedProvider =
     providers.find((provider) => provider.recordId === selectedId) ??
     providers[0];
+  const canEdit = canAccess?.("PROVIDERS_EDIT") ?? true;
   const shownProvider = editing ? draft : selectedProvider;
   const filteredProviders = useMemo(
     () =>
@@ -266,6 +166,7 @@ export function ProvidersWindow({ onClose, onRequestLogin }) {
     if (activeTab === "products") loadProviderProducts(recordId);
   }
   function handleAdd() {
+    if (!canEdit) return;
     setSelectedId(null);
     setDraft({ ...emptyProvider });
     setEditing(true);
@@ -273,6 +174,7 @@ export function ProvidersWindow({ onClose, onRequestLogin }) {
     setError("");
   }
   function handleEdit() {
+    if (!canEdit) return;
     if (selectedProvider) {
       setDraft({ ...selectedProvider });
       setEditing(true);
@@ -283,6 +185,7 @@ export function ProvidersWindow({ onClose, onRequestLogin }) {
     setDraft((current) => ({ ...current, [field]: value }));
   }
   async function handleSave() {
+    if (!canEdit) return;
     setError("");
     const body = {
       name: draft.name.trim(),
@@ -290,12 +193,22 @@ export function ProvidersWindow({ onClose, onRequestLogin }) {
       providerType: draft.supplierType,
       description: draft.description.trim() || undefined,
       address: draft.address1.trim() || undefined,
+      address2: draft.address2.trim() || undefined,
       country: draft.country.trim() || undefined,
       city: draft.city.trim() || undefined,
+      department: draft.department.trim() || undefined,
+      municipality: draft.municipality.trim() || undefined,
+      postalCode: draft.postalCode.trim() || undefined,
       phonePrimary: draft.phones.trim() || undefined,
       phoneSecondary: draft.mobile.trim() || undefined,
+      fax: draft.fax.trim() || undefined,
       email: draft.email.trim() || undefined,
       legalRepresentative: draft.representative.trim() || undefined,
+      className: draft.className.trim() || undefined,
+      withholdingType: draft.withholdingType.trim() || undefined,
+      creditDays:
+        draft.creditDays === "" ? undefined : Number(draft.creditDays),
+      observations: draft.observations.trim() || undefined,
     };
     try {
       const saved = selectedId
@@ -319,6 +232,7 @@ export function ProvidersWindow({ onClose, onRequestLogin }) {
     }
   }
   async function handleDelete() {
+    if (!canEdit) return;
     if (!selectedId || !window.confirm("¿Deseas desactivar este proveedor?"))
       return;
     try {
@@ -553,11 +467,11 @@ export function ProvidersWindow({ onClose, onRequestLogin }) {
         <footer className="provider-window-footer">
           <div className="provider-crud-actions">
             {editing ? (
-              <button type="button" onClick={handleSave}>
+              <button type="button" onClick={handleSave} disabled={!canEdit}>
                 <Check size={14} /> Guardar
               </button>
             ) : (
-              <button type="button" onClick={handleAdd}>
+              <button type="button" onClick={handleAdd} disabled={!canEdit}>
                 <Plus size={14} /> Agregar
               </button>
             )}
@@ -565,7 +479,7 @@ export function ProvidersWindow({ onClose, onRequestLogin }) {
               <button
                 type="button"
                 onClick={handleEdit}
-                disabled={!selectedProvider}
+                disabled={!selectedProvider || !canEdit}
               >
                 <Edit3 size={14} /> Modificar
               </button>
@@ -574,7 +488,7 @@ export function ProvidersWindow({ onClose, onRequestLogin }) {
               <button
                 type="button"
                 onClick={handleDelete}
-                disabled={!selectedProvider}
+                disabled={!selectedProvider || !canEdit}
               >
                 <Trash2 size={14} /> Borrar
               </button>
@@ -923,7 +837,7 @@ function SummaryField({ label, value }) {
   return (
     <div className="summary-field">
       <label>{label}</label>
-      <input value={value} readOnly />
+      <input value={value ?? ""} readOnly />
     </div>
   );
 }

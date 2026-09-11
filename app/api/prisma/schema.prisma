@@ -28,9 +28,24 @@ model User {
   approvedInventoryMovements InventoryMovement[] @relation("InventoryMovementApprovedBy")
   createdTransferTickets InventoryTransferTicket[] @relation("TransferTicketCreatedBy")
   approvedTransferTickets InventoryTransferTicket[] @relation("TransferTicketApprovedBy")
+  permissions       UserPermission[]
 
   @@index([isActive])
   @@index([warehouseId])
+}
+
+model UserPermission {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  code      String
+  isAllowed Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, code])
+  @@index([code])
 }
 
 model Employee {
@@ -344,12 +359,21 @@ model Provider {
   providerType String?
   description String?
   address     String?
+  address2    String?
   country     String?
+  department  String?
   city        String?
+  municipality String?
+  postalCode  String?
   phonePrimary String?
   phoneSecondary String?
+  fax         String?
   email       String?
   legalRepresentative String?
+  className   String?
+  withholdingType String?
+  creditDays  Int?
+  observations String?
   isActive    Boolean   @default(true)
   deletedAt   DateTime?
   createdAt   DateTime  @default(now())

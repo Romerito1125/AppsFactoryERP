@@ -14,7 +14,9 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { Permissions } from '../../common/decorators/permissions.decorator';
 import { Role } from '../../common/enums/role.enum';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
@@ -35,16 +37,22 @@ export class ClientesController {
   ) {}
 
   @Get()
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('CLIENTS_VIEW')
   findAll(@Query() filter: FilterClientsDto) {
     return this.clientesService.findAll(filter);
   }
 
   @Get(':id')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('CLIENTS_VIEW')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.clientesService.findOne(id);
   }
 
   @Get(':id/referidos')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('CLIENTS_VIEW')
   findReferrals(@Param('id', ParseIntPipe) id: number) {
     // La pestaña Referidos es una consulta del cliente seleccionado, igual que
     // el listado público de clientes. Las operaciones sobre la red completa,
@@ -73,7 +81,8 @@ export class ClientesController {
   }
 
   @Post()
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('CLIENTS_EDIT')
   create(
     @Body() createClientDto: CreateClientDto,
     @Req() request: AuthRequest,
@@ -92,7 +101,8 @@ export class ClientesController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('CLIENTS_EDIT')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateClientDto: UpdateClientDto,
@@ -102,12 +112,15 @@ export class ClientesController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('CLIENTS_EDIT')
   remove(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
     return this.clientesService.remove(id, request.user);
   }
 
   @Patch(':id/reactivar')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('CLIENTS_EDIT')
   reactivate(@Param('id', ParseIntPipe) id: number) {
     return this.clientesService.reactivate(id);
   }

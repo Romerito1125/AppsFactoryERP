@@ -16,6 +16,11 @@ import {
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { apiClient } from "@/lib/api-client";
+import {
+  buildPermissionDraft,
+  permissionCatalog,
+  permissionOverrides,
+} from "@/app/permissions";
 
 const roleOptions = [
   ["ADMIN", "Administrador"],
@@ -45,6 +50,7 @@ export function UsersWindow({ onClose, onRequestLogin }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
+  const [permissionDraft, setPermissionDraft] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const {
@@ -95,12 +101,14 @@ export function UsersWindow({ onClose, onRequestLogin }) {
     setSelectedId(id);
     setEditing(false);
     setDraft(null);
+    setPermissionDraft(null);
     setError("");
   }
 
   function startAdd() {
     setSelectedId(null);
     setDraft({ ...emptyUser, password: "" });
+    setPermissionDraft(buildPermissionDraft(emptyUser.role));
     setEditing(true);
     setError("");
   }
@@ -108,12 +116,24 @@ export function UsersWindow({ onClose, onRequestLogin }) {
   function startEdit() {
     if (!selectedUser) return;
     setDraft({ ...selectedUser, email: selectedUser.username, password: "" });
+    setPermissionDraft(
+      buildPermissionDraft(selectedUser.role, selectedUser.permissions),
+    );
     setEditing(true);
     setError("");
   }
 
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateRole(role) {
+    updateDraft("role", role);
+    setPermissionDraft(buildPermissionDraft(role));
+  }
+
+  function updatePermission(code, isAllowed) {
+    setPermissionDraft((current) => ({ ...current, [code]: isAllowed }));
   }
 
   function handleRequestError(requestError) {
@@ -150,6 +170,13 @@ export function UsersWindow({ onClose, onRequestLogin }) {
             password: draft.password,
           });
       const normalized = mapUser(saved);
+      const permissionResult = await apiClient.put(
+        `/usuarios/${normalized.id}/permisos`,
+        {
+          permissions: permissionOverrides(draft.role, permissionDraft ?? {}),
+        },
+      );
+      normalized.permissions = permissionResult.permissions;
       setUsers((current) =>
         draft.id
           ? current.map((user) =>
@@ -160,6 +187,7 @@ export function UsersWindow({ onClose, onRequestLogin }) {
       setSelectedId(normalized.id);
       setEditing(false);
       setDraft(null);
+      setPermissionDraft(null);
     } catch (requestError) {
       handleRequestError(requestError);
     }
@@ -294,6 +322,14 @@ export function UsersWindow({ onClose, onRequestLogin }) {
               clients={clients}
               warehouses={warehouses}
               onChange={updateDraft}
+              onRoleChange={updateRole}
+              permissions={
+                editing
+                  ? (permissionDraft ??
+                    buildPermissionDraft(shownUser.role, shownUser.permissions))
+                  : buildPermissionDraft(shownUser.role, shownUser.permissions)
+              }
+              onPermissionChange={updatePermission}
             />
           ) : (
             <div className="provider-tab-panel empty-provider-panel">
@@ -342,6 +378,7 @@ export function UsersWindow({ onClose, onRequestLogin }) {
               onClick={() => {
                 setEditing(false);
                 setDraft(null);
+                setPermissionDraft(null);
               }}
             >
               <CircleX size={14} /> Cancelar
@@ -372,7 +409,16 @@ export function UsersWindow({ onClose, onRequestLogin }) {
   );
 }
 
-function UserDetails({ user, editing, clients, warehouses, onChange }) {
+function UserDetails({
+  user,
+  editing,
+  clients,
+  warehouses,
+  onChange,
+  onRoleChange,
+  permissions,
+  onPermissionChange,
+}) {
   const clientLabel = clients.find((client) => client.id === user.clientId);
   const warehouseLabel = warehouses.find(
     (warehouse) => warehouse.id === user.warehouseId,
@@ -406,7 +452,7 @@ function UserDetails({ user, editing, clients, warehouses, onChange }) {
           value={user.role}
           editing={editing}
           options={roleOptions}
-          onChange={(value) => onChange("role", value)}
+          onChange={onRoleChange}
         />
         <UserSelect
           label="Bodega asignada"
@@ -482,7 +528,58 @@ function UserDetails({ user, editing, clients, warehouses, onChange }) {
           </small>
         </div>
       )}
+      <PermissionMatrix
+        permissions={permissions}
+        editing={editing}
+        onChange={onPermissionChange}
+      />
     </div>
+  );
+}
+
+function PermissionMatrix({ permissions, editing, onChange }) {
+  const groups = permissionCatalog.reduce((result, item) => {
+    (result[item.group] ??= []).push(item);
+    return result;
+  }, {});
+
+  return (
+    <section
+      className="users-permissions-card"
+      aria-label="Permisos del usuario"
+    >
+      <div className="users-permissions-heading">
+        <div>
+          <strong>Accesos por módulo</strong>
+          <span>
+            {editing
+              ? "Activa solo las opciones que este usuario podrá utilizar."
+              : "Permisos efectivos para el rol seleccionado."}
+          </span>
+        </div>
+        <ShieldCheck size={16} />
+      </div>
+      <div className="users-permissions-grid">
+        {Object.entries(groups).map(([group, items]) => (
+          <div className="users-permission-group" key={group}>
+            <strong>{group}</strong>
+            {items.map((item) => (
+              <label className="permission-option" key={item.code}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(permissions?.[item.code])}
+                  disabled={!editing}
+                  onChange={(event) =>
+                    onChange?.(item.code, event.target.checked)
+                  }
+                />
+                <span>{item.label}</span>
+              </label>
+            ))}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
