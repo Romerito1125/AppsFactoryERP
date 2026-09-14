@@ -38,6 +38,8 @@ export function AccountsReceivableWindow({
   canAccess,
 }) {
   const [clients, setClients] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [warehouses, setWarehouses] = useState([]);
   const [credits, setCredits] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState(null);
@@ -58,14 +60,29 @@ export function AccountsReceivableWindow({
     let cancelled = false;
     Promise.allSettled([
       apiClient.getAllPages("/clientes", { estado: "todos" }),
+      apiClient.getAllPages("/productos", { estado: "activos" }),
+      apiClient.getAllPages("/bodegas", { estado: "activos" }),
       apiClient.getAllPages("/creditos"),
       apiClient.getAllPages("/cuentas-bancarias", { estado: "activos" }),
     ])
-      .then(([clientsResult, creditsResult, bankAccountsResult]) => {
+      .then(
+        ([
+          clientsResult,
+          productsResult,
+          warehousesResult,
+          creditsResult,
+          bankAccountsResult,
+        ]) => {
         if (cancelled) return;
         if (clientsResult.status === "rejected") throw clientsResult.reason;
 
         const clientItems = clientsResult.value;
+        const productItems =
+          productsResult.status === "fulfilled" ? productsResult.value : [];
+        const warehouseItems =
+          warehousesResult.status === "fulfilled"
+            ? warehousesResult.value
+            : [];
         const creditItems =
           creditsResult.status === "fulfilled" ? creditsResult.value : [];
         const bankItems =
@@ -74,9 +91,21 @@ export function AccountsReceivableWindow({
             : [];
         const nextClients = clientItems.map(mapClient);
         setClients(nextClients);
-        setCredits(creditItems.map(mapCredit));
+        setProducts(productItems.filter(isActiveProduct));
+        setWarehouses(warehouseItems.filter(isActive));
+        const nextCredits = creditItems.map(mapCredit);
+        setCredits(nextCredits);
         setBankAccounts(bankItems);
-        setSelectedClientId(nextClients[0]?.id ?? null);
+        const firstClientWithBalance = nextClients.find((client) =>
+          nextCredits.some(
+            (credit) =>
+              credit.clientId === client.id &&
+              credit.balance > 0,
+          ),
+        );
+        setSelectedClientId(
+          firstClientWithBalance?.id ?? nextClients[0]?.id ?? null,
+        );
 
         if (creditsResult.status === "rejected") {
           setError(
@@ -88,7 +117,21 @@ export function AccountsReceivableWindow({
             "Cuentas cargadas. Las cuentas bancarias no están disponibles; podrás registrar pagos sin consignación.",
           );
         }
-      })
+        const unavailable = [
+          productsResult.status === "rejected" ? "productos" : null,
+          warehousesResult.status === "rejected" ? "bodegas" : null,
+        ].filter(Boolean);
+        if (unavailable.length && creditsResult.status === "fulfilled") {
+          setError(
+            `Cuentas cargadas, pero no se pudieron consultar: ${unavailable.join(", ")}.`,
+          );
+          const failedResult = [productsResult, warehousesResult].find(
+            (result) => result.status === "rejected",
+          );
+          if (isAuthError(failedResult?.reason)) onRequestLogin?.();
+        }
+      },
+      )
       .catch((requestError) => {
         if (cancelled) return;
         setError(requestError.message);
@@ -114,6 +157,13 @@ export function AccountsReceivableWindow({
 
   const selectedClient =
     clients.find((client) => client.id === selectedClientId) ?? null;
+  const selectedClientIndex = filteredClients.findIndex(
+    (client) => client.id === selectedClientId,
+  );
+  const canMovePrevious = selectedClientIndex > 0;
+  const canMoveNext =
+    selectedClientIndex >= 0 &&
+    selectedClientIndex < filteredClients.length - 1;
   const canEdit = canAccess?.("RECEIVABLES_EDIT") ?? true;
   const clientCredits = useMemo(
     () =>
@@ -123,6 +173,7 @@ export function AccountsReceivableWindow({
     [credits, selectedClientId],
   );
   const openCredits = clientCredits.filter((credit) =>
+    credit.balance > 0 &&
     ["PENDIENTE", "PARCIAL", "VENCIDA"].includes(
       credit.reportedStatus ?? credit.status,
     ),
@@ -141,10 +192,12 @@ export function AccountsReceivableWindow({
 
   function startCredit() {
     if (!canEdit) return;
+    const firstProduct = products.find((product) => getDefaultPrice(product));
     setEditor({
       type: "credit",
       clientId: String(selectedClientId ?? ""),
-      totalAmount: "",
+      warehouseId: String(warehouses[0]?.id ?? ""),
+      items: [createReceivableItem(firstProduct)],
       dueDate: todayValue(),
     });
     setError("");
@@ -174,6 +227,51 @@ export function AccountsReceivableWindow({
     setEditor((current) => ({ ...current, [field]: value }));
   }
 
+  function updateCreditProduct(index, value) {
+    const product = products.find(
+      (item) => Number(item.id) === Number(value),
+    );
+    const price = getDefaultPrice(product);
+    setEditor((current) => ({
+      ...current,
+      items: current.items.map((item, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...item,
+              productId: value,
+              productPriceId: String(price?.id ?? ""),
+            }
+          : item,
+      ),
+    }));
+  }
+
+  function updateCreditItem(index, field, value) {
+    setEditor((current) => ({
+      ...current,
+      items: current.items.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item,
+      ),
+    }));
+  }
+
+  function addCreditItem() {
+    setEditor((current) => ({
+      ...current,
+      items: [...current.items, createReceivableItem()],
+    }));
+  }
+
+  function removeCreditItem(index) {
+    setEditor((current) => ({
+      ...current,
+      items:
+        current.items.length > 1
+          ? current.items.filter((_, itemIndex) => itemIndex !== index)
+          : current.items,
+    }));
+  }
+
   async function saveEditor() {
     if (!canEdit) return;
     if (!editor) return;
@@ -181,13 +279,39 @@ export function AccountsReceivableWindow({
     setError("");
     try {
       if (editor.type === "credit") {
-        if (!editor.clientId || Number(editor.totalAmount) <= 0) {
-          throw new Error("Selecciona un cliente e ingresa un monto válido.");
+        if (!editor.clientId || !editor.warehouseId || !editor.dueDate) {
+          throw new Error(
+            "Selecciona cliente, bodega y fecha de vencimiento para crear la cuenta.",
+          );
         }
-        const saved = await apiClient.post("/creditos", {
+        if (
+          !editor.items?.length ||
+          editor.items.some(
+            (item) =>
+              !item.productId ||
+              !item.productPriceId ||
+              !Number.isFinite(Number(item.quantity)) ||
+              Number(item.quantity) <= 0,
+          )
+        ) {
+          throw new Error(
+            "Agrega al menos un producto con precio y cantidad válida.",
+          );
+        }
+        const invoice = await apiClient.post("/facturas", {
           clientId: Number(editor.clientId),
-          totalAmount: Number(editor.totalAmount),
-          dueDate: editor.dueDate,
+          warehouseId: Number(editor.warehouseId),
+          source: "ADMIN",
+          saleMode: "CREDITO",
+          items: editor.items.map((item) => ({
+            productId: Number(item.productId),
+            productPriceId: Number(item.productPriceId),
+            warehouseId: Number(editor.warehouseId),
+            quantity: Number(item.quantity),
+          })),
+        });
+        const saved = await apiClient.post(`/facturas/${invoice.id}/credito`, {
+          dueDate: new Date(`${editor.dueDate}T00:00:00`).toISOString(),
         });
         const normalized = mapCredit(saved);
         setCredits((current) => [normalized, ...current]);
@@ -344,7 +468,10 @@ export function AccountsReceivableWindow({
                 }
                 type="button"
                 key={id}
-                onClick={() => setActiveTab(id)}
+                onClick={() => {
+                  setActiveTab(id);
+                  setError("");
+                }}
               >
                 {label}
               </button>
@@ -385,10 +512,19 @@ export function AccountsReceivableWindow({
               clients={clients}
               credits={clientCredits}
               bankAccounts={bankAccounts}
+              products={products}
+              warehouses={warehouses}
               saving={saving}
               onChange={updateEditor}
+              onProductChange={updateCreditProduct}
+              onItemChange={updateCreditItem}
+              onAddItem={addCreditItem}
+              onRemoveItem={removeCreditItem}
               onSave={saveEditor}
-              onCancel={() => setEditor(null)}
+              onCancel={() => {
+                setEditor(null);
+                setError("");
+              }}
             />
           )}
         </div>
@@ -403,9 +539,9 @@ export function AccountsReceivableWindow({
           <button
             type="button"
             onClick={startCredit}
-            disabled={!selectedClientId || !canEdit}
+            disabled={!canEdit}
           >
-            <Plus size={14} /> Nueva cuenta
+            <Plus size={14} /> Nueva venta a crédito
           </button>
           <button
             type="button"
@@ -420,6 +556,7 @@ export function AccountsReceivableWindow({
             type="button"
             className="muted-action"
             onClick={() => moveClient(-1)}
+            disabled={!canMovePrevious}
           >
             <ChevronLeft size={14} /> Anterior
           </button>
@@ -427,6 +564,7 @@ export function AccountsReceivableWindow({
             type="button"
             className="muted-action"
             onClick={() => moveClient(1)}
+            disabled={!canMoveNext}
           >
             Próximo <ChevronRight size={14} />
           </button>
@@ -468,10 +606,10 @@ function ReceivableOperations({
       true,
     ],
     [
-      "Nota crédito / Anticipo",
+      "Nueva venta a crédito",
       Plus,
       onNewCredit,
-      "Crear un nuevo crédito directo.",
+      "Crear una factura con uno o varios productos.",
       true,
     ],
   ];
@@ -486,22 +624,25 @@ function ReceivableOperations({
       <div className="payable-operation-grid">
         {operations.map(
           ([label, Icon, onClick, description, requiresEdit = false]) => (
-          <button
-            type="button"
-            className="payable-operation-card"
-            key={label}
-            onClick={onClick}
-            disabled={requiresEdit && !canEdit}
-          >
-            <span className="payable-operation-icon">
-              <Icon size={15} />
-            </span>
-            <span>
-              <strong>{label}</strong>
-              <small>{description}</small>
-            </span>
-            <ChevronRight size={14} />
-          </button>
+            <button
+              type="button"
+              className="payable-operation-card"
+              key={label}
+              onClick={onClick}
+              disabled={
+                (requiresEdit && !canEdit) ||
+                (label === "Pagos y abonos" && !open.length)
+              }
+            >
+              <span className="payable-operation-icon">
+                <Icon size={15} />
+              </span>
+              <span>
+                <strong>{label}</strong>
+                <small>{description}</small>
+              </span>
+              <ChevronRight size={14} />
+            </button>
           ),
         )}
       </div>
@@ -529,8 +670,8 @@ function ReceivableStatement({
       </div>
       <div className="provider-data-table-wrap">
         <div className="provider-table-caption">
-          {pending ? "Pendiente" : "Estado de cuenta"} · doble clic para
-          registrar un pago{canEdit ? "" : " (solo lectura)"}
+          {pending ? "Pendiente" : "Estado de cuenta"} · selecciona una fila y
+          usa “Abonar”; también puedes hacer doble clic{canEdit ? "" : " (solo lectura)"}
         </div>
         {credits.length ? (
           <table className="provider-data-table payable-data-table receivable-data-table">
@@ -566,7 +707,9 @@ function ReceivableStatement({
                       <span
                         className={`status-pill status-${status.toLowerCase()}`}
                       >
-                        {statusLabels[status] ?? status}
+                        {credit.totalAmount < 0
+                          ? "Anticipo"
+                          : statusLabels[status] ?? status}
                       </span>
                     </td>
                     <td>{formatDate(credit.createdAt)}</td>
@@ -688,8 +831,14 @@ function ReceivableEditor({
   clients,
   credits,
   bankAccounts,
+  products,
+  warehouses,
   saving,
   onChange,
+  onProductChange,
+  onItemChange,
+  onAddItem,
+  onRemoveItem,
   onSave,
   onCancel,
 }) {
@@ -724,16 +873,90 @@ function ReceivableEditor({
                   .map((client) => ({
                     value: String(client.id),
                     label: `${client.identification} · ${clientName(client)}`,
-                  }))}
+                }))}
                 onChange={(value) => onChange("clientId", value)}
                 wide
               />
-              <EditorField
-                label="Monto total"
-                value={editor.totalAmount}
-                type="number"
-                onChange={(value) => onChange("totalAmount", value)}
+              <EditorSelect
+                label="Bodega"
+                value={editor.warehouseId}
+                options={warehouses
+                  .filter((warehouse) => warehouse.isActive !== false)
+                  .map((warehouse) => ({
+                    value: String(warehouse.id),
+                    label:
+                      warehouse.location ??
+                      warehouse.name ??
+                      `Bodega #${warehouse.id}`,
+                  }))}
+                onChange={(value) => onChange("warehouseId", value)}
               />
+              <div className="purchase-items-editor editor-field-wide receivable-items-editor">
+                <div className="purchase-items-heading">
+                  <span>Productos de la cuenta</span>
+                  <button type="button" onClick={onAddItem}>
+                    <Plus size={13} /> Agregar producto
+                  </button>
+                </div>
+                <div className="purchase-items-list">
+                  {editor.items.map((item, index) => {
+                    const product = products.find(
+                      (candidate) =>
+                        Number(candidate.id) === Number(item.productId),
+                    );
+                    const productPrices = activeProductPrices(product);
+                    return (
+                      <div
+                        className="purchase-item-row"
+                        key={`receivable-item-${index}`}
+                      >
+                        <EditorSelect
+                          label={`Producto ${index + 1}`}
+                          value={item.productId}
+                          options={products
+                            .filter((candidate) =>
+                              activeProductPrices(candidate).length,
+                            )
+                            .map((candidate) => ({
+                              value: String(candidate.id),
+                              label: `${candidate.code ?? candidate.id} · ${candidate.name}`,
+                            }))}
+                          onChange={(value) => onProductChange(index, value)}
+                        />
+                        <EditorSelect
+                          label="Precio"
+                          value={item.productPriceId}
+                          options={productPrices.map((price) => ({
+                            value: String(price.id),
+                            label: `${price.name ?? "Precio"} · ${formatCurrency(price.price)}`,
+                          }))}
+                          onChange={(value) =>
+                            onItemChange(index, "productPriceId", value)
+                          }
+                        />
+                        <EditorField
+                          label="Cantidad"
+                          value={item.quantity}
+                          type="number"
+                          onChange={(value) =>
+                            onItemChange(index, "quantity", value)
+                          }
+                        />
+                        <button
+                          type="button"
+                          className="purchase-item-remove"
+                          onClick={() => onRemoveItem(index)}
+                          disabled={editor.items.length === 1}
+                          aria-label={`Quitar producto ${index + 1}`}
+                          title="Quitar producto"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
               <EditorField
                 label="Vencimiento"
                 value={editor.dueDate}
@@ -790,6 +1013,12 @@ function ReceivableEditor({
             </>
           )}
         </div>
+        {editor.type === "credit" && (
+          <div className="payable-editor-total">
+            <span>Total de la cuenta</span>
+            <strong>{formatCurrency(receivableEditorTotal(editor, products))}</strong>
+          </div>
+        )}
         <div className="inline-editor-actions">
           <button type="button" onClick={onCancel}>
             Cancelar
@@ -860,6 +1089,49 @@ function BalanceField({ label, value, muted }) {
       <strong>{formatCurrency(value)}</strong>
     </div>
   );
+}
+
+function isActive(item) {
+  return item?.isActive !== false && item?.deletedAt == null;
+}
+
+function isActiveProduct(product) {
+  return isActive(product) && activeProductPrices(product).length > 0;
+}
+
+function activeProductPrices(product) {
+  return (product?.prices ?? []).filter(isActive);
+}
+
+function getDefaultPrice(product) {
+  return (
+    activeProductPrices(product).find((price) => price.isDefault) ??
+    activeProductPrices(product)[0] ??
+    null
+  );
+}
+
+function createReceivableItem(product) {
+  const price = getDefaultPrice(product);
+  return {
+    productId: String(product?.id ?? ""),
+    productPriceId: String(price?.id ?? ""),
+    quantity: "1",
+  };
+}
+
+function receivableEditorTotal(editor, products) {
+  return (editor.items ?? []).reduce((sum, item) => {
+    const product = products.find(
+      (candidate) => Number(candidate.id) === Number(item.productId),
+    );
+    const price = activeProductPrices(product).find(
+      (candidate) => Number(candidate.id) === Number(item.productPriceId),
+    );
+    const subtotal = Number(price?.price ?? 0) * Number(item.quantity ?? 0);
+    const taxRate = Number(product?.taxRate ?? 0);
+    return sum + subtotal * (1 + taxRate / 100);
+  }, 0);
 }
 
 function mapClient(client) {

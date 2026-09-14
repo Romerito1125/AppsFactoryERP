@@ -115,6 +115,10 @@ export class CreateProductDto {
   @MinLength(1)
   brand: string;
 
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
   @Type(() => Number)
   @IsInt()
   @Min(0)
@@ -179,6 +183,6 @@ export class CreateInitialProductWarehouseDto {
 
   @Type(() => Number)
   @IsInt()
-  @IsPositive()
+  @Min(0)
   quantity: number;
 }

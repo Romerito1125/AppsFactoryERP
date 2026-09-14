@@ -1,30 +1,36 @@
 import { IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class RegisterDto {
-  @IsString()
-  @MinLength(3)
+  @IsString({ message: 'La identificación debe ser texto.' })
+  @MinLength(3, {
+    message: 'La identificación debe tener al menos 3 caracteres.',
+  })
   identification: string;
 
-  @IsString()
-  @MinLength(2)
+  @IsString({ message: 'Los nombres deben ser texto.' })
+  @MinLength(2, { message: 'Los nombres deben tener al menos 2 caracteres.' })
   firstName: string;
 
-  @IsString()
-  @MinLength(2)
+  @IsString({ message: 'Los apellidos deben ser texto.' })
+  @MinLength(2, {
+    message: 'Los apellidos deben tener al menos 2 caracteres.',
+  })
   lastName: string;
 
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'El teléfono debe ser texto.' })
   phone?: string;
 
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'La dirección debe ser texto.' })
   address?: string;
 
-  @IsEmail()
+  @IsEmail({}, { message: 'El correo no es válido.' })
   email: string;
 
-  @IsString()
-  @MinLength(6)
+  @IsString({ message: 'La contraseña debe ser texto.' })
+  @MinLength(6, {
+    message: 'La contraseña debe tener al menos 6 caracteres.',
+  })
   password: string;
 }

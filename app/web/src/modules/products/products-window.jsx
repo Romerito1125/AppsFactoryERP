@@ -7,12 +7,17 @@ import {
   ChevronRight,
   CircleX,
   Edit3,
+  Heart,
   ImagePlus,
   Info,
+  LayoutGrid,
+  List,
+  LoaderCircle,
   Package,
   Plus,
   ScanLine,
   Search,
+  Star,
   Tag,
   Trash2,
   Upload,
@@ -21,9 +26,12 @@ import {
 } from "lucide-react";
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
+import { SearchOptionsMenu } from "@/components/desktop/search-options-menu";
 import { apiClient } from "@/lib/api-client";
 
 const units = ["UND", "KG", "G", "LB", "L", "ML", "CAJA", "PAQUETE"];
+const CREATE_PRODUCT_TYPE_VALUE = "__crear_tipo_producto__";
+const CREATE_WAREHOUSE_VALUE = "__crear_bodega__";
 const barcodeTypes = [
   ["EAN13", "EAN-13"],
   ["EAN8", "EAN-8"],
@@ -49,7 +57,9 @@ const emptyProduct = {
   maximumStock: "",
   stock: 0,
   cost: 0,
+  initialStock: 0,
   active: true,
+  warehouseId: "",
   warehouse: "",
   warehouses: [],
   barcodes: [],
@@ -57,6 +67,22 @@ const emptyProduct = {
   packagingProfile: null,
   imageUrl: "",
 };
+
+function createEmptyProductDraft(productTypes = [], providers = [], warehouses = []) {
+  const defaultProductType = productTypes[0];
+  const defaultProvider = providers[0];
+  const defaultWarehouse = warehouses[0];
+  return {
+    ...emptyProduct,
+    productTypeId: defaultProductType?.id ?? "",
+    providerId: defaultProvider?.id ?? "",
+    type: defaultProductType?.name ?? "",
+    provider: defaultProvider?.name ?? "",
+    warehouseId: defaultWarehouse?.id ?? "",
+    warehouse: defaultWarehouse?.location ?? "",
+  };
+}
+
 const productTabs = [
   { id: "main", label: "Datos principales", icon: Info },
   { id: "prices", label: "Precios", icon: Tag },
@@ -73,14 +99,27 @@ export function ProductsWindow({
   const [products, setProducts] = useState([]);
   const [selectedId, setSelectedId] = useState(initialProductId ?? null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("todos");
+  const [productView, setProductView] = useState("grid");
+  const [favoriteIds, setFavoriteIds] = useState([]);
+  const [favoriteLoadingId, setFavoriteLoadingId] = useState(null);
   const [activeTab, setActiveTab] = useState("main");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [productTypes, setProductTypes] = useState([]);
   const [providers, setProviders] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
+  const [productProfit, setProductProfit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [actionLoading, setActionLoading] = useState("");
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageRemoving, setImageRemoving] = useState(false);
+  const [pendingImage, setPendingImage] = useState(null);
+  const [catalogDialog, setCatalogDialog] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
   const [priceEditor, setPriceEditor] = useState(null);
   const [unitsEditor, setUnitsEditor] = useState(null);
   const [barcodeEditor, setBarcodeEditor] = useState(null);
@@ -93,6 +132,29 @@ export function ProductsWindow({
     style: windowStyle,
   } = useDraggableWindow();
 
+  useEffect(
+    () => () => {
+      if (pendingImage?.previewUrl) URL.revokeObjectURL(pendingImage.previewUrl);
+    },
+    [pendingImage],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedId) return undefined;
+    apiClient
+      .get(`/productos/${selectedId}/utilidades`)
+      .then((profit) => {
+        if (!cancelled) setProductProfit(profit);
+      })
+      .catch(() => {
+        if (!cancelled) setProductProfit(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+
   useEffect(() => {
     let cancelled = false;
     Promise.allSettled([
@@ -100,17 +162,45 @@ export function ProductsWindow({
       apiClient.getAllPages("/tipos-producto", { estado: "activos" }),
       apiClient.getAllPages("/proveedores", { estado: "activos" }),
       apiClient.getAllPages("/bodegas", { estado: "activos" }),
+      apiClient.get("/productos/favoritos/mios"),
     ])
       .then(
-        ([productResult, typeResult, providerResult, warehouseResult]) => {
+        ([
+          productResult,
+          typeResult,
+          providerResult,
+          warehouseResult,
+          favoriteResult,
+        ]) => {
         if (cancelled) return;
         if (productResult.status === "rejected") throw productResult.reason;
         const next = productResult.value.map(mapProduct);
+        const favoriteItems =
+          favoriteResult.status === "fulfilled" ? favoriteResult.value : [];
         const requested = next.find(
           (item) => item.recordId === Number(initialProductId),
         );
+        const firstProduct = requested ?? next[0];
         setProducts(next);
-        setSelectedId(requested?.recordId ?? next[0]?.recordId ?? null);
+        setSelectedId(firstProduct?.recordId ?? null);
+        if (firstProduct) {
+          setDraft({ ...firstProduct });
+        } else {
+          const nextProductTypes =
+            typeResult.status === "fulfilled" ? typeResult.value : [];
+          const nextProviders =
+            providerResult.status === "fulfilled" ? providerResult.value : [];
+          const nextWarehouses =
+            warehouseResult.status === "fulfilled" ? warehouseResult.value : [];
+          setDraft(
+            createEmptyProductDraft(
+              nextProductTypes,
+              nextProviders,
+              nextWarehouses,
+            ),
+          );
+        }
+        setEditing(true);
         setProductTypes(
           typeResult.status === "fulfilled" ? typeResult.value : [],
         );
@@ -122,10 +212,16 @@ export function ProductsWindow({
             ? warehouseResult.value
             : [],
         );
+        setFavoriteIds(
+          favoriteItems
+            .map((product) => String(product.id))
+            .filter(Boolean),
+        );
         const unavailable = [
           typeResult.status === "rejected" ? "tipos de producto" : null,
           providerResult.status === "rejected" ? "proveedores" : null,
           warehouseResult.status === "rejected" ? "bodegas" : null,
+          favoriteResult.status === "rejected" ? "favoritos" : null,
         ].filter(Boolean);
         if (unavailable.length)
           setError(
@@ -144,33 +240,92 @@ export function ProductsWindow({
     };
   }, [initialProductId]);
 
+  const favoriteSet = useMemo(
+    () => new Set(favoriteIds.map((id) => String(id))),
+    [favoriteIds],
+  );
+
   const filteredProducts = useMemo(
     () =>
-      products.filter((product) =>
-        `${product.code} ${product.name} ${product.brand}`
-          .toLowerCase()
-          .includes(searchTerm.toLowerCase()),
-      ),
-    [products, searchTerm],
+      products.filter((product) => {
+        const isFavorite = favoriteSet.has(String(product.recordId));
+        const matchesFilter =
+          statusFilter === "favoritos"
+            ? isFavorite
+            : statusFilter === "todos" ||
+              (statusFilter === "activos" ? product.active : !product.active);
+        return (
+          matchesFilter &&
+          `${product.code} ${product.name} ${product.brand}`
+            .toLowerCase()
+            .includes(searchTerm.trim().toLowerCase())
+        );
+      }),
+    [favoriteSet, products, searchTerm, statusFilter],
   );
   const selectedProduct =
     products.find((product) => product.recordId === selectedId) ?? null;
   const shownProduct = editing ? draft : selectedProduct;
   const canEdit = canAccess?.("PRODUCTS_EDIT") ?? true;
   const canInventoryEdit = canAccess?.("INVENTORY_EDIT") ?? true;
+  const hasChanges = useMemo(
+    () => hasProductDraftChanges(draft, selectedProduct),
+    [draft, selectedProduct],
+  );
+  const selectedIndex = filteredProducts.findIndex(
+    (product) => product.recordId === selectedId,
+  );
+  const canMovePrevious = selectedIndex > 0;
+  const canMoveNext =
+    selectedIndex >= 0 && selectedIndex < filteredProducts.length - 1;
 
   function selectProduct(recordId) {
     setSelectedId(recordId);
+    setProductProfit(null);
+    setPendingImage(null);
     setEditing(false);
     setDraft(null);
     setPriceEditor(null);
     setUnitsEditor(null);
     setBarcodeEditor(null);
     setInventoryEditor(null);
+    setFieldErrors({});
     setError("");
+    const product = products.find((item) => item.recordId === recordId);
+    if (product) {
+      setDraft({ ...product });
+      setEditing(true);
+    }
+  }
+  async function toggleFavorite(recordId) {
+    const normalizedId = String(recordId);
+    if (favoriteLoadingId) return;
+    const isFavorite = favoriteSet.has(normalizedId);
+    setFavoriteLoadingId(normalizedId);
+    setError("");
+    try {
+      if (isFavorite)
+        await apiClient.delete(`/productos/${recordId}/favorito`);
+      else await apiClient.put(`/productos/${recordId}/favorito`);
+      setFavoriteIds((current) =>
+        isFavorite
+          ? current.filter((id) => id !== normalizedId)
+          : [...current, normalizedId],
+      );
+    } catch (requestError) {
+      handleRequestError(requestError);
+    } finally {
+      setFavoriteLoadingId(null);
+    }
   }
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
   }
   function updateProduct(recordId, changes) {
     setProducts((current) =>
@@ -178,6 +333,9 @@ export function ProductsWindow({
         item.recordId === recordId ? { ...item, ...changes } : item,
       ),
     );
+    if (recordId === selectedId) {
+      setDraft((current) => (current ? { ...current, ...changes } : current));
+    }
   }
   function handleRequestError(requestError) {
     setError(requestError.message);
@@ -187,33 +345,78 @@ export function ProductsWindow({
   function handleAdd() {
     if (!canEdit) return;
     setSelectedId(null);
-    setDraft({
-      ...emptyProduct,
-      productTypeId: productTypes[0]?.id ?? "",
-      providerId: providers[0]?.id ?? "",
-      type: productTypes[0]?.name ?? "",
-      provider: providers[0]?.name ?? "",
-    });
+    setProductProfit(null);
+    setPendingImage(null);
+    setDraft(createEmptyProductDraft(productTypes, providers, warehouses));
     setEditing(true);
     setActiveTab("main");
+    setFieldErrors({});
     setError("");
   }
-  function handleEdit() {
-    if (!canEdit) return;
-    if (selectedProduct) {
-      setDraft({ ...selectedProduct });
-      setEditing(true);
-      setError("");
-    }
+
+  async function handleCreateProductType(name) {
+    const normalizedName = name.trim();
+    if (!normalizedName)
+      throw new Error("Escribe el nombre del tipo de producto.");
+    const created = await apiClient.post("/tipos-producto", {
+      name: normalizedName,
+    });
+    setProductTypes((current) => [...current, created]);
+    updateDraft("productTypeId", String(created.id));
+    updateDraft("type", created.name);
+    return created;
+  }
+
+  function requestCreateProductType() {
+    setCatalogDialog("product-type");
+    setError("");
+  }
+
+  async function handleCreateWarehouse(location) {
+    const normalizedLocation = location.trim();
+    if (!normalizedLocation) throw new Error("Escribe el nombre de la bodega.");
+    const created = await apiClient.post("/bodegas", {
+      location: normalizedLocation,
+    });
+    setWarehouses((current) => [...current, created]);
+    updateDraft("warehouseId", String(created.id));
+    updateDraft("warehouse", created.location);
+    setError("");
+    return created;
+  }
+
+  function requestCreateWarehouse() {
+    setCatalogDialog("warehouse");
+    setError("");
+  }
+
+  async function handleCatalogDialogSave(value) {
+    if (catalogDialog === "product-type") await handleCreateProductType(value);
+    else await handleCreateWarehouse(value);
+    setCatalogDialog(null);
   }
 
   async function handleSave() {
-    if (!canEdit) return;
-    if (!draft.productTypeId || !draft.providerId) {
-      setError("Selecciona el tipo de producto y el proveedor principal.");
+    if (
+      !canEdit ||
+      !draft ||
+      !hasChanges ||
+      saving ||
+      deleting ||
+      actionLoading
+    )
+      return;
+    setError("");
+    setFieldErrors({});
+    const validationErrors = validateProductDraft(draft);
+    if (selectedId !== null && !draft.code.trim())
+      validationErrors.code = "El código es obligatorio.";
+    if (Object.keys(validationErrors).length) {
+      setFieldErrors(validationErrors);
+      setError("Corrige los campos marcados antes de guardar.");
       return;
     }
-    setError("");
+    setSaving(true);
     const body = {
       productTypeId: Number(draft.productTypeId),
       providerId: Number(draft.providerId),
@@ -225,12 +428,92 @@ export function ProductsWindow({
       minimumStock: Number(draft.minimumStock) || 0,
       maximumStock:
         draft.maximumStock === "" ? undefined : Number(draft.maximumStock),
+      isActive: Boolean(draft.active),
+      ...(selectedId === null && draft.warehouseId
+        ? {
+            warehouses: [
+              {
+                warehouseId: Number(draft.warehouseId),
+                quantity: Number(draft.initialStock) || 0,
+              },
+            ],
+          }
+        : {}),
+      ...(selectedId !== null && draft.warehouseId
+        ? { warehouseId: Number(draft.warehouseId) }
+        : {}),
     };
     try {
+      const wasCreating = selectedId === null;
+      const draftCode = draft.code.trim();
+      const currentCode = selectedProduct?.code ?? "";
       const saved = selectedId
         ? await apiClient.patch(`/productos/${selectedId}`, body)
         : await apiClient.post("/productos", body);
-      const normalized = mapProduct(saved);
+      let normalized = mapProduct(saved);
+      if (draftCode && draftCode !== currentCode) {
+        const currentPrimaryBarcode = selectedProduct?.barcodes?.find(
+          (barcode) => barcode.isPrimary,
+        );
+        if (currentPrimaryBarcode) {
+          await apiClient.patch(
+            `/codigos-barras/${currentPrimaryBarcode.id}`,
+            {
+              code: draftCode,
+              type: inferBarcodeType(draftCode),
+              isPrimary: true,
+            },
+          );
+        } else {
+          await apiClient.post(`/productos/${saved.id}/codigos-barras`, {
+            code: draftCode,
+            type: inferBarcodeType(draftCode),
+            isPrimary: true,
+          });
+        }
+        normalized = mapProduct(await apiClient.get(`/productos/${saved.id}`));
+      }
+      const costValue = Number(draft.cost);
+      const currentCost = Number(selectedProduct?.cost ?? 0);
+      const activeCost = selectedProduct?.costs?.find(
+        (cost) => cost.isActive !== false,
+      );
+      if (
+        Number.isFinite(costValue) &&
+        costValue > 0 &&
+        (wasCreating ||
+          costValue !== currentCost ||
+          draft.unit !== selectedProduct?.unit)
+      ) {
+        await apiClient.post(`/productos/${saved.id}/costos`, {
+          cost: costValue,
+          unit: draft.unit,
+          quantity: 1,
+          isActive: true,
+        });
+        normalized = mapProduct(await apiClient.get(`/productos/${saved.id}`));
+      } else if (
+        !wasCreating &&
+        costValue === 0 &&
+        currentCost > 0 &&
+        activeCost
+      ) {
+        await apiClient.delete(`/costos-producto/${activeCost.id}`);
+        normalized = mapProduct(await apiClient.get(`/productos/${saved.id}`));
+      }
+      if (wasCreating && pendingImage) {
+        const formData = new FormData();
+        formData.append("image", pendingImage.file);
+        const uploaded = await apiClient.upload(
+          `/productos/${saved.id}/imagen`,
+          formData,
+        );
+        normalized = {
+          ...normalized,
+          imageUrl: uploaded.imageUrl ?? uploaded.image?.url ?? "",
+        };
+      }
+      await loadProductProfit(saved.id);
       setProducts((current) =>
         selectedId
           ? current.map((item) =>
@@ -239,30 +522,94 @@ export function ProductsWindow({
           : [...current, normalized],
       );
       setSelectedId(normalized.recordId);
-      setDraft(null);
-      setEditing(false);
+      setDraft({ ...normalized });
+      setPendingImage(null);
+      setEditing(true);
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setSaving(false);
     }
   }
   async function handleDelete() {
-    if (!canEdit) return;
-    if (!selectedId || !window.confirm("¿Deseas desactivar este producto?"))
+    if (!canEdit || deleting || saving || actionLoading) return;
+    if (
+      selectedId === null ||
+      !window.confirm(
+        "¿Deseas eliminar definitivamente este producto? Si tiene documentos o movimientos relacionados, se desactivará y conservará su información.",
+      )
+    )
       return;
+    setDeleting(true);
+    setError("");
     try {
       await apiClient.delete(`/productos/${selectedId}`);
-      updateProduct(selectedId, { active: false });
+      const remaining = products.filter((item) => item.recordId !== selectedId);
+      setProducts(remaining);
+      setFavoriteIds((current) =>
+        current.filter((id) => id !== String(selectedId)),
+      );
+      setPendingImage(null);
+      const nextProduct = remaining[0] ?? null;
+      setSelectedId(nextProduct?.recordId ?? null);
+      setDraft(
+        nextProduct
+          ? { ...nextProduct }
+          : createEmptyProductDraft(productTypes, providers, warehouses),
+      );
+      setEditing(true);
+      setFieldErrors({});
     } catch (requestError) {
-      handleRequestError(requestError);
+      if (!isProductRelationError(requestError)) {
+        handleRequestError(requestError);
+      } else {
+        try {
+          const deactivated = mapProduct(
+            await apiClient.patch(`/productos/${selectedId}/desactivar`, {}),
+          );
+          const nextProducts = products.map((item) =>
+            item.recordId === selectedId ? deactivated : item,
+          );
+          const remaining = nextProducts.filter(
+            (item) => item.recordId !== selectedId,
+          );
+          setProducts(nextProducts);
+          setPendingImage(null);
+          const nextProduct = remaining[0] ?? null;
+          setSelectedId(nextProduct?.recordId ?? null);
+          setDraft(
+            nextProduct
+              ? { ...nextProduct }
+              : createEmptyProductDraft(productTypes, providers, warehouses),
+          );
+          setEditing(true);
+          setFieldErrors({});
+          setError(
+            "El producto tiene documentos o movimientos relacionados y fue desactivado; se conservó su información.",
+          );
+        } catch (deactivateError) {
+          handleRequestError(deactivateError);
+        }
+      }
+    } finally {
+      setDeleting(false);
     }
   }
   async function handleImageUpload(event) {
     if (!canEdit) return;
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file || !selectedId) return;
+    if (!file) return;
+    if (!selectedId) {
+      const previewUrl = URL.createObjectURL(file);
+      setPendingImage({ file, previewUrl });
+      updateDraft("imageUrl", previewUrl);
+      setError("");
+      return;
+    }
     const formData = new FormData();
     formData.append("image", file);
+    setImageUploading(true);
     try {
       const saved = await apiClient.upload(
         `/productos/${selectedId}/imagen`,
@@ -273,16 +620,27 @@ export function ProductsWindow({
       });
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setImageUploading(false);
     }
   }
   async function handleRemoveImage() {
     if (!canEdit) return;
-    if (!selectedId || !shownProduct?.imageUrl) return;
+    if (!selectedId) {
+      setPendingImage(null);
+      updateDraft("imageUrl", "");
+      return;
+    }
+    if (!shownProduct?.imageUrl) return;
+    setImageRemoving(true);
+    setError("");
     try {
       await apiClient.delete(`/productos/${selectedId}/imagen`);
       updateProduct(selectedId, { imageUrl: "" });
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setImageRemoving(false);
     }
   }
   function moveSelection(offset) {
@@ -297,10 +655,29 @@ export function ProductsWindow({
     setProducts((current) =>
       current.map((item) => (item.recordId === recordId ? refreshed : item)),
     );
+    if (recordId === selectedId)
+      setDraft((current) => (current ? { ...current, ...refreshed } : current));
+    await loadProductProfit(recordId);
+  }
+
+  async function loadProductProfit(recordId) {
+    if (!recordId) {
+      setProductProfit(null);
+      return;
+    }
+    try {
+      setProductProfit(await apiClient.get(`/productos/${recordId}/utilidades`));
+    } catch {
+      setProductProfit(null);
+    }
   }
 
   function openInventoryEditor(item = null) {
     if (!canInventoryEdit) return;
+    if (!selectedId) {
+      setError("Guarda el producto antes de ajustar sus existencias.");
+      return;
+    }
     const warehouseId = item?.warehouseId ?? warehouses[0]?.id;
     if (!warehouseId) {
       setError("No hay bodegas activas disponibles para ajustar existencias.");
@@ -320,12 +697,14 @@ export function ProductsWindow({
 
   async function saveInventory() {
     if (!canInventoryEdit) return;
-    if (!selectedId || !inventoryEditor) return;
+    if (!selectedId || !inventoryEditor || actionLoading) return;
     const quantity = Number(inventoryEditor.quantity);
     if (!Number.isInteger(quantity) || quantity < 0) {
       setError("La existencia debe ser un número entero mayor o igual a cero.");
       return;
     }
+    setActionLoading("inventory");
+    setError("");
     try {
       await apiClient.post("/inventario/ajuste", {
         productId: selectedId,
@@ -337,11 +716,17 @@ export function ProductsWindow({
       setInventoryEditor(null);
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setActionLoading("");
     }
   }
 
   function openPriceEditor(price = null) {
     if (!canEdit) return;
+    if (!selectedId) {
+      setError("Guarda el producto antes de registrar un precio.");
+      return;
+    }
     setError("");
     setPriceEditor(
       price ? toPriceDraft(price) : createPriceDraft(shownProduct),
@@ -349,9 +734,25 @@ export function ProductsWindow({
   }
   async function savePrice() {
     if (!canEdit) return;
-    if (!selectedId || !priceEditor) return;
+    if (!selectedId || !priceEditor || actionLoading) return;
+    const priceValue = Number(priceEditor.price);
+    const quantityValue = Number(priceEditor.quantity);
+    if (!priceEditor.name?.trim() || priceEditor.name.trim().length < 2) {
+      setError("El nombre del precio debe tener al menos 2 caracteres.");
+      return;
+    }
+    if (!Number.isFinite(priceValue) || priceValue <= 0) {
+      setError("El precio debe ser un número mayor que cero.");
+      return;
+    }
+    if (!Number.isFinite(quantityValue) || quantityValue <= 0) {
+      setError("La cantidad debe ser un número mayor que cero.");
+      return;
+    }
+    setActionLoading("price");
+    setError("");
     try {
-      const body = buildPriceBody(priceEditor, Boolean(priceEditor.id));
+      const body = buildPriceBody(priceEditor);
       if (priceEditor.id)
         await apiClient.patch(`/precios-producto/${priceEditor.id}`, body);
       else await apiClient.post(`/productos/${selectedId}/precios`, body);
@@ -359,70 +760,100 @@ export function ProductsWindow({
       setPriceEditor(null);
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setActionLoading("");
     }
   }
   async function deletePrice(price) {
     if (!canEdit) return;
+    if (actionLoading) return;
     if (
       !price.id ||
       !window.confirm(`¿Deseas desactivar el precio ${price.name}?`)
     )
       return;
+    setActionLoading("price-delete");
+    setError("");
     try {
       await apiClient.delete(`/precios-producto/${price.id}`);
       await refreshProduct(selectedId);
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setActionLoading("");
     }
   }
   async function markPriceDefault(price) {
     if (!canEdit) return;
-    if (!price.id) return;
+    if (!price.id || actionLoading) return;
+    setActionLoading("price-default");
+    setError("");
     try {
       await apiClient.patch(`/precios-producto/${price.id}/default`, {});
       await refreshProduct(selectedId);
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setActionLoading("");
     }
   }
 
-  function startUnitsEdit() {
-    if (!canEdit) return;
-    const packaging = shownProduct?.packagingProfile ?? {};
-    setUnitsEditor({
-      unitsPerPackage: packaging.unitsPerPackage ?? "",
-      packagesPerBox: packaging.packagesPerBox ?? "",
-      saleByUnitOnly: Boolean(packaging.saleByUnitOnly),
-      notes: packaging.notes ?? "",
-    });
-  }
   async function saveUnits() {
     if (!canEdit) return;
-    if (!selectedId || !unitsEditor) return;
+    if (!selectedId || !unitsEditor || actionLoading) return;
+    const hasUnitsPerPackage =
+      unitsEditor.unitsPerPackage !== "" &&
+      unitsEditor.unitsPerPackage !== null &&
+      unitsEditor.unitsPerPackage !== undefined;
+    const hasPackagesPerBox =
+      unitsEditor.packagesPerBox !== "" &&
+      unitsEditor.packagesPerBox !== null &&
+      unitsEditor.packagesPerBox !== undefined;
+    const unitsPerPackage = Number(unitsEditor.unitsPerPackage);
+    const packagesPerBox = Number(unitsEditor.packagesPerBox);
+    if (
+      (hasUnitsPerPackage &&
+        (!Number.isInteger(unitsPerPackage) || unitsPerPackage <= 0)) ||
+      (hasPackagesPerBox &&
+        (!Number.isInteger(packagesPerBox) || packagesPerBox <= 0))
+    ) {
+      setError(
+        "Las unidades por empaque y los empaques por caja deben ser enteros mayores que cero.",
+      );
+      return;
+    }
+    setActionLoading("units");
+    setError("");
     try {
       const saved = await apiClient.patch(`/productos/${selectedId}`, {
         packaging: {
           unitsPerPackage:
-            unitsEditor.unitsPerPackage === ""
+            !hasUnitsPerPackage
               ? undefined
-              : Number(unitsEditor.unitsPerPackage),
+              : unitsPerPackage,
           packagesPerBox:
-            unitsEditor.packagesPerBox === ""
+            !hasPackagesPerBox
               ? undefined
-              : Number(unitsEditor.packagesPerBox),
+              : packagesPerBox,
           saleByUnitOnly: unitsEditor.saleByUnitOnly,
-          notes: unitsEditor.notes.trim() || undefined,
+          notes: String(unitsEditor.notes ?? "").trim() || undefined,
         },
       });
       updateProduct(selectedId, mapProduct(saved));
       setUnitsEditor(null);
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setActionLoading("");
     }
   }
 
   function openBarcodeEditor(barcode = null) {
     if (!canEdit) return;
+    if (!selectedId) {
+      setError("Guarda el producto antes de registrar un código de barras.");
+      return;
+    }
     setError("");
     setBarcodeEditor(
       barcode
@@ -437,10 +868,12 @@ export function ProductsWindow({
   }
   async function saveBarcode() {
     if (!canEdit) return;
-    if (!selectedId || !barcodeEditor?.code.trim()) {
+    if (!selectedId || !barcodeEditor?.code.trim() || actionLoading) {
       setError("Escribe o escanea un código de barras.");
       return;
     }
+    setActionLoading("barcode");
+    setError("");
     try {
       const body = {
         code: barcodeEditor.code.trim(),
@@ -455,30 +888,41 @@ export function ProductsWindow({
       setBarcodeEditor(null);
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setActionLoading("");
     }
   }
   async function deleteBarcode(barcode) {
     if (!canEdit) return;
+    if (actionLoading) return;
     if (
       !barcode.id ||
       !window.confirm(`¿Deseas desactivar el código ${barcode.code}?`)
     )
       return;
+    setActionLoading("barcode-delete");
+    setError("");
     try {
       await apiClient.delete(`/codigos-barras/${barcode.id}`);
       await refreshProduct(selectedId);
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setActionLoading("");
     }
   }
   async function markBarcodePrimary(barcode) {
     if (!canEdit) return;
-    if (!barcode.id) return;
+    if (!barcode.id || actionLoading) return;
+    setActionLoading("barcode-default");
+    setError("");
     try {
       await apiClient.patch(`/codigos-barras/${barcode.id}/principal`, {});
       await refreshProduct(selectedId);
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setActionLoading("");
     }
   }
   function handleDetectedBarcode(result) {
@@ -532,13 +976,49 @@ export function ProductsWindow({
                 onChange={(event) => setSearchTerm(event.target.value)}
               />
             </div>
-            <button
-              type="button"
-              className="search-options"
-              aria-label="Opciones de búsqueda"
-            >
-              <ChevronDown size={14} />
-            </button>
+            <SearchOptionsMenu value={statusFilter} onChange={setStatusFilter} />
+          </div>
+          <div className="product-list-controls">
+            <span>
+              {filteredProducts.length} producto{filteredProducts.length === 1 ? "" : "s"}
+            </span>
+            <div className="product-list-control-actions" role="group" aria-label="Vista del listado">
+              <button
+                type="button"
+                className={productView === "list" ? "is-active" : ""}
+                aria-label="Vista de lista"
+                aria-pressed={productView === "list"}
+                title="Vista de lista"
+                onClick={() => setProductView("list")}
+              >
+                <List size={14} />
+              </button>
+              <button
+                type="button"
+                className={productView === "grid" ? "is-active" : ""}
+                aria-label="Vista de tarjetas"
+                aria-pressed={productView === "grid"}
+                title="Vista de tarjetas con imagen"
+                onClick={() => setProductView("grid")}
+              >
+                <LayoutGrid size={14} />
+              </button>
+              <button
+                type="button"
+                className={statusFilter === "favoritos" ? "is-active favorite-filter" : "favorite-filter"}
+                aria-label="Mostrar favoritos"
+                aria-pressed={statusFilter === "favoritos"}
+                title="Mostrar solo favoritos"
+                onClick={() =>
+                  setStatusFilter((current) =>
+                    current === "favoritos" ? "todos" : "favoritos",
+                  )
+                }
+              >
+                <Star size={13} fill={statusFilter === "favoritos" ? "currentColor" : "none"} />
+                <span>{favoriteIds.length}</span>
+              </button>
+            </div>
           </div>
           <div
             className="provider-table product-list-table"
@@ -547,50 +1027,105 @@ export function ProductsWindow({
           >
             <div className="provider-table-head" role="row">
               <span>Código</span>
-              <span>Descripción</span>
+              <span>Producto</span>
+              <span aria-label="Favorito" />
             </div>
-            {filteredProducts.map((product) => (
-              <button
-                className={
-                  product.recordId === selectedId
-                    ? "provider-table-row is-selected"
-                    : "provider-table-row"
-                }
-                type="button"
-                role="row"
-                key={product.recordId}
-                onClick={() => selectProduct(product.recordId)}
-              >
-                <span>{product.code}</span>
-                <span>{product.name}</span>
-              </button>
-            ))}
+            {productView === "grid" ? (
+              <div className="product-card-grid" role="list">
+                {filteredProducts.map((product) => (
+                  <ProductCard
+                    key={product.recordId}
+                    product={product}
+                    selected={product.recordId === selectedId}
+                    favorite={favoriteSet.has(String(product.recordId))}
+                    onSelect={selectProduct}
+                    onToggleFavorite={toggleFavorite}
+                    favoriteLoading={favoriteLoadingId === String(product.recordId)}
+                  />
+                ))}
+              </div>
+            ) : (
+              filteredProducts.map((product) => (
+                <div
+                  className={
+                    product.recordId === selectedId
+                      ? "product-list-row is-selected"
+                      : "product-list-row"
+                  }
+                  role="row"
+                  key={product.recordId}
+                >
+                  <button
+                    className={
+                      product.recordId === selectedId
+                        ? "provider-table-row is-selected"
+                        : "provider-table-row"
+                    }
+                    type="button"
+                    onClick={() => selectProduct(product.recordId)}
+                  >
+                    <span>{product.code}</span>
+                    <span>{product.name}</span>
+                  </button>
+                  <FavoriteButton
+                    product={product}
+                    favorite={favoriteSet.has(String(product.recordId))}
+                    onToggle={toggleFavorite}
+                    loading={favoriteLoadingId === String(product.recordId)}
+                  />
+                </div>
+              ))
+            )}
             {loading && <div className="window-state">Cargando productos…</div>}
             {!loading && !filteredProducts.length && (
               <div className="window-state">No hay productos para mostrar.</div>
             )}
-            <div className="provider-empty-rows" aria-hidden="true">
-              {Array.from({
-                length: Math.max(0, 9 - filteredProducts.length),
-              }).map((_, index) => (
-                <span key={index} />
-              ))}
-            </div>
+            {productView === "list" && (
+              <div className="provider-empty-rows" aria-hidden="true">
+                {Array.from({
+                  length: Math.max(0, 9 - filteredProducts.length),
+                }).map((_, index) => (
+                  <span key={index} />
+                ))}
+              </div>
+            )}
           </div>
         </aside>
         <div className="provider-detail-panel product-detail-panel">
           <div className="provider-summary-form product-summary-form">
-            <SummaryField label="Código" value={shownProduct?.code ?? ""} />
-            <SummaryField
+            <EditableSummaryField
+              label="Código"
+              value={shownProduct?.code ?? ""}
+              editing={editing && canEdit}
+              onChange={(value) => updateDraft("code", value)}
+              error={fieldErrors?.code}
+            />
+            <EditableSummaryField
               label="Descripción"
-              value={shownProduct?.name ?? ""}
+              value={shownProduct?.description ?? ""}
+              editing={editing && canEdit}
+              onChange={(value) => updateDraft("description", value)}
+              error={fieldErrors?.description}
             />
             <div className="summary-field summary-type">
               <label>Estado</label>
-              <div className="select-like">
-                <span>{shownProduct?.active ? "ACTIVO" : "INACTIVO"}</span>
-                <ChevronDown size={14} />
-              </div>
+              {editing && canEdit ? (
+                <select
+                  className="detail-input"
+                  value={shownProduct?.active ? "true" : "false"}
+                  onChange={(event) =>
+                    updateDraft("active", event.target.value === "true")
+                  }
+                >
+                  <option value="true">ACTIVO</option>
+                  <option value="false">INACTIVO</option>
+                </select>
+              ) : (
+                <input
+                  value={shownProduct?.active ? "ACTIVO" : "INACTIVO"}
+                  readOnly
+                />
+              )}
             </div>
           </div>
           <div className="provider-tabs primary-tabs product-tabs">
@@ -617,14 +1152,19 @@ export function ProductsWindow({
             <ProductDetails
               activeTab={activeTab}
               product={shownProduct}
-              editing={editing}
+              editing={editing && canEdit}
               onChange={updateDraft}
-              onStartEdit={handleEdit}
+              fieldErrors={fieldErrors}
               productTypes={productTypes}
               providers={providers}
               warehouses={warehouses}
+              productProfit={productProfit}
               onUpload={handleImageUpload}
               onRemoveImage={handleRemoveImage}
+              imageUploading={imageUploading}
+              imageRemoving={imageRemoving}
+              onCreateProductType={requestCreateProductType}
+              onCreateWarehouse={requestCreateWarehouse}
               priceEditor={priceEditor}
               onOpenPrice={openPriceEditor}
               onEditPrice={openPriceEditor}
@@ -634,7 +1174,6 @@ export function ProductsWindow({
               onDeletePrice={deletePrice}
               onDefaultPrice={markPriceDefault}
               unitsEditor={unitsEditor}
-              onStartUnitsEdit={startUnitsEdit}
               onChangeUnits={setUnitsEditor}
               onSaveUnits={saveUnits}
               onCancelUnits={() => setUnitsEditor(null)}
@@ -656,10 +1195,46 @@ export function ProductsWindow({
               onCancelInventory={() => setInventoryEditor(null)}
               canEdit={canEdit}
               canInventoryEdit={canInventoryEdit}
+              actionLoading={actionLoading}
             />
           ) : (
             <div className="provider-tab-panel empty-provider-panel">
               <strong>Agrega un producto para comenzar.</strong>
+            </div>
+          )}
+          {editing && hasChanges && (
+            <div className="product-change-actions" role="group" aria-label="Acciones de cambios">
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || deleting || Boolean(actionLoading) || !canEdit}
+              >
+                {saving ? (
+                  <LoaderCircle className="button-spinner" size={14} />
+                ) : (
+                  <Check size={14} />
+                )}
+                {saving ? "Guardando…" : selectedId !== null ? "Guardar cambios" : "Crear producto"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFieldErrors({});
+                if (selectedProduct) setDraft({ ...selectedProduct });
+                  else {
+                    setSelectedId(null);
+                    setDraft(
+                      createEmptyProductDraft(productTypes, providers, warehouses),
+                    );
+                    setEditing(true);
+                  }
+                  setPendingImage(null);
+                  setError("");
+                }}
+                disabled={saving || deleting || Boolean(actionLoading)}
+              >
+                <CircleX size={14} /> Cancelar
+              </button>
             </div>
           )}
         </div>
@@ -671,42 +1246,25 @@ export function ProductsWindow({
       )}
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">
-          {editing ? (
-            <button type="button" onClick={handleSave} disabled={!canEdit}>
-              <Check size={14} /> Guardar
-            </button>
-          ) : (
-            <button type="button" onClick={handleAdd} disabled={!canEdit}>
-              <Plus size={14} /> Agregar
-            </button>
-          )}
-          {!editing && (
-            <button
-              type="button"
-              onClick={handleEdit}
-              disabled={!selectedProduct || !canEdit}
-            >
-              <Edit3 size={14} /> Modificar
-            </button>
-          )}
-          {!editing && (
+          <button
+            type="button"
+            onClick={handleAdd}
+            disabled={!canEdit || saving || deleting || Boolean(actionLoading)}
+          >
+            <Plus size={14} /> Agregar
+          </button>
+          {selectedProduct && (
             <button
               type="button"
               onClick={handleDelete}
-              disabled={!selectedProduct || !canEdit}
+              disabled={!canEdit || deleting || saving || Boolean(actionLoading)}
             >
-              <Trash2 size={14} /> Borrar
-            </button>
-          )}
-          {editing && (
-            <button
-              type="button"
-              onClick={() => {
-                setEditing(false);
-                setDraft(null);
-              }}
-            >
-              <CircleX size={14} /> Cancelar
+              {deleting ? (
+                <LoaderCircle className="button-spinner" size={14} />
+              ) : (
+                <Trash2 size={14} />
+              )}
+              {deleting ? "Eliminando…" : "Borrar"}
             </button>
           )}
         </div>
@@ -714,6 +1272,7 @@ export function ProductsWindow({
           <button
             type="button"
             className="muted-action"
+            disabled={!canMovePrevious || editing && hasChanges || saving || deleting || Boolean(actionLoading)}
             onClick={() => moveSelection(-1)}
           >
             <ChevronLeft size={14} /> Anterior
@@ -721,6 +1280,7 @@ export function ProductsWindow({
           <button
             type="button"
             className="muted-action"
+            disabled={!canMoveNext || editing && hasChanges || saving || deleting || Boolean(actionLoading)}
             onClick={() => moveSelection(1)}
           >
             Próximo <ChevronRight size={14} />
@@ -740,6 +1300,11 @@ export function ProductsWindow({
         onOpenChange={setCameraOpen}
         onDetected={handleDetectedBarcode}
       />
+      <CatalogCreateDialog
+        kind={catalogDialog}
+        onSave={handleCatalogDialogSave}
+        onCancel={() => setCatalogDialog(null)}
+      />
     </section>
   );
 }
@@ -749,7 +1314,7 @@ function ProductDetails({
   product,
   editing,
   onChange,
-  onStartEdit,
+  fieldErrors,
   productTypes,
   providers,
   warehouses,
@@ -772,6 +1337,9 @@ function ProductDetails({
         onSaveInventory={actions.onSaveInventory}
         onCancelInventory={actions.onCancelInventory}
         canInventoryEdit={actions.canInventoryEdit}
+        canEdit={actions.canEdit}
+        onCreateWarehouse={actions.onCreateWarehouse}
+        actionLoading={actions.actionLoading}
       />
     );
   if (activeTab === "barcodes")
@@ -783,46 +1351,58 @@ function ProductDetails({
         editing={editing}
         onUpload={onUpload}
         onRemoveImage={onRemoveImage}
+        imageUploading={actions.imageUploading}
+        imageRemoving={actions.imageRemoving}
         canEdit={actions.canEdit}
       />
       <ProductField
         label="Tipo de producto"
         value={product.type}
         editing={editing}
-        onStartEdit={onStartEdit}
-        onChange={(value) => onChange("productTypeId", value)}
-        options={productTypes.map((item) => ({
-          value: item.id,
-          label: item.name,
-        }))}
+        onChange={(value) => {
+          if (value === CREATE_PRODUCT_TYPE_VALUE) {
+            actions.onCreateProductType?.();
+            return;
+          }
+          onChange("productTypeId", value);
+          onChange(
+            "type",
+            productTypes.find((item) => String(item.id) === String(value))
+              ?.name ??
+              "",
+          );
+        }}
+        error={fieldErrors?.productTypeId}
+        options={[
+          {
+            value: CREATE_PRODUCT_TYPE_VALUE,
+            label: "＋ Crear nuevo tipo…",
+          },
+          ...productTypes.map((item) => ({
+            value: item.id,
+            label: item.name,
+          })),
+        ]}
         select
       />
-      <div className="detail-field active-field">
-        <label>Activo</label>
-        <span className="checkbox-value">
-          <span
-            className={
-              product.active ? "fake-checkbox" : "fake-checkbox is-empty"
-            }
-          >
-            {product.active && <Check size={12} />}
-          </span>
-          {product.active ? "Sí" : "No"}
-        </span>
-      </div>
+      <BooleanField
+        label="Activo"
+        checked={product.active}
+        editing={editing}
+        onChange={(value) => onChange("active", value)}
+      />
       <ProductField
         label="Nombre"
         value={product.name}
         editing={editing}
-        onStartEdit={onStartEdit}
         onChange={(value) => onChange("name", value)}
+        error={fieldErrors?.name}
         wide
       />
       <ProductField
         label="Descripción"
         value={product.description}
         editing={editing}
-        onStartEdit={onStartEdit}
         onChange={(value) => onChange("description", value)}
         wide
       />
@@ -830,15 +1410,22 @@ function ProductDetails({
         label="Marca"
         value={product.brand}
         editing={editing}
-        onStartEdit={onStartEdit}
         onChange={(value) => onChange("brand", value)}
+        error={fieldErrors?.brand}
       />
       <ProductField
         label="Proveedor principal"
         value={product.provider}
         editing={editing}
-        onStartEdit={onStartEdit}
-        onChange={(value) => onChange("providerId", value)}
+        onChange={(value) => {
+          onChange("providerId", value);
+          onChange(
+            "provider",
+            providers.find((item) => String(item.id) === String(value))?.name ??
+              "",
+          );
+        }}
+        error={fieldErrors?.providerId}
         options={providers.map((item) => ({
           value: item.id,
           label: item.name,
@@ -849,7 +1436,6 @@ function ProductDetails({
         label="Unidad"
         value={product.unit}
         editing={editing}
-        onStartEdit={onStartEdit}
         onChange={(value) => onChange("unit", value)}
         options={units.map((value) => ({ value, label: value }))}
         select
@@ -858,45 +1444,89 @@ function ProductDetails({
         label="Impuesto"
         value={`${product.taxRate}`}
         editing={editing}
-        onStartEdit={onStartEdit}
         onChange={(value) => onChange("taxRate", value)}
+        error={fieldErrors?.taxRate}
       />
       <ProductField
         label="Stock mínimo"
         value={String(product.minimumStock)}
         editing={editing}
-        onStartEdit={onStartEdit}
         onChange={(value) => onChange("minimumStock", value)}
+        error={fieldErrors?.minimumStock}
       />
       <ProductField
         label="Stock máximo"
         value={String(product.maximumStock ?? "")}
         editing={editing}
-        onStartEdit={onStartEdit}
         onChange={(value) => onChange("maximumStock", value)}
+        error={fieldErrors?.maximumStock}
       />
+      {!product.recordId && (
+        <ProductField
+          label="Stock inicial"
+          type="number"
+          value={String(product.initialStock ?? 0)}
+          editing={editing}
+          onChange={(value) => onChange("initialStock", value)}
+          error={fieldErrors?.initialStock}
+        />
+      )}
       <ProductField
-        label="Stock total"
+        label="Stock total (calculado)"
         value={String(product.stock)}
-        onStartEdit={onStartEdit}
+        computed
       />
       <ProductField
-        label="Precio de costo"
-        value={formatCurrency(product.cost)}
+        label="Costo de adquisición"
+        type="number"
+        value={String(product.cost ?? 0)}
+        editing={editing}
+        onChange={(value) => onChange("cost", value)}
+        error={fieldErrors?.cost}
+        displayValue={formatCurrency(product.cost)}
         accent
-        onStartEdit={onStartEdit}
       />
       <ProductField
         label="Valor inventario"
         value={formatCurrency(product.cost * product.stock)}
         accent
-        onStartEdit={onStartEdit}
       />
       <ProductField
         label="Bodega"
-        value={product.warehouse}
-        wide
-        onStartEdit={onStartEdit}
+        value={product.warehouseId}
+        displayValue={product.warehouse}
+        editing={editing}
+        onChange={(value) => {
+          if (value === CREATE_WAREHOUSE_VALUE) {
+            actions.onCreateWarehouse?.();
+            return;
+          }
+          onChange("warehouseId", value);
+          onChange(
+            "warehouse",
+            warehouses.find((item) => String(item.id) === String(value))
+              ?.location ??
+              "",
+          );
+        }}
+        options={[
+          {
+            value: "",
+            label: warehouses.length
+              ? "Selecciona una bodega"
+              : "No hay bodegas activas",
+          },
+          {
+            value: CREATE_WAREHOUSE_VALUE,
+            label: "＋ Crear nueva bodega…",
+          },
+          ...warehouses.map((item) => ({
+            value: item.id,
+            label: item.location,
+          })),
+        ]}
+        error={fieldErrors?.warehouseId}
+        select
       />
     </div>
   );
@@ -911,23 +1541,44 @@ function InventoryPanel({
   onSaveInventory,
   onCancelInventory,
   canInventoryEdit = true,
+  canEdit = true,
+  onCreateWarehouse,
+  actionLoading = "",
 }) {
   const inventory = product.warehouses ?? [];
+  const canAdjustInventory = canInventoryEdit && Boolean(product.recordId);
 
   return (
     <div className="provider-tab-panel data-panel inventory-panel">
       <PanelHeading
         title="Inventario por bodega"
-        description="El valor del inventario se calcula con el precio de costo, no con el stock total."
+        description="El valor del inventario usa el costo de adquisición y las existencias."
         action={
-          <button
-            type="button"
-            className="inline-action"
-            onClick={() => onOpenInventory()}
-            disabled={!canInventoryEdit}
-          >
-            <Edit3 size={14} /> Ajustar existencias
-          </button>
+          <div className="product-panel-heading-actions">
+            <button
+              type="button"
+              className="inline-action"
+              onClick={onCreateWarehouse}
+              disabled={!canEdit || !onCreateWarehouse}
+            >
+              <Plus size={14} /> Crear bodega
+            </button>
+            <button
+              type="button"
+              className="inline-action"
+              onClick={() => onOpenInventory()}
+              disabled={!canAdjustInventory || Boolean(actionLoading)}
+            >
+              {actionLoading === "inventory" ? (
+                <LoaderCircle className="button-spinner" size={14} />
+              ) : (
+                <Edit3 size={14} />
+              )}
+              {actionLoading === "inventory"
+                ? "Guardando…"
+                : "Ajustar existencias"}
+            </button>
+          </div>
         }
       />
       <div className="provider-data-table-wrap">
@@ -942,7 +1593,7 @@ function InventoryPanel({
                 <th>Stock</th>
                 <th>Mínimo</th>
                 <th>Máximo</th>
-                <th>Precio de costo</th>
+                <th>Costo adquisición</th>
                 <th>Valor inventario</th>
               </tr>
             </thead>
@@ -996,8 +1647,9 @@ function InventoryPanel({
           </table>
         ) : (
           <div className="table-empty">
-            No hay existencias por bodega. Puedes crear la primera con “Ajustar
-            existencias”.
+            {product.recordId
+              ? "No hay existencias por bodega. Puedes crear la primera con “Ajustar existencias”."
+              : "Guarda el producto para poder ajustar sus existencias por bodega."}
           </div>
         )}
       </div>
@@ -1055,8 +1707,16 @@ function InventoryPanel({
               type="button"
               className="primary-action"
               onClick={onSaveInventory}
+              disabled={Boolean(actionLoading)}
             >
-              <Check size={13} /> Guardar existencia
+              {actionLoading === "inventory" ? (
+                <LoaderCircle className="button-spinner" size={13} />
+              ) : (
+                <Check size={13} />
+              )}
+              {actionLoading === "inventory"
+                ? "Guardando…"
+                : "Guardar existencia"}
             </button>
           </div>
         </div>
@@ -1067,6 +1727,7 @@ function InventoryPanel({
 
 function PricesPanel({
   product,
+  productProfit,
   priceEditor,
   onOpenPrice,
   onEditPrice,
@@ -1076,25 +1737,32 @@ function PricesPanel({
   onDeletePrice,
   onDefaultPrice,
   canEdit = true,
+  actionLoading = "",
 }) {
+  const canManagePrices = canEdit && Boolean(product.recordId);
   return (
     <div className="provider-tab-panel data-panel">
       <PanelHeading
         title="Costos y precios"
-        description="Agrega tantos precios como necesites para este producto."
+        description="Compara el costo de adquisición con los precios de venta."
         action={
           <button
             type="button"
             className="inline-action"
             onClick={() => onOpenPrice()}
-            disabled={!canEdit}
+            disabled={!canManagePrices || Boolean(actionLoading)}
           >
             <Plus size={14} /> Agregar precio
           </button>
         }
       />
+      {!product.recordId && (
+        <p className="table-hint">
+          Guarda primero el producto para registrar sus precios.
+        </p>
+      )}
       <div className="cost-summary">
-        <CostMetric label="Costo actual" value={product.cost} />
+        <CostMetric label="Costo adquisición" value={product.cost} />
         <CostMetric label="Costo promedio" value={averageCost(product.costs)} />
         <CostMetric
           label="Costo anterior"
@@ -1108,21 +1776,42 @@ function PricesPanel({
           "Precio",
           "Unidad",
           "Cantidad",
+          "Ganancia",
+          "Margen",
           "Principal",
           "Estado",
         ]}
-        rows={(product.prices ?? []).map((price) => [
-          price.name,
-          formatCurrency(Number(price.price)),
-          price.unit,
-          String(price.quantity ?? 1),
-          price.isDefault ? "Sí" : "No",
-          price.isActive === false ? "Inactivo" : "Activo",
-        ])}
+        rows={(product.prices ?? []).map((price) => {
+          const profit = productProfit?.prices?.find(
+            (item) => Number(item.priceId) === Number(price.id),
+          );
+          return [
+            price.name,
+            formatCurrency(Number(price.price)),
+            price.unit,
+            String(price.quantity ?? 1),
+            profit?.profitAmount == null
+              ? "—"
+              : formatCurrency(Number(profit.profitAmount)),
+            profit?.profitPercentage == null
+              ? "—"
+              : `${profit.profitPercentage}%`,
+            price.isDefault ? "Sí" : "No",
+            price.isActive === false ? "Inactivo" : "Activo",
+          ];
+        })}
         rowKeys={(product.prices ?? []).map((price) => price.id)}
         onRowDoubleClick={(index) => onEditPrice(product.prices[index])}
         empty="No hay precios registrados."
       />
+      {productProfit?.warning && (
+        <p className="table-hint">{productProfit.warning}</p>
+      )}
+      {productProfit?.prices?.some((price) => price.warning) && (
+        <p className="table-hint">
+          {productProfit.prices.find((price) => price.warning)?.warning}
+        </p>
+      )}
       <p className="table-hint">Doble clic sobre una fila para editarla.</p>
       {priceEditor && (
         <PriceEditor
@@ -1133,6 +1822,7 @@ function PricesPanel({
           onDelete={onDeletePrice}
           onDefault={onDefaultPrice}
           canEdit={canEdit}
+          actionLoading={actionLoading}
         />
       )}
     </div>
@@ -1146,7 +1836,12 @@ function PriceEditor({
   onDelete,
   onDefault,
   canEdit = true,
+  actionLoading = "",
 }) {
+  const isSaving = actionLoading === "price";
+  const isDeleting = actionLoading === "price-delete";
+  const isMarkingDefault = actionLoading === "price-default";
+  const isBusy = Boolean(actionLoading);
   return (
     <div className="inline-editor">
       <div className="inline-editor-title">
@@ -1163,6 +1858,7 @@ function PriceEditor({
         <EditorField
           label="Nombre"
           value={editor.name}
+          disabled={isBusy}
           onChange={(value) =>
             onChange((current) => ({ ...current, name: value }))
           }
@@ -1171,6 +1867,7 @@ function PriceEditor({
           label="Precio"
           type="number"
           value={editor.price}
+          disabled={isBusy}
           onChange={(value) =>
             onChange((current) => ({ ...current, price: value }))
           }
@@ -1179,6 +1876,7 @@ function PriceEditor({
           label="Unidad"
           value={editor.unit}
           options={units}
+          disabled={isBusy}
           onChange={(value) =>
             onChange((current) => ({ ...current, unit: value }))
           }
@@ -1187,24 +1885,9 @@ function PriceEditor({
           label="Cantidad"
           type="number"
           value={editor.quantity}
+          disabled={isBusy}
           onChange={(value) =>
             onChange((current) => ({ ...current, quantity: value }))
-          }
-        />
-        <EditorField
-          label="Vigente desde"
-          type="date"
-          value={editor.startsAt}
-          onChange={(value) =>
-            onChange((current) => ({ ...current, startsAt: value }))
-          }
-        />
-        <EditorField
-          label="Vigente hasta"
-          type="date"
-          value={editor.endsAt}
-          onChange={(value) =>
-            onChange((current) => ({ ...current, endsAt: value }))
           }
         />
       </div>
@@ -1212,6 +1895,7 @@ function PriceEditor({
         <input
           type="checkbox"
           checked={editor.isDefault}
+          disabled={isBusy}
           onChange={(event) =>
             onChange((current) => ({
               ...current,
@@ -1230,27 +1914,40 @@ function PriceEditor({
             type="button"
             onClick={() => onDelete(editor)}
             className="danger-action"
-            disabled={!canEdit}
+            disabled={!canEdit || isBusy}
           >
-            <Trash2 size={13} /> Desactivar
+            {isDeleting ? (
+              <LoaderCircle className="button-spinner" size={13} />
+            ) : (
+              <Trash2 size={13} />
+            )}
+            {isDeleting ? "Desactivando…" : "Desactivar"}
           </button>
         )}
         {editor.id && !editor.isDefault && (
           <button
             type="button"
             onClick={() => onDefault(editor)}
-            disabled={!canEdit}
+            disabled={!canEdit || isBusy}
           >
-            Marcar principal
+            {isMarkingDefault && (
+              <LoaderCircle className="button-spinner" size={13} />
+            )}
+            {isMarkingDefault ? "Guardando…" : "Marcar principal"}
           </button>
         )}
         <button
           type="button"
           onClick={onSave}
           className="primary-action"
-          disabled={!canEdit}
+          disabled={!canEdit || isBusy}
         >
-          <Check size={13} /> Guardar precio
+          {isSaving ? (
+            <LoaderCircle className="button-spinner" size={13} />
+          ) : (
+            <Check size={13} />
+          )}
+          {isSaving ? "Guardando…" : "Guardar precio"}
         </button>
       </div>
     </div>
@@ -1260,41 +1957,26 @@ function PriceEditor({
 function UnitsPanel({
   product,
   unitsEditor,
-  onStartUnitsEdit,
   onChangeUnits,
   onSaveUnits,
   onCancelUnits,
   canEdit = true,
+  actionLoading = "",
 }) {
   const packaging = product.packagingProfile ?? {};
   const values = unitsEditor ?? packaging;
+  const canManageUnits = canEdit && Boolean(product.recordId);
   return (
     <div className="provider-tab-panel data-panel">
       <PanelHeading
         title="Unidades y empaque"
         description="Configuración de venta detallada del producto."
-        action={
-          unitsEditor ? (
-            <button
-              type="button"
-              className="inline-action"
-              onClick={onSaveUnits}
-              disabled={!canEdit}
-            >
-              <Check size={14} /> Guardar unidades
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="inline-action"
-              onClick={onStartUnitsEdit}
-              disabled={!canEdit}
-            >
-              <Edit3 size={14} /> Modificar
-            </button>
-          )
-        }
       />
+      {!product.recordId && (
+        <p className="table-hint">
+          Guarda primero el producto para configurar sus unidades y empaque.
+        </p>
+      )}
       <div className="units-form">
         <EditorSelect
           label="Unidad detallada"
@@ -1303,47 +1985,80 @@ function UnitsPanel({
           disabled
         />
         <EditorField
-          label="Unidades por empaque"
-          type="number"
-          value={values.unitsPerPackage ?? ""}
-          disabled={!unitsEditor}
-          onChange={(value) =>
-            onChangeUnits((current) => ({ ...current, unitsPerPackage: value }))
-          }
+           label="Unidades por empaque"
+           type="number"
+           value={values.unitsPerPackage ?? ""}
+           disabled={!canManageUnits || Boolean(actionLoading)}
+           onChange={(value) =>
+             onChangeUnits((current) => ({
+               ...packaging,
+               ...current,
+               unitsPerPackage: value,
+             }))
+           }
         />
         <EditorField
-          label="Empaques por caja"
-          type="number"
-          value={values.packagesPerBox ?? ""}
-          disabled={!unitsEditor}
-          onChange={(value) =>
-            onChangeUnits((current) => ({ ...current, packagesPerBox: value }))
-          }
+           label="Empaques por caja"
+           type="number"
+           value={values.packagesPerBox ?? ""}
+           disabled={!canManageUnits || Boolean(actionLoading)}
+           onChange={(value) =>
+             onChangeUnits((current) => ({
+               ...packaging,
+               ...current,
+               packagesPerBox: value,
+             }))
+           }
         />
         <EditorField
-          label="Notas"
-          value={values.notes ?? ""}
-          disabled={!unitsEditor}
-          onChange={(value) =>
-            onChangeUnits((current) => ({ ...current, notes: value }))
-          }
+           label="Notas"
+           value={values.notes ?? ""}
+           disabled={!canManageUnits || Boolean(actionLoading)}
+           onChange={(value) =>
+             onChangeUnits((current) => ({
+               ...packaging,
+               ...current,
+               notes: value,
+             }))
+           }
           wide
         />
         <label className="inline-check">
           <input
             type="checkbox"
             checked={Boolean(values.saleByUnitOnly)}
-            disabled={!unitsEditor}
+            disabled={!canManageUnits || Boolean(actionLoading)}
             onChange={(event) =>
               onChangeUnits((current) => ({
+                ...packaging,
                 ...current,
                 saleByUnitOnly: event.target.checked,
               }))
             }
           />{" "}
           Vender únicamente por unidad
-        </label>
+          </label>
       </div>
+      {unitsEditor && (
+        <div className="units-change-actions inline-editor-actions">
+          <button type="button" onClick={onCancelUnits}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={onSaveUnits}
+            className="primary-action"
+            disabled={!canManageUnits || Boolean(actionLoading)}
+          >
+            {actionLoading === "units" ? (
+              <LoaderCircle className="button-spinner" size={13} />
+            ) : (
+              <Check size={13} />
+            )}
+            {actionLoading === "units" ? "Guardando…" : "Guardar unidades"}
+          </button>
+        </div>
+      )}
       <div className="unit-price-list">
         <div className="provider-table-caption">
           Precios por unidad configurados
@@ -1375,11 +2090,6 @@ function UnitsPanel({
           </div>
         )}
       </div>
-      {unitsEditor && (
-        <button type="button" className="cancel-inline" onClick={onCancelUnits}>
-          Cancelar cambios
-        </button>
-      )}
     </div>
   );
 }
@@ -1398,7 +2108,9 @@ function BarcodePanel({
   onOpenCamera,
   onDetectedBarcode,
   canEdit = true,
+  actionLoading = "",
 }) {
+  const canManageBarcodes = canEdit && Boolean(product.recordId);
   return (
     <div className="provider-tab-panel data-panel">
       <PanelHeading
@@ -1410,7 +2122,7 @@ function BarcodePanel({
               type="button"
               className="inline-action"
               onClick={onOpenCamera}
-              disabled={!canEdit}
+              disabled={!canManageBarcodes || Boolean(actionLoading)}
             >
               <Camera size={14} /> Cámara
             </button>
@@ -1418,16 +2130,19 @@ function BarcodePanel({
               type="button"
               className="inline-action"
               onClick={onOpenReader}
-              disabled={!canEdit}
+              disabled={!canManageBarcodes || Boolean(actionLoading)}
             >
               <ScanLine size={14} /> Lector físico
             </button>
-            <label className={`inline-action ${!canEdit ? "is-disabled" : ""}`}>
+            <label
+              className={`inline-action ${!canManageBarcodes ? "is-disabled" : ""}`}
+            >
               <Upload size={14} /> Leer imagen
               <input
                 type="file"
                 accept="image/*"
                 className="hidden-file"
+                disabled={!canManageBarcodes || Boolean(actionLoading)}
                 onChange={async (event) => {
                   if (!canEdit) return;
                   const file = event.target.files?.[0];
@@ -1449,13 +2164,18 @@ function BarcodePanel({
               type="button"
               className="inline-action"
               onClick={() => onOpenBarcode()}
-              disabled={!canEdit}
+              disabled={!canManageBarcodes || Boolean(actionLoading)}
             >
               <Plus size={14} /> Agregar
             </button>
           </div>
         }
       />
+      {!product.recordId && (
+        <p className="table-hint">
+          Guarda primero el producto para registrar códigos de barras.
+        </p>
+      )}
       <ProductDataTable
         caption={`Códigos registrados para ${product.name}`}
         columns={["Código", "Tipo", "Principal", "Estado"]}
@@ -1485,6 +2205,7 @@ function BarcodePanel({
           onDelete={onDeleteBarcode}
           onPrimary={onPrimaryBarcode}
           canEdit={canEdit}
+          actionLoading={actionLoading}
         />
       )}
     </div>
@@ -1498,7 +2219,12 @@ function BarcodeEditor({
   onDelete,
   onPrimary,
   canEdit = true,
+  actionLoading = "",
 }) {
+  const isSaving = actionLoading === "barcode";
+  const isDeleting = actionLoading === "barcode-delete";
+  const isMarkingPrimary = actionLoading === "barcode-default";
+  const isBusy = Boolean(actionLoading);
   return (
     <div className="inline-editor">
       <div className="inline-editor-title">
@@ -1515,6 +2241,7 @@ function BarcodeEditor({
         <EditorField
           label="Código"
           value={editor.code}
+          disabled={isBusy}
           onChange={(value) =>
             onChange((current) => ({
               ...current,
@@ -1530,6 +2257,7 @@ function BarcodeEditor({
           label="Tipo"
           value={editor.type}
           options={barcodeTypes.map(([value]) => value)}
+          disabled={isBusy}
           onChange={(value) =>
             onChange((current) => ({ ...current, type: value }))
           }
@@ -1539,6 +2267,7 @@ function BarcodeEditor({
         <input
           type="checkbox"
           checked={Boolean(editor.isPrimary)}
+          disabled={isBusy}
           onChange={(event) =>
             onChange((current) => ({
               ...current,
@@ -1557,27 +2286,37 @@ function BarcodeEditor({
             type="button"
             onClick={() => onDelete(editor)}
             className="danger-action"
-            disabled={!canEdit}
+            disabled={!canEdit || isBusy}
           >
-            <Trash2 size={13} /> Desactivar
+            {isDeleting ? (
+              <LoaderCircle className="button-spinner" size={13} />
+            ) : (
+              <Trash2 size={13} />
+            )}
+            {isDeleting ? "Desactivando…" : "Desactivar"}
           </button>
         )}
         {editor.id && !editor.isPrimary && (
           <button
             type="button"
             onClick={() => onPrimary(editor)}
-            disabled={!canEdit}
+            disabled={!canEdit || isBusy}
           >
-            Marcar principal
+            {isMarkingPrimary ? "Guardando…" : "Marcar principal"}
           </button>
         )}
         <button
           type="button"
           onClick={onSave}
           className="primary-action"
-          disabled={!canEdit}
+          disabled={!canEdit || isBusy}
         >
-          <Check size={13} /> Guardar código
+          {isSaving ? (
+            <LoaderCircle className="button-spinner" size={13} />
+          ) : (
+            <Check size={13} />
+          )}
+          {isSaving ? "Guardando…" : "Guardar código"}
         </button>
       </div>
     </div>
@@ -1674,6 +2413,100 @@ function BarcodeScannerDialog({ open, onOpenChange, onDetected }) {
   );
 }
 
+function ProductCard({
+  product,
+  selected,
+  favorite,
+  onSelect,
+  onToggleFavorite,
+  favoriteLoading,
+}) {
+  return (
+    <article
+      className={`product-card ${selected ? "is-selected" : ""}`}
+      role="listitem"
+    >
+      <button
+        type="button"
+        className="product-card-select"
+        onClick={() => onSelect(product.recordId)}
+        aria-label={`Abrir producto ${product.name}`}
+      >
+        <ProductThumbnail product={product} />
+        <span className="product-card-copy">
+          <strong>{product.name || "Producto sin nombre"}</strong>
+          <span>{product.code}</span>
+          <small>
+            Stock {product.stock ?? 0} · {formatCurrency(product.cost)}
+          </small>
+        </span>
+      </button>
+      <FavoriteButton
+        product={product}
+        favorite={favorite}
+        onToggle={onToggleFavorite}
+        loading={favoriteLoading}
+      />
+    </article>
+  );
+}
+
+function FavoriteButton({ product, favorite, onToggle, loading = false }) {
+  const unavailable = product.active === false && !favorite;
+  return (
+    <button
+      type="button"
+      className={`product-favorite-button ${favorite ? "is-active" : ""} ${unavailable ? "is-disabled" : ""}`}
+      aria-label={
+        loading
+          ? `Guardando favorito de ${product.name}`
+          : unavailable
+            ? `Activa ${product.name} para guardarlo como favorito`
+          : favorite
+              ? `Quitar ${product.name} de favoritos`
+              : `Agregar ${product.name} a favoritos`
+      }
+      aria-pressed={favorite}
+      aria-busy={loading}
+      title={
+        unavailable
+          ? "Activa el producto para guardarlo como favorito"
+          : favorite
+            ? "Quitar de favoritos"
+            : "Agregar a favoritos"
+      }
+      onClick={() => {
+        if (!unavailable) onToggle(product.recordId);
+      }}
+      disabled={loading || unavailable}
+    >
+      {loading ? (
+        <LoaderCircle className="button-spinner" size={14} />
+      ) : (
+        <Heart size={15} fill={favorite ? "currentColor" : "none"} />
+      )}
+    </button>
+  );
+}
+
+function ProductThumbnail({ product }) {
+  return product.imageUrl ? (
+    <img
+      className="product-card-image"
+      src={product.imageUrl}
+      alt=""
+      loading="lazy"
+      onError={(event) => {
+        event.currentTarget.hidden = true;
+      }}
+    />
+  ) : (
+    <span className="product-card-image product-card-image-placeholder">
+      <Package size={24} />
+    </span>
+  );
+}
+
 function PanelHeading({ title, description, action }) {
   return (
     <div className="product-panel-heading">
@@ -1685,6 +2518,78 @@ function PanelHeading({ title, description, action }) {
     </div>
   );
 }
+
+function CatalogCreateDialog({ kind, onSave, onCancel }) {
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  if (!kind) return null;
+  const isProductType = kind === "product-type";
+  const title = isProductType ? "Crear tipo de producto" : "Crear bodega";
+  const label = isProductType ? "Nombre" : "Nombre o ubicación";
+
+  async function submit(event) {
+    event.preventDefault();
+    if (value.trim().length < 2) {
+      setError(`Escribe un ${isProductType ? "nombre" : "nombre o ubicación"} válido.`);
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(value);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="dialog-backdrop" role="presentation">
+      <form className="barcode-dialog catalog-create-dialog" onSubmit={submit}>
+        <div className="inline-editor-title">
+          <strong>{title}</strong>
+          <button type="button" onClick={onCancel} disabled={saving}>
+            <X size={14} />
+          </button>
+        </div>
+        <p>
+          El registro se guardará en el catálogo y quedará seleccionado en el
+          formulario de productos.
+        </p>
+        <label className="editor-field editor-field-wide">
+          <span>{label}</span>
+          <input
+            autoFocus
+            value={value}
+            onChange={(event) => {
+              setValue(event.target.value);
+              setError("");
+            }}
+            disabled={saving}
+          />
+        </label>
+        {error && <div className="inline-error">{error}</div>}
+        <div className="inline-editor-actions">
+          <button type="button" onClick={onCancel} disabled={saving}>
+            Cancelar
+          </button>
+          <button type="submit" className="primary-action" disabled={saving}>
+            {saving ? (
+              <LoaderCircle className="button-spinner" size={13} />
+            ) : (
+              <Check size={13} />
+            )}
+            {saving ? "Guardando…" : "Guardar"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function CostMetric({ label, value }) {
   return (
     <div className="cost-metric">
@@ -1712,8 +2617,11 @@ function ProductImage({
   editing,
   onUpload,
   onRemoveImage,
+  imageUploading = false,
+  imageRemoving = false,
   canEdit = true,
 }) {
+  const imageBusy = imageUploading || imageRemoving;
   return (
     <div className="product-image-field">
       <label>Imagen</label>
@@ -1728,12 +2636,29 @@ function ProductImage({
       {editing && onUpload && canEdit && (
         <div className="product-image-actions">
           <label className="image-upload-button">
-            <Upload size={13} /> Cargar
-            <input type="file" accept="image/*" onChange={onUpload} />
+            {imageUploading ? (
+              <LoaderCircle className="button-spinner" size={13} />
+            ) : (
+              <Upload size={13} />
+            )}
+            {imageUploading ? "Cargando…" : "Cargar"}
+            <input
+              type="file"
+              accept="image/*"
+              onChange={onUpload}
+              disabled={imageBusy}
+            />
           </label>
           {product.imageUrl && (
-            <button type="button" onClick={onRemoveImage}>
-              Quitar
+            <button
+              type="button"
+              onClick={onRemoveImage}
+              disabled={imageBusy}
+            >
+              {imageRemoving && (
+                <LoaderCircle className="button-spinner" size={13} />
+              )}
+              {imageRemoving ? "Quitando…" : "Quitar"}
             </button>
           )}
         </div>
@@ -1781,42 +2706,62 @@ function ProductDataTable({
     </div>
   );
 }
-function SummaryField({ label, value }) {
+function EditableSummaryField({
+  label,
+  value,
+  editing = false,
+  onChange,
+  error = "",
+}) {
   return (
-    <div className="summary-field">
+    <div className={`summary-field ${error ? "has-error" : ""}`}>
       <label>{label}</label>
-      <input value={value ?? ""} readOnly />
+      <input
+        className={error ? "is-invalid" : ""}
+        value={value ?? ""}
+        readOnly={!editing}
+        aria-invalid={Boolean(error)}
+        title={error || undefined}
+        onChange={(event) => onChange?.(event.target.value)}
+      />
+      {error && <span className="field-error">{error}</span>}
     </div>
   );
 }
+
 function ProductField({
   label,
   value,
   editing,
   onChange,
+  type = "text",
   select = false,
   options = [],
   wide = false,
   accent = false,
-  onStartEdit,
+  computed = false,
+  displayValue,
+  error = "",
 }) {
   return (
     <div
-      className={`detail-field ${wide ? "wide-field" : ""} ${onStartEdit && !editing ? "edit-on-double-click" : ""}`}
-      onDoubleClick={editing ? undefined : onStartEdit}
-      title={onStartEdit && !editing ? "Doble clic para editar" : undefined}
+      className={`detail-field ${wide ? "wide-field" : ""} ${
+        error ? "has-error" : ""
+      }`}
     >
       <label>{label}</label>
       {editing && onChange ? (
         select ? (
           <select
-            className="detail-input"
+            className={`detail-input ${error ? "is-invalid" : ""}`}
             value={
               options.find((option) => String(option.label) === String(value))
                 ?.value ??
               value ??
               ""
             }
+            aria-invalid={Boolean(error)}
+            title={error || undefined}
             onChange={(event) => onChange(event.target.value)}
           >
             {options.map((option) => (
@@ -1827,22 +2772,52 @@ function ProductField({
           </select>
         ) : (
           <input
-            className={`detail-input ${accent ? "is-accent" : ""}`}
+            type={type}
+            className={`detail-input ${accent ? "is-accent" : ""} ${
+              error ? "is-invalid" : ""
+            }`}
             value={value ?? ""}
+            aria-invalid={Boolean(error)}
+            title={error || undefined}
             onChange={(event) => onChange(event.target.value)}
           />
         )
       ) : (
         <div
-          className={`detail-control ${select ? "select-like" : ""} ${accent ? "is-accent" : ""}`}
+          className={`detail-control ${select ? "select-like" : ""} ${accent ? "is-accent" : ""} ${computed ? "is-computed" : ""}`}
         >
-          <span>{value || " "}</span>
+          <span>{displayValue ?? (value || " ")}</span>
           {select && <ChevronDown size={13} />}
         </div>
+      )}
+      {error && <span className="field-error">{error}</span>}
+    </div>
+  );
+}
+
+function BooleanField({ label, checked, editing, onChange }) {
+  return (
+    <div className="detail-field active-field">
+      <label>{label}</label>
+      {editing ? (
+        <input
+          className="detail-checkbox-input"
+          type="checkbox"
+          checked={Boolean(checked)}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+      ) : (
+        <span className="checkbox-value">
+          <span className={checked ? "fake-checkbox" : "fake-checkbox is-empty"}>
+            {checked && <Check size={12} />}
+          </span>
+          {checked ? "Sí" : "No"}
+        </span>
       )}
     </div>
   );
 }
+
 function EditorField({
   label,
   value,
@@ -1917,6 +2892,7 @@ function mapProduct(product) {
     stock,
     cost,
     active: product.isActive !== false,
+    warehouseId: warehouses[0]?.warehouseId ?? "",
     warehouse: warehouses[0]?.warehouse?.location ?? "",
     warehouses,
     barcodes: product.barcodes ?? [],
@@ -1925,14 +2901,13 @@ function mapProduct(product) {
     imageUrl: product.imageUrl ?? "",
   };
 }
+
 function toPriceDraft(price) {
   return {
     ...price,
     price: String(price.price ?? ""),
     quantity: String(price.quantity ?? 1),
     unit: price.unit ?? "UND",
-    startsAt: toDateInput(price.startsAt),
-    endsAt: toDateInput(price.endsAt),
     isDefault: Boolean(price.isDefault),
     isActive: price.isActive !== false,
   };
@@ -1943,33 +2918,21 @@ function createPriceDraft(product) {
     price: "1",
     unit: product?.unit ?? "UND",
     quantity: "1",
-    startsAt: "",
-    endsAt: "",
     isDefault: !(product?.prices ?? []).length,
     isActive: true,
   };
 }
-function buildPriceBody(editor, isUpdate) {
-  const body = {
+function buildPriceBody(editor) {
+  return {
     name: editor.name.trim(),
     price: Number(editor.price),
     unit: editor.unit,
     quantity: Number(editor.quantity) || 1,
     isDefault: Boolean(editor.isDefault),
     isActive: editor.isActive !== false,
+    startsAt: null,
+    endsAt: null,
   };
-  if (editor.startsAt || isUpdate)
-    body.startsAt = editor.startsAt
-      ? new Date(`${editor.startsAt}T00:00:00`).toISOString()
-      : null;
-  if (editor.endsAt || isUpdate)
-    body.endsAt = editor.endsAt
-      ? new Date(`${editor.endsAt}T00:00:00`).toISOString()
-      : null;
-  return body;
-}
-function toDateInput(value) {
-  return value ? new Date(value).toISOString().slice(0, 10) : "";
 }
 function inferBarcodeType(code) {
   const value = String(code ?? "").trim();
@@ -1982,11 +2945,68 @@ function inferBarcodeType(code) {
     return "CODE128";
   return "OTHER";
 }
+function hasProductDraftChanges(draft, product) {
+  if (!draft) return false;
+  if (!product) return true;
+  const fields = [
+    "code",
+    "productTypeId",
+    "providerId",
+    "warehouseId",
+    "name",
+    "description",
+    "taxRate",
+    "unit",
+    "brand",
+    "minimumStock",
+    "maximumStock",
+    "cost",
+    "active",
+  ];
+  return fields.some(
+    (field) => String(draft[field] ?? "") !== String(product[field] ?? ""),
+  );
+}
+function validateProductDraft(product) {
+  const errors = {};
+  if (!product.productTypeId)
+    errors.productTypeId = "Selecciona el tipo de producto.";
+  if (!product.providerId)
+    errors.providerId = "Selecciona el proveedor principal.";
+  if (!product.name?.trim()) errors.name = "El nombre es obligatorio.";
+  else if (product.name.trim().length < 2)
+    errors.name = "El nombre debe tener al menos 2 caracteres.";
+  if (!product.brand?.trim()) errors.brand = "La marca es obligatoria.";
+  const numericFields = [
+    ["taxRate", "El impuesto debe ser un número mayor o igual a cero."],
+    ["minimumStock", "El stock mínimo debe ser un entero mayor o igual a cero."],
+    ["cost", "El precio de costo debe ser un número mayor o igual a cero."],
+    ["initialStock", "El stock inicial debe ser un entero mayor o igual a cero."],
+  ];
+  for (const [field, message] of numericFields) {
+    const value = Number(product[field]);
+    if (!Number.isFinite(value) || value < 0 || (field !== "taxRate" && !Number.isInteger(value)))
+      errors[field] = message;
+  }
+  if (product.maximumStock !== "" && product.maximumStock !== null) {
+    const maximumStock = Number(product.maximumStock);
+    if (!Number.isInteger(maximumStock) || maximumStock < 0)
+      errors.maximumStock = "El stock máximo debe ser un entero mayor o igual a cero.";
+  }
+  if (Number(product.initialStock) > 0 && !product.warehouseId)
+    errors.warehouseId = "Selecciona una bodega para registrar el stock inicial.";
+  return errors;
+}
 function barcodeTypeLabel(type) {
   return barcodeTypes.find(([value]) => value === type)?.[1] ?? type ?? "Otro";
 }
 function isAuthError(error) {
   return /sesión|inicia sesión|401|autentic/i.test(error?.message ?? "");
+}
+function isProductRelationError(error) {
+  return /facturas|cotizaciones|compras|ofertas|movimientos|relacionados/i.test(
+    error?.message ?? "",
+  );
 }
 function formatCurrency(value) {
   return `$ ${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(Number(value) || 0)}`;

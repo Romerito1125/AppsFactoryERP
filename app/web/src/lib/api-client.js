@@ -122,7 +122,7 @@ async function request(path, options = {}, params, allowRefresh = true) {
     });
   } catch {
     throw new Error(
-      "No se pudo conectar con el API. Verifica que el servidor esté iniciado.",
+      "No se pudo conectar con el sistema. Verifica que el servicio esté disponible.",
     );
   }
   const payload = parsePayload(await response.text());

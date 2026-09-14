@@ -151,8 +151,7 @@ Para funcionarios, `clientId` puede ser `null` y la respuesta incluye `employee`
 | GET | `/clientes/:id` | Consulta un cliente | No |
 | POST | `/clientes` | Crea cliente | Sí |
 | PATCH | `/clientes/:id` | Actualiza campos parciales | Sí |
-| DELETE | `/clientes/:id` | Soft delete | No |
-| PATCH | `/clientes/:id/reactivar` | Reactiva cliente | No |
+| DELETE | `/clientes/:id` | Elimina definitivamente el cliente y sus datos relacionados | No |
 | GET | `/clientes/:id/referidos` | Lista referidos hechos por el cliente | No |
 | GET | `/clientes/:id/red-referidos` | Devuelve la red completa de referidos agrupada por generación | No |
 | GET | `/clientes/:id/estadisticas-referidos` | Calcula compras y comisiones por red de referidos | No |
@@ -191,14 +190,14 @@ Actualizar nivel de referido:
 | POST | `/usuarios` | Crea usuario | Sí |
 | POST | `/usuarios/funcionarios` | Crea funcionario interno con usuario y perfil `Employee` | Sí |
 | PATCH | `/usuarios/:id` | Actualiza usuario | Sí |
-| DELETE | `/usuarios/:id` | Soft delete | No |
+| DELETE | `/usuarios/:id` | Elimina definitivamente el usuario y su funcionario relacionado | No |
 
 Crear usuario:
 
 ```json
 {
   "clientId": 1,
-  "username": "admin",
+  "email": "admin@ejemplo.com",
   "password": "secret123",
   "role": "ADMIN"
 }

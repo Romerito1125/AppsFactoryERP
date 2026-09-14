@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { randomBytes, scryptSync } from 'crypto';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
 import {
@@ -83,6 +83,16 @@ export class ClientesService {
 
     const client = await this.prisma.$transaction(async (tx) => {
       const createdClient = await tx.client.create({ data: clientData });
+      const referralCode = await this.createUniqueReferralCode(
+        tx,
+        createdClient.firstName,
+        createdClient.id,
+      );
+
+      await tx.client.update({
+        where: { id: createdClient.id },
+        data: { referralCode, referralLevel: 0 },
+      });
 
       if (credentials.email && credentials.password) {
         await tx.user.create({
@@ -203,22 +213,126 @@ export class ClientesService {
 
   async remove(id: number, actor?: AuthUser) {
     this.ensurePositiveId(id);
-    await this.findOne(id);
+    const current = await this.findOne(id);
 
-    const client = await this.prisma.client.update({
-      where: { id },
-      data: { isActive: false, deletedAt: new Date() },
+    await this.prisma.$transaction(async (tx) => {
+      const [invoiceRows, quoteRows] = await Promise.all([
+        tx.invoice.findMany({
+          where: { clientId: id },
+          select: { id: true },
+        }),
+        tx.quote.findMany({
+          where: { clientId: id },
+          select: { id: true },
+        }),
+      ]);
+      const invoiceIds = invoiceRows.map((invoice) => invoice.id);
+      const quoteIds = quoteRows.map((quote) => quote.id);
+
+      const benefits = await tx.referralBenefit.findMany({
+        where: {
+          OR: [
+            { beneficiaryClientId: id },
+            { buyerClientId: id },
+            ...(invoiceIds.length
+              ? [{ originInvoiceId: { in: invoiceIds } }]
+              : []),
+          ],
+        },
+        select: { id: true },
+      });
+      const benefitIds = benefits.map((benefit) => benefit.id);
+
+      const redemptionFilters: Prisma.ReferralBenefitRedemptionWhereInput[] =
+        [];
+      if (invoiceIds.length) {
+        redemptionFilters.push({ invoiceId: { in: invoiceIds } });
+      }
+      if (benefitIds.length) {
+        redemptionFilters.push({ benefitId: { in: benefitIds } });
+      }
+      if (redemptionFilters.length) {
+        await tx.referralBenefitRedemption.deleteMany({
+          where: { OR: redemptionFilters },
+        });
+      }
+
+      const socialContributionFilters: Prisma.ReferralSocialContributionWhereInput[] =
+        [{ buyerClientId: id }];
+      if (invoiceIds.length) {
+        socialContributionFilters.push({ originInvoiceId: { in: invoiceIds } });
+      }
+      await tx.referralSocialContribution.deleteMany({
+        where: { OR: socialContributionFilters },
+      });
+
+      if (benefitIds.length) {
+        await tx.referralBenefit.deleteMany({
+          where: { id: { in: benefitIds } },
+        });
+      }
+
+      await tx.referral.deleteMany({
+        where: {
+          OR: [{ referrerClientId: id }, { referredClientId: id }],
+        },
+      });
+      await tx.offerClient.deleteMany({ where: { clientId: id } });
+
+      const creditFilters: Prisma.InvoiceCreditWhereInput[] = [
+        { clientId: id },
+      ];
+      if (invoiceIds.length) {
+        creditFilters.push({ invoiceId: { in: invoiceIds } });
+      }
+      const credits = await tx.invoiceCredit.findMany({
+        where: { OR: creditFilters },
+        select: { id: true },
+      });
+      const creditIds = credits.map((credit) => credit.id);
+      if (creditIds.length) {
+        await tx.creditPayment.deleteMany({
+          where: { invoiceCreditId: { in: creditIds } },
+        });
+        await tx.invoiceCredit.deleteMany({ where: { id: { in: creditIds } } });
+      }
+
+      if (invoiceIds.length) {
+        await tx.notification.deleteMany({
+          where: { invoiceId: { in: invoiceIds } },
+        });
+        await tx.delivery.deleteMany({
+          where: { invoiceId: { in: invoiceIds } },
+        });
+        await tx.invoiceItem.deleteMany({
+          where: { invoiceId: { in: invoiceIds } },
+        });
+        await tx.invoice.deleteMany({ where: { id: { in: invoiceIds } } });
+      }
+
+      if (quoteIds.length) {
+        await tx.quoteItem.deleteMany({ where: { quoteId: { in: quoteIds } } });
+        await tx.quote.deleteMany({ where: { id: { in: quoteIds } } });
+      }
+
+      if (current.user?.id) {
+        await tx.employee.deleteMany({ where: { userId: current.user.id } });
+        await tx.user.delete({ where: { id: current.user.id } });
+      }
+
+      await tx.client.delete({ where: { id } });
     });
+
     await this.auditLogService.log({
       actor,
       module: 'CLIENTES',
-      action: 'DEACTIVATE',
+      action: 'DELETE',
       entityType: 'Client',
-      entityId: client.id,
-      entityLabel: `${client.firstName} ${client.lastName}`,
-      description: `Desactivo el cliente ${client.firstName} ${client.lastName}`,
+      entityId: current.id,
+      entityLabel: `${current.firstName} ${current.lastName}`,
+      description: `Elimino definitivamente el cliente ${current.firstName} ${current.lastName}`,
     });
-    return client;
+    return current;
   }
 
   async reactivate(id: number) {
@@ -349,6 +463,23 @@ export class ClientesService {
     const hash = scryptSync(password, salt, 64).toString('hex');
 
     return `${salt}:${hash}`;
+  }
+
+  private async createUniqueReferralCode(
+    tx: Prisma.TransactionClient,
+    firstName: string,
+    id: number,
+  ) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const referralCode = this.buildReferralCode(firstName, id);
+      const existingClient = await tx.client.findUnique({
+        where: { referralCode },
+      });
+
+      if (!existingClient) return referralCode;
+    }
+
+    throw new ConflictException('No fue posible generar un código único');
   }
 
   private readonly clientInclude = {

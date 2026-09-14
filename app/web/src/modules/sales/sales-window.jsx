@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import {
   BarChart3,
   Check,
-  ChevronDown,
   ChevronRight,
   CircleX,
   FileText,
+  LoaderCircle,
   Minus,
   Package,
   Plus,
@@ -146,6 +146,7 @@ export function SalesWindow({
   const [cart, setCart] = useState(emptyCart);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [actionLoading, setActionLoading] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [lastDocument, setLastDocument] = useState(null);
@@ -157,10 +158,6 @@ export function SalesWindow({
     isDragging,
     style: windowStyle,
   } = useDraggableWindow();
-
-  useEffect(() => {
-    setView(initialView);
-  }, [initialView]);
 
   useEffect(() => {
     let cancelled = false;
@@ -193,7 +190,7 @@ export function SalesWindow({
         );
         if (requiredFailure) {
           setError(
-            `No se pudo cargar Ventas: ${requiredFailure.reason?.message ?? "verifica la conexión con el API"}`,
+            `No se pudo cargar Ventas: ${requiredFailure.reason?.message ?? "verifica la conexión con el sistema"}`,
           );
           if (isAuthError(requiredFailure.reason)) onRequestLogin?.();
         }
@@ -236,6 +233,16 @@ export function SalesWindow({
     "CONTADOR",
   ].includes(session?.role);
   const canManageDeliveries = session?.role === "ADMIN";
+  const salesViews = [
+    "billing",
+    "quotes",
+    "returns",
+    "deliveries",
+    "orders",
+    "reports",
+    "various",
+  ];
+  const salesViewIndex = salesViews.indexOf(view);
 
   function navigate(nextView) {
     if (nextView !== view && onOpenView) {
@@ -247,6 +254,11 @@ export function SalesWindow({
     setNotice("");
     setLastDocument(null);
     setLookupType(null);
+  }
+
+  function moveSalesView(offset) {
+    const nextView = salesViews[salesViewIndex + offset];
+    if (nextView) navigate(nextView);
   }
 
   function openLookup(type) {
@@ -507,6 +519,10 @@ export function SalesWindow({
     if (invoice.status === "ANULADA") return;
     if (!window.confirm(`¿Deseas anular la factura ${invoice.consecutive}?`))
       return;
+    const actionKey = `invoice-annul-${invoice.id}`;
+    setActionLoading(actionKey);
+    setError("");
+    setNotice("");
     try {
       const saved = await apiClient.delete(`/facturas/${invoice.id}`);
       setInvoices((current) =>
@@ -517,10 +533,16 @@ export function SalesWindow({
     } catch (requestError) {
       setError(requestError.message);
       if (isAuthError(requestError)) onRequestLogin?.();
+    } finally {
+      setActionLoading("");
     }
   }
 
   async function updateQuoteStatus(quote, status) {
+    const actionKey = `quote-status-${quote.id}`;
+    setActionLoading(actionKey);
+    setError("");
+    setNotice("");
     try {
       const saved = await apiClient.patch(`/cotizaciones/${quote.id}/estado`, {
         status,
@@ -533,10 +555,22 @@ export function SalesWindow({
     } catch (requestError) {
       setError(requestError.message);
       if (isAuthError(requestError)) onRequestLogin?.();
+    } finally {
+      setActionLoading("");
     }
   }
 
   async function convertQuote(quote) {
+    if (
+      !window.confirm(
+        `¿Convertir el presupuesto ${quote.consecutive} en una factura?`,
+      )
+    )
+      return;
+    const actionKey = `quote-convert-${quote.id}`;
+    setActionLoading(actionKey);
+    setError("");
+    setNotice("");
     try {
       const invoice = await apiClient.post(
         `/cotizaciones/${quote.id}/convertir-factura`,
@@ -552,11 +586,17 @@ export function SalesWindow({
     } catch (requestError) {
       setError(requestError.message);
       if (isAuthError(requestError)) onRequestLogin?.();
+    } finally {
+      setActionLoading("");
     }
   }
 
   async function updateDeliveryStatus(delivery, status) {
     if (!canManageDeliveries) return;
+    const actionKey = `delivery-status-${delivery.id}`;
+    setActionLoading(actionKey);
+    setError("");
+    setNotice("");
     try {
       const saved = await apiClient.patch(`/domicilios/${delivery.id}/estado`, {
         status,
@@ -569,6 +609,8 @@ export function SalesWindow({
     } catch (requestError) {
       setError(requestError.message);
       if (isAuthError(requestError)) onRequestLogin?.();
+    } finally {
+      setActionLoading("");
     }
   }
 
@@ -670,6 +712,7 @@ export function SalesWindow({
             saving={saving}
             notice={notice}
             lastDocument={lastDocument}
+            actionLoading={actionLoading}
             onAccountChange={setSelectedAccountId}
             onSaleModeChange={setSaleMode}
             onDueDateChange={setCreditDueDate}
@@ -692,6 +735,7 @@ export function SalesWindow({
             cart={cart}
             totals={cartTotals}
             saving={saving}
+            actionLoading={actionLoading}
             quotes={quotes}
             onClientChange={setSelectedClientId}
             onDueDateChange={setCreditDueDate}
@@ -703,12 +747,17 @@ export function SalesWindow({
             onSubmit={saveQuote}
             onOpenProductLookup={() => openLookup("products")}
             onOpenLoadLookup={() => openLookup("quotes")}
+            onLoadQuote={loadQuoteIntoBilling}
+            onUpdateStatus={updateQuoteStatus}
+            onConvert={convertQuote}
+            onSelect={setSelectedDocument}
             onGoToBilling={() => navigate("billing")}
             onReprint={() => openLookup("invoices")}
           />
         ) : view === "returns" ? (
           <ReturnsPanel
             invoices={invoices}
+            actionLoading={actionLoading}
             onAnnul={
               canManageDocuments && session?.role === "ADMIN"
                 ? updateInvoiceStatus
@@ -720,6 +769,7 @@ export function SalesWindow({
         ) : view === "deliveries" ? (
           <DeliveryPanel
             deliveries={deliveries}
+            actionLoading={actionLoading}
             canManage={canManageDeliveries}
             onUpdateStatus={updateDeliveryStatus}
             onSelect={setSelectedDocument}
@@ -743,18 +793,32 @@ export function SalesWindow({
           {error}
         </div>
       )}
-      {view !== "billing" && (
-        <footer className="provider-window-footer sales-window-footer">
-          <span className="sales-window-footer-caption">
-            Módulo de Ventas · {viewLabels[view]}
-          </span>
-          <div className="provider-navigation-actions">
-            <button type="button" className="exit-action" onClick={onClose}>
-              <CircleX size={14} /> Salir
-            </button>
-          </div>
-        </footer>
-      )}
+      <footer className="provider-window-footer sales-window-footer">
+        <span className="sales-window-footer-caption">
+          Módulo de Ventas · {viewLabels[view]}
+        </span>
+        <div className="provider-navigation-actions">
+          <button
+            type="button"
+            disabled={salesViewIndex <= 0}
+            onClick={() => moveSalesView(-1)}
+          >
+            Anterior
+          </button>
+          <button
+            type="button"
+            disabled={
+              salesViewIndex < 0 || salesViewIndex >= salesViews.length - 1
+            }
+            onClick={() => moveSalesView(1)}
+          >
+            Próximo
+          </button>
+          <button type="button" className="exit-action" onClick={onClose}>
+            <CircleX size={14} /> Salir
+          </button>
+        </div>
+      </footer>
       {deliveryEditor && (
         <DeliveryEditor
           editor={deliveryEditor}
@@ -861,8 +925,8 @@ function QuotePanel({
   creditDueDate,
   cart,
   totals,
-  documentNumber,
   saving,
+  actionLoading,
   quotes,
   onClientChange,
   onDueDateChange,
@@ -872,6 +936,10 @@ function QuotePanel({
   onSubmit,
   onOpenProductLookup,
   onOpenLoadLookup,
+  onLoadQuote,
+  onUpdateStatus,
+  onConvert,
+  onSelect,
   onGoToBilling,
   onReprint,
 }) {
@@ -943,6 +1011,14 @@ function QuotePanel({
           </span>
         </div>
       </div>
+      <QuoteList
+        quotes={quotes}
+        actionLoading={actionLoading}
+        onUpdateStatus={onUpdateStatus}
+        onConvert={onConvert}
+        onSelect={onSelect}
+        onLoad={onLoadQuote}
+      />
     </div>
   );
 }
@@ -1364,7 +1440,13 @@ function CartTable({
   );
 }
 
-function ReturnsPanel({ invoices, onAnnul, onSelect, onGoToBilling }) {
+function ReturnsPanel({
+  invoices,
+  actionLoading,
+  onAnnul,
+  onSelect,
+  onGoToBilling,
+}) {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
   const visibleInvoices = filterDocuments(invoices, search);
@@ -1375,7 +1457,7 @@ function ReturnsPanel({ invoices, onAnnul, onSelect, onGoToBilling }) {
         <SalesPanelHeading
           title="Devoluciones de venta"
           description="Selecciona una factura activa para reintegrar sus existencias."
-          actionLabel="Nueva facturación"
+          actionLabel="Abrir facturación"
           onAction={onGoToBilling}
         />
         <SearchRow
@@ -1440,9 +1522,17 @@ function ReturnsPanel({ invoices, onAnnul, onSelect, onGoToBilling }) {
                           <button
                             type="button"
                             className="danger-text-button"
+                            disabled={Boolean(actionLoading)}
                             onClick={() => onAnnul(invoice)}
                           >
-                            <RotateCcw size={12} /> Devolver
+                            {actionLoading === "invoice-annul-" + invoice.id ? (
+                              <LoaderCircle size={12} className="is-spinning" />
+                            ) : (
+                              <RotateCcw size={12} />
+                            )}
+                            {actionLoading === "invoice-annul-" + invoice.id
+                              ? "Guardando…"
+                              : "Devolver"}
                           </button>
                         )}
                       </div>
@@ -1484,7 +1574,7 @@ function ReturnsPanel({ invoices, onAnnul, onSelect, onGoToBilling }) {
             <div className="sales-return-warning">
               <RotateCcw size={15} />
               <span>
-                Al confirmar, la factura se anula y el API devuelve las
+                Al confirmar, la factura se anula y el sistema devuelve las
                 cantidades al inventario.
               </span>
             </div>
@@ -1518,10 +1608,17 @@ function ReturnsPanel({ invoices, onAnnul, onSelect, onGoToBilling }) {
                 <button
                   type="button"
                   className="primary-action"
-                  disabled={!onAnnul}
+                  disabled={!onAnnul || Boolean(actionLoading)}
                   onClick={() => onAnnul?.(selectedInvoice)}
                 >
-                  <RotateCcw size={14} /> Confirmar devolución
+                  {actionLoading === "invoice-annul-" + selectedInvoice.id ? (
+                    <LoaderCircle size={14} className="is-spinning" />
+                  ) : (
+                    <RotateCcw size={14} />
+                  )}
+                  {actionLoading === "invoice-annul-" + selectedInvoice.id
+                    ? "Guardando…"
+                    : "Confirmar devolución"}
                 </button>
               )}
             </div>
@@ -1540,7 +1637,7 @@ function ReturnsPanel({ invoices, onAnnul, onSelect, onGoToBilling }) {
   );
 }
 
-function InvoicePanel({
+export function InvoicePanel({
   title,
   description,
   invoices,
@@ -1645,7 +1742,14 @@ function InvoicePanel({
   );
 }
 
-function QuoteList({ quotes, onUpdateStatus, onConvert, onSelect, onLoad }) {
+function QuoteList({
+  quotes,
+  actionLoading,
+  onUpdateStatus,
+  onConvert,
+  onSelect,
+  onLoad,
+}) {
   return (
     <div className="sales-list-panel sales-quote-list">
       <SalesPanelHeading
@@ -1703,20 +1807,56 @@ function QuoteList({ quotes, onUpdateStatus, onConvert, onSelect, onLoad }) {
                       >
                         Ver
                       </button>
-                      <button type="button" onClick={() => onLoad(quote)}>
+                      <button
+                        type="button"
+                        disabled={Boolean(actionLoading)}
+                        onClick={() => onLoad(quote)}
+                      >
                         <ShoppingCart size={12} /> Cargar
                       </button>
                       {quote.status === "PENDIENTE" && (
-                        <button
-                          type="button"
-                          onClick={() => onUpdateStatus(quote, "APROBADA")}
-                        >
-                          Aprobar
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            disabled={Boolean(actionLoading)}
+                            onClick={() => onUpdateStatus(quote, "APROBADA")}
+                          >
+                            {actionLoading === "quote-status-" + quote.id ? (
+                              <>
+                                <LoaderCircle
+                                  size={12}
+                                  className="is-spinning"
+                                />
+                                Guardando…
+                              </>
+                            ) : (
+                              "Aprobar"
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            className="danger-text-button"
+                            disabled={Boolean(actionLoading)}
+                            onClick={() => onUpdateStatus(quote, "RECHAZADA")}
+                          >
+                            Rechazar
+                          </button>
+                        </>
                       )}
                       {["PENDIENTE", "APROBADA"].includes(quote.status) && (
-                        <button type="button" onClick={() => onConvert(quote)}>
-                          Facturar
+                        <button
+                          type="button"
+                          disabled={Boolean(actionLoading)}
+                          onClick={() => onConvert(quote)}
+                        >
+                          {actionLoading === "quote-convert-" + quote.id ? (
+                            <>
+                              <LoaderCircle size={12} className="is-spinning" />
+                              Procesando…
+                            </>
+                          ) : (
+                            "Facturar"
+                          )}
                         </button>
                       )}
                     </div>
@@ -1741,6 +1881,7 @@ function QuoteList({ quotes, onUpdateStatus, onConvert, onSelect, onLoad }) {
 
 function DeliveryPanel({
   deliveries,
+  actionLoading,
   canManage,
   onUpdateStatus,
   onSelect,
@@ -1821,9 +1962,18 @@ function DeliveryPanel({
                       {canManage && nextStatus ? (
                         <button
                           type="button"
+                          disabled={Boolean(actionLoading)}
                           onClick={() => onUpdateStatus(delivery, nextStatus)}
                         >
-                          {deliveryStatusLabels[nextStatus]}
+                          {actionLoading ===
+                          "delivery-status-" + delivery.id ? (
+                            <>
+                              <LoaderCircle size={12} className="is-spinning" />
+                              Guardando…
+                            </>
+                          ) : (
+                            deliveryStatusLabels[nextStatus]
+                          )}
                         </button>
                       ) : (
                         <button type="button" onClick={() => onSelect(detail)}>
@@ -1985,7 +2135,7 @@ function ReportsPanel({ invoices, quotes, orders }) {
     <div className="sales-report-panel">
       <SalesPanelHeading
         title="Reportes de ventas"
-        description="Indicadores construidos con los documentos del API."
+        description="Indicadores construidos con los documentos registrados."
       />
       <div className="sales-report-cards">
         {cards.map(([label, value, helper]) => (

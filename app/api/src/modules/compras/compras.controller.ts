@@ -20,6 +20,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { ComprasService } from './compras.service';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
+import { CreatePurchasePaymentDto } from './dto/create-purchase-payment.dto';
 import { ListPurchaseOrdersQueryDto } from './dto/list-purchase-orders-query.dto';
 import { PurchaseReportQueryDto } from './dto/purchase-report-query.dto';
 import { UpdatePurchaseOrderDto } from './dto/update-purchase-order.dto';
@@ -91,6 +92,16 @@ export class ComprasController {
   @Permissions('PURCHASES_EDIT')
   receive(@Param('id', ParseIntPipe) id: number) {
     return this.comprasService.receive(id);
+  }
+
+  @Post(':id/pagos')
+  @Roles(Role.ADMIN, Role.CONTADOR)
+  @Permissions('PAYABLES_EDIT')
+  pay(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreatePurchasePaymentDto,
+  ) {
+    return this.comprasService.pay(id, dto);
   }
 
   @Patch(':id/anular')

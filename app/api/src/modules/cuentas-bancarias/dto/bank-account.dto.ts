@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsInt,
+  Min,
   IsNumber,
   IsOptional,
   IsPositive,
@@ -42,6 +43,6 @@ export class BankTransferDto {
 
 export class BankAdjustmentDto {
   @Type(() => Number) @IsInt() @IsPositive() bankAccountId: number;
-  @Type(() => Number) @IsNumber() @IsPositive() balance: number;
+  @Type(() => Number) @IsNumber() @Min(0) balance: number;
   @IsString() @MinLength(3) description: string;
 }

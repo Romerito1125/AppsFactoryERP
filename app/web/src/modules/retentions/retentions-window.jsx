@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleX,
-  Edit3,
+  LoaderCircle,
   Plus,
   Search,
   Trash2,
@@ -13,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
+import { SearchOptionsMenu } from "@/components/desktop/search-options-menu";
 import { apiClient } from "@/lib/api-client";
 
 const emptyRetention = {
@@ -28,15 +28,27 @@ const emptyRetention = {
   isActive: true,
   ranges: [],
 };
+
+function createEmptyRetentionDraft() {
+  return {
+    ...emptyRetention,
+    ranges: [{ minimum: 0, maximum: 0, percentage: 0 }],
+  };
+}
+
 export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
   const [retentions, setRetentions] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("todos");
   const [activeTab, setActiveTab] = useState("main");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
   const {
     handlePointerDown,
     isDragging,
@@ -52,6 +64,15 @@ export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
         const next = items.map(mapRetention);
         setRetentions(next);
         setSelectedId(next[0]?.id ?? null);
+        if (next[0]) {
+          setDraft({
+            ...next[0],
+            ranges: next[0].ranges.map((range) => ({ ...range })),
+          });
+        } else {
+          setDraft(createEmptyRetentionDraft());
+        }
+        setEditing(true);
       })
       .catch((requestError) => {
         if (!cancelled) setError(requestError.message);
@@ -67,51 +88,75 @@ export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
   const filteredRetentions = useMemo(
     () =>
       retentions.filter((retention) =>
+        (statusFilter === "todos" ||
+          (statusFilter === "activos"
+            ? retention.isActive
+            : !retention.isActive)) &&
         `${retention.code} ${retention.description}`
           .toLowerCase()
           .includes(searchTerm.toLowerCase()),
       ),
-    [retentions, searchTerm],
+    [retentions, searchTerm, statusFilter],
   );
   const selectedRetention =
     retentions.find((retention) => retention.id === selectedId) ?? null;
   const shownRetention = editing ? draft : selectedRetention;
   const canEdit = canAccess?.("RETENTIONS_EDIT") ?? true;
+  const hasChanges = useMemo(
+    () => hasRetentionDraftChanges(draft, selectedRetention),
+    [draft, selectedRetention],
+  );
+  const selectedIndex = filteredRetentions.findIndex(
+    (retention) => retention.id === selectedId,
+  );
+  const canMovePrevious = selectedIndex > 0;
+  const canMoveNext =
+    selectedIndex >= 0 && selectedIndex < filteredRetentions.length - 1;
 
   function selectRetention(id) {
     setSelectedId(id);
-    setEditing(false);
-    setDraft(null);
+    const retention = retentions.find((item) => item.id === id);
+    setDraft(
+      retention
+        ? {
+            ...retention,
+            ranges: retention.ranges.map((range) => ({ ...range })),
+          }
+        : null,
+    );
+    setEditing(Boolean(retention));
+    setFieldErrors({});
     setError("");
   }
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
   }
   function handleAdd() {
     if (!canEdit) return;
     setSelectedId(null);
-    setDraft({
-      ...emptyRetention,
-      ranges: [{ minimum: 0, maximum: 0, percentage: 0 }],
-    });
+    setDraft(createEmptyRetentionDraft());
     setEditing(true);
     setActiveTab("main");
+    setFieldErrors({});
     setError("");
-  }
-  function handleEdit() {
-    if (!canEdit) return;
-    if (selectedRetention) {
-      setDraft({
-        ...selectedRetention,
-        ranges: selectedRetention.ranges.map((range) => ({ ...range })),
-      });
-      setEditing(true);
-      setError("");
-    }
   }
   async function handleSave() {
-    if (!canEdit) return;
+    if (!canEdit || !draft || !hasChanges || saving || deleting) return;
     setError("");
+    setFieldErrors({});
+    const validationErrors = validateRetentionDraft(draft);
+    if (Object.keys(validationErrors).length) {
+      setFieldErrors(validationErrors);
+      setError("Corrige los campos marcados antes de guardar.");
+      return;
+    }
+    setSaving(true);
     const body = {
       code: draft.code.trim(),
       description: draft.description.trim(),
@@ -140,29 +185,52 @@ export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
           : [...current, normalized],
       );
       setSelectedId(normalized.id);
-      setDraft(null);
-      setEditing(false);
+      setDraft({
+        ...normalized,
+        ranges: normalized.ranges.map((range) => ({ ...range })),
+      });
+      setEditing(true);
     } catch (requestError) {
       setError(requestError.message);
       if (/sesión|inicia sesión|401|autentic/i.test(requestError.message))
-        onRequestLogin();
+        onRequestLogin?.();
+    } finally {
+      setSaving(false);
     }
   }
   async function handleDelete() {
-    if (!canEdit) return;
-    if (!selectedId || !window.confirm("¿Deseas desactivar esta retención?"))
+    if (!canEdit || deleting || saving) return;
+    if (
+      selectedId === null ||
+      !window.confirm(
+        "¿Deseas eliminar definitivamente esta retención? Esta acción no se puede deshacer.",
+      )
+    )
       return;
+    setDeleting(true);
+    setError("");
     try {
       await apiClient.delete(`/retenciones/${selectedId}`);
-      setRetentions((current) =>
-        current.map((item) =>
-          item.id === selectedId ? { ...item, isActive: false } : item,
-        ),
+      const remaining = retentions.filter((item) => item.id !== selectedId);
+      setRetentions(remaining);
+      const nextRetention = remaining[0] ?? null;
+      setSelectedId(nextRetention?.id ?? null);
+      setDraft(
+        nextRetention
+          ? {
+              ...nextRetention,
+              ranges: nextRetention.ranges.map((range) => ({ ...range })),
+            }
+          : createEmptyRetentionDraft(),
       );
+      setEditing(true);
+      setFieldErrors({});
     } catch (requestError) {
       setError(requestError.message);
       if (/sesión|inicia sesión|401|autentic/i.test(requestError.message))
-        onRequestLogin();
+        onRequestLogin?.();
+    } finally {
+      setDeleting(false);
     }
   }
   function moveSelection(offset) {
@@ -210,13 +278,7 @@ export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
                 onChange={(event) => setSearchTerm(event.target.value)}
               />
             </div>
-            <button
-              type="button"
-              className="search-options"
-              aria-label="Opciones de búsqueda"
-            >
-              <ChevronDown size={14} />
-            </button>
+            <SearchOptionsMenu value={statusFilter} onChange={setStatusFilter} />
           </div>
           <div
             className="provider-table retention-list-table"
@@ -294,19 +356,57 @@ export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
             activeTab === "table" ? (
               <RetentionTable
                 ranges={shownRetention.ranges}
-                editing={editing}
+                editing={editing && canEdit}
                 onChange={(ranges) => updateDraft("ranges", ranges)}
+                fieldErrors={fieldErrors}
               />
             ) : (
               <RetentionMain
                 retention={shownRetention}
-                editing={editing}
+                editing={editing && canEdit}
                 onChange={updateDraft}
+                fieldErrors={fieldErrors}
               />
             )
           ) : (
             <div className="provider-tab-panel empty-provider-panel">
               <strong>Agrega una retención para comenzar.</strong>
+            </div>
+          )}
+          {editing && hasChanges && (
+            <div className="retention-change-actions" role="group" aria-label="Acciones de cambios">
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || deleting || !canEdit}
+              >
+                {saving ? (
+                  <LoaderCircle className="button-spinner" size={14} />
+                ) : (
+                  <Check size={14} />
+                )}
+                {saving ? "Guardando…" : selectedId !== null ? "Guardar cambios" : "Crear retención"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFieldErrors({});
+                  if (selectedRetention) {
+                    setDraft({
+                      ...selectedRetention,
+                      ranges: selectedRetention.ranges.map((range) => ({ ...range })),
+                    });
+                  } else {
+                    setSelectedId(null);
+                    setDraft(createEmptyRetentionDraft());
+                    setEditing(true);
+                  }
+                  setError("");
+                }}
+                disabled={saving || deleting}
+              >
+                <CircleX size={14} /> Cancelar
+              </button>
             </div>
           )}
         </div>
@@ -318,42 +418,25 @@ export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
       )}
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">
-          {editing ? (
-            <button type="button" onClick={handleSave} disabled={!canEdit}>
-              <Check size={14} /> Guardar
-            </button>
-          ) : (
-            <button type="button" onClick={handleAdd} disabled={!canEdit}>
-              <Plus size={14} /> Agregar
-            </button>
-          )}
-          {!editing && (
-            <button
-              type="button"
-              onClick={handleEdit}
-              disabled={!selectedRetention || !canEdit}
-            >
-              <Edit3 size={14} /> Modificar
-            </button>
-          )}
-          {!editing && (
+          <button
+            type="button"
+            onClick={handleAdd}
+            disabled={!canEdit || saving || deleting}
+          >
+            <Plus size={14} /> Agregar
+          </button>
+          {selectedRetention && (
             <button
               type="button"
               onClick={handleDelete}
-              disabled={!selectedRetention || !canEdit}
+              disabled={!canEdit || deleting || saving}
             >
-              <Trash2 size={14} /> Borrar
-            </button>
-          )}
-          {editing && (
-            <button
-              type="button"
-              onClick={() => {
-                setEditing(false);
-                setDraft(null);
-              }}
-            >
-              <CircleX size={14} /> Cancelar
+              {deleting ? (
+                <LoaderCircle className="button-spinner" size={14} />
+              ) : (
+                <Trash2 size={14} />
+              )}
+              {deleting ? "Eliminando…" : "Borrar"}
             </button>
           )}
         </div>
@@ -361,6 +444,7 @@ export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
           <button
             type="button"
             className="muted-action"
+            disabled={!canMovePrevious || editing && hasChanges || saving || deleting}
             onClick={() => moveSelection(-1)}
           >
             <ChevronLeft size={14} /> Anterior
@@ -368,6 +452,7 @@ export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
           <button
             type="button"
             className="muted-action"
+            disabled={!canMoveNext || editing && hasChanges || saving || deleting}
             onClick={() => moveSelection(1)}
           >
             Próximo <ChevronRight size={14} />
@@ -381,41 +466,52 @@ export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
   );
 }
 
-function RetentionMain({ retention, editing, onChange }) {
+function RetentionMain({ retention, editing, onChange, fieldErrors }) {
   return (
     <div className="provider-tab-panel retention-main-panel">
       <div className="retention-form-grid">
+        <RetentionTextField
+          label="Código"
+          value={retention.code}
+          editing={editing}
+          onChange={(value) => onChange("code", value)}
+          error={fieldErrors?.code}
+        />
+        <RetentionTextField
+          label="Descripción"
+          value={retention.description}
+          editing={editing}
+          onChange={(value) => onChange("description", value)}
+          wide
+          error={fieldErrors?.description}
+        />
         <RetentionField
           label="Sustraendo"
           value={retention.subtracting}
           editing={editing}
           onChange={(value) => onChange("subtracting", value)}
+          error={fieldErrors?.subtracting}
         />
         <RetentionField
           label="Base mínima"
           value={retention.minimumBase}
           editing={editing}
           onChange={(value) => onChange("minimumBase", value)}
+          error={fieldErrors?.minimumBase}
         />
-        <RetentionField
+        <RetentionTextField
           label="Tipo operación"
           value={retention.operationCode}
           editing={editing}
           onChange={(value) => onChange("operationCode", value)}
         />
-        <div className="retention-operation-description">
-          {editing ? (
-            <input
-              className="detail-input"
-              value={retention.operationDescription ?? ""}
-              onChange={(event) =>
-                onChange("operationDescription", event.target.value)
-              }
-            />
-          ) : (
-            retention.operationDescription
-          )}
-        </div>
+        <RetentionTextField
+          label="Descripción operación"
+          value={retention.operationDescription}
+          editing={editing}
+          onChange={(value) => onChange("operationDescription", value)}
+          wide
+        />
         <CheckboxField
           label="Aplica ventas / cuentas cobrar"
           checked={retention.applySales}
@@ -438,7 +534,7 @@ function RetentionMain({ retention, editing, onChange }) {
     </div>
   );
 }
-function RetentionTable({ ranges, editing, onChange }) {
+function RetentionTable({ ranges, editing, onChange, fieldErrors }) {
   function updateRange(index, field, value) {
     onChange(
       ranges.map((range, rangeIndex) =>
@@ -469,8 +565,10 @@ function RetentionTable({ ranges, editing, onChange }) {
               <td>
                 {editing ? (
                   <input
-                    className="detail-input"
+                    className={`detail-input ${fieldErrors?.[`range-${index}-minimum`] ? "is-invalid" : ""}`}
                     value={range.minimum}
+                    aria-invalid={Boolean(fieldErrors?.[`range-${index}-minimum`])}
+                    title={fieldErrors?.[`range-${index}-minimum`] || undefined}
                     onChange={(event) =>
                       updateRange(index, "minimum", event.target.value)
                     }
@@ -482,8 +580,10 @@ function RetentionTable({ ranges, editing, onChange }) {
               <td>
                 {editing ? (
                   <input
-                    className="detail-input"
+                    className={`detail-input ${fieldErrors?.[`range-${index}-maximum`] ? "is-invalid" : ""}`}
                     value={range.maximum}
+                    aria-invalid={Boolean(fieldErrors?.[`range-${index}-maximum`])}
+                    title={fieldErrors?.[`range-${index}-maximum`] || undefined}
                     onChange={(event) =>
                       updateRange(index, "maximum", event.target.value)
                     }
@@ -495,8 +595,10 @@ function RetentionTable({ ranges, editing, onChange }) {
               <td>
                 {editing ? (
                   <input
-                    className="detail-input"
+                    className={`detail-input ${fieldErrors?.[`range-${index}-percentage`] ? "is-invalid" : ""}`}
                     value={range.percentage}
+                    aria-invalid={Boolean(fieldErrors?.[`range-${index}-percentage`])}
+                    title={fieldErrors?.[`range-${index}-percentage`] || undefined}
                     onChange={(event) =>
                       updateRange(index, "percentage", event.target.value)
                     }
@@ -525,14 +627,44 @@ function SummaryField({ label, value }) {
     </div>
   );
 }
-function RetentionField({ label, value, editing, onChange }) {
+function RetentionTextField({
+  label,
+  value,
+  editing,
+  onChange,
+  wide = false,
+  error = "",
+}) {
   return (
-    <div className="retention-field">
+    <div className={`retention-field ${wide ? "wide-field" : ""} ${error ? "has-error" : ""}`}>
       <label>{label}</label>
       {editing ? (
         <input
-          className="detail-input"
+          className={`detail-input ${error ? "is-invalid" : ""}`}
           value={value ?? ""}
+          aria-invalid={Boolean(error)}
+          title={error || undefined}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      ) : (
+        <div className="detail-control">
+          <span>{value || " "}</span>
+        </div>
+      )}
+      {error && <span className="field-error">{error}</span>}
+    </div>
+  );
+}
+function RetentionField({ label, value, editing, onChange, error = "" }) {
+  return (
+    <div className={`retention-field ${error ? "has-error" : ""}`}>
+      <label>{label}</label>
+      {editing ? (
+        <input
+          className={`detail-input ${error ? "is-invalid" : ""}`}
+          value={value ?? ""}
+          aria-invalid={Boolean(error)}
+          title={error || undefined}
           onChange={(event) => onChange(event.target.value)}
         />
       ) : (
@@ -540,6 +672,7 @@ function RetentionField({ label, value, editing, onChange }) {
           <span>{formatNumber(value)}</span>
         </div>
       )}
+      {error && <span className="field-error">{error}</span>}
     </div>
   );
 }
@@ -574,6 +707,58 @@ function RetentionGlyph() {
       <i />
     </span>
   );
+}
+function hasRetentionDraftChanges(draft, retention) {
+  if (!draft) return false;
+  if (!retention) return true;
+  const fields = [
+    "code",
+    "description",
+    "subtracting",
+    "minimumBase",
+    "operationCode",
+    "operationDescription",
+    "applySales",
+    "applyPurchases",
+    "isActive",
+  ];
+  if (
+    fields.some(
+      (field) => String(draft[field] ?? "") !== String(retention[field] ?? ""),
+    )
+  )
+    return true;
+  return JSON.stringify(draft.ranges ?? []) !== JSON.stringify(retention.ranges ?? []);
+}
+function validateRetentionDraft(retention) {
+  const errors = {};
+  if (!retention.code?.trim()) errors.code = "El código es obligatorio.";
+  if (!retention.description?.trim())
+    errors.description = "La descripción es obligatoria.";
+  else if (retention.description.trim().length < 2)
+    errors.description = "La descripción debe tener al menos 2 caracteres.";
+  for (const [field, label] of [
+    ["subtracting", "El sustraendo"],
+    ["minimumBase", "La base mínima"],
+  ]) {
+    const value = Number(retention[field]);
+    if (!Number.isFinite(value) || value < 0)
+      errors[field] = `${label} debe ser un número mayor o igual a cero.`;
+  }
+  (retention.ranges ?? []).forEach((range, index) => {
+    const minimum = Number(range.minimum);
+    const maximum = Number(range.maximum);
+    const percentage = Number(range.percentage);
+    if (!Number.isFinite(minimum) || minimum < 0)
+      errors[`range-${index}-minimum`] = "El mínimo debe ser mayor o igual a cero.";
+    if (!Number.isFinite(maximum) || maximum < 0)
+      errors[`range-${index}-maximum`] = "El máximo debe ser mayor o igual a cero.";
+    else if (maximum < minimum)
+      errors[`range-${index}-maximum`] = "El máximo no puede ser menor al mínimo.";
+    if (!Number.isFinite(percentage) || percentage < 0)
+      errors[`range-${index}-percentage`] = "El porcentaje debe ser mayor o igual a cero.";
+  });
+  return errors;
 }
 function mapRetention(retention) {
   return {

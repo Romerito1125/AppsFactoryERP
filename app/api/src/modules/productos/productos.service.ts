@@ -150,15 +150,17 @@ export class ProductosService {
               quantity: warehouse.quantity,
             },
           });
-          await tx.inventoryMovement.create({
-            data: {
-              productId: createdProduct.id,
-              toWarehouseId: warehouse.warehouseId,
-              quantity: warehouse.quantity,
-              movementType: InventoryMovementType.ENTRADA,
-              reason: 'Stock inicial de producto',
-            },
-          });
+          if (warehouse.quantity > 0) {
+            await tx.inventoryMovement.create({
+              data: {
+                productId: createdProduct.id,
+                toWarehouseId: warehouse.warehouseId,
+                quantity: warehouse.quantity,
+                movementType: InventoryMovementType.ENTRADA,
+                reason: 'Stock inicial de producto',
+              },
+            });
+          }
         }
 
         return tx.product.findUniqueOrThrow({
@@ -202,8 +204,14 @@ export class ProductosService {
     this.ensurePositiveId(id);
     const currentProduct = await this.getExistingProduct(id);
 
-    const { tagIds, barcodes, providerIds, packaging, ...productData } =
-      updateProductDto;
+    const {
+      tagIds,
+      barcodes,
+      providerIds,
+      packaging,
+      warehouseId,
+      ...productData
+    } = updateProductDto;
     const resolvedProviderIds =
       providerIds || productData.providerId
         ? this.resolveProviderIds(
@@ -225,6 +233,10 @@ export class ProductosService {
         await this.ensureProvidersExist(resolvedProviderIds);
       }
 
+      if (warehouseId !== undefined) {
+        await this.ensureWarehousesExist([warehouseId]);
+      }
+
       await this.ensureTagsExist(tagIds);
       const normalizedBarcodes = await this.normalizeBarcodes(barcodes, id);
 
@@ -236,6 +248,23 @@ export class ProductosService {
 
         if (resolvedProviderIds) {
           await tx.productProvider.deleteMany({ where: { productId: id } });
+        }
+
+        if (warehouseId !== undefined) {
+          await tx.productWarehouse.upsert({
+            where: {
+              productId_warehouseId: {
+                productId: id,
+                warehouseId,
+              },
+            },
+            update: {},
+            create: {
+              productId: id,
+              warehouseId,
+              quantity: 0,
+            },
+          });
         }
 
         if (normalizedBarcodes.some((barcode) => barcode.isPrimary)) {
@@ -371,14 +400,76 @@ export class ProductosService {
 
   async remove(id: number, actor?: AuthUser) {
     this.ensurePositiveId(id);
-    await this.findOne(id);
+    const currentProduct = await this.getExistingProduct(id);
+    const [invoiceItems, quoteItems, offers, purchaseOrderItems, movements] =
+      await Promise.all([
+        this.prisma.invoiceItem.count({ where: { productId: id } }),
+        this.prisma.quoteItem.count({ where: { productId: id } }),
+        this.prisma.offerProduct.count({ where: { productId: id } }),
+        this.prisma.purchaseOrderItem.count({ where: { productId: id } }),
+        this.prisma.inventoryMovement.count({ where: { productId: id } }),
+      ]);
+    if (
+      invoiceItems > 0 ||
+      quoteItems > 0 ||
+      offers > 0 ||
+      purchaseOrderItems > 0 ||
+      movements > 0
+    ) {
+      throw new BadRequestException(
+        'No se puede eliminar definitivamente este producto porque tiene facturas, cotizaciones, compras, ofertas o movimientos relacionados',
+      );
+    }
 
+    await this.prisma.$transaction(async (tx) => {
+      const prices = await tx.productPrice.findMany({
+        where: { productId: id },
+        select: { id: true },
+      });
+      if (prices.length) {
+        await tx.productPriceHistory.deleteMany({
+          where: { productPriceId: { in: prices.map((price) => price.id) } },
+        });
+      }
+      await tx.productPrice.deleteMany({ where: { productId: id } });
+      await tx.productCost.deleteMany({ where: { productId: id } });
+      await tx.productWarehouse.deleteMany({ where: { productId: id } });
+      await tx.productBarcode.deleteMany({ where: { productId: id } });
+      await tx.productFavorite.deleteMany({ where: { productId: id } });
+      await tx.productTag.deleteMany({ where: { productId: id } });
+      await tx.productProvider.deleteMany({ where: { productId: id } });
+      await tx.productPackagingProfile.deleteMany({ where: { productId: id } });
+      await tx.offerProduct.deleteMany({ where: { productId: id } });
+      await tx.product.delete({ where: { id } });
+    });
+
+    await this.safeDeleteImage(currentProduct.imageUrl);
+    const formattedProduct = this.formatProduct(currentProduct);
+
+    if (actor) {
+      await this.auditLogService.log({
+        actor,
+        module: 'PRODUCTOS',
+        action: 'DELETE',
+        entityType: 'Product',
+        entityId: formattedProduct.id,
+        entityLabel: formattedProduct.name,
+        description: `Elimino definitivamente el producto ${formattedProduct.name}`,
+        metadata: { productId: formattedProduct.id },
+      });
+    }
+
+    return formattedProduct;
+  }
+
+  async deactivate(id: number, actor?: AuthUser) {
+    this.ensurePositiveId(id);
+    await this.getExistingProduct(id);
     const product = await this.prisma.product.update({
       where: { id },
       data: { isActive: false, deletedAt: new Date() },
       include: this.productInclude,
     });
-
     const formattedProduct = this.formatProduct(product);
 
     if (actor) {
@@ -389,7 +480,7 @@ export class ProductosService {
         entityType: 'Product',
         entityId: formattedProduct.id,
         entityLabel: formattedProduct.name,
-        description: `Desactivo el producto ${formattedProduct.name}`,
+        description: `Desactivo el producto ${formattedProduct.name} porque tiene documentos o movimientos relacionados`,
         metadata: { productId: formattedProduct.id },
       });
     }

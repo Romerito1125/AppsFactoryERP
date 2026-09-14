@@ -30,6 +30,12 @@ export class UpdateProductDto {
   providerId?: number;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  warehouseId?: number;
+
+  @IsOptional()
   @IsArray()
   @ArrayUnique()
   @Type(() => Number)
@@ -60,6 +66,10 @@ export class UpdateProductDto {
   @IsString()
   @MinLength(1)
   brand?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 
   @IsOptional()
   @Type(() => Number)

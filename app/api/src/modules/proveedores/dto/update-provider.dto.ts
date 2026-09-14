@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEmail,
   IsInt,
   IsOptional,
@@ -84,6 +85,10 @@ export class UpdateProviderDto {
   withholdingType?: string;
 
   @IsOptional()
+  @IsBoolean()
+  hasIslrWithholding?: boolean;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)
@@ -92,4 +97,8 @@ export class UpdateProviderDto {
   @IsOptional()
   @IsString()
   observations?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

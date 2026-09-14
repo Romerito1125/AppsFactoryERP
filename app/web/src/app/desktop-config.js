@@ -43,6 +43,8 @@ export const filesMenuItems = [
   { label: "Clientes", action: "clients", permission: "CLIENTS_VIEW" },
   { label: "Proveedores", action: "providers", permission: "PROVIDERS_VIEW" },
   { label: "Productos", action: "products", permission: "PRODUCTS_VIEW" },
+  { label: "Tipos de producto", action: "product-types", permission: "PRODUCTS_VIEW" },
+  { label: "Bodegas", action: "warehouses", permission: "PRODUCTS_VIEW" },
   { label: "Retenciones", action: "retentions", permission: "RETENTIONS_VIEW" },
   { label: "Usuarios", action: "users", permission: "USERS_MANAGE" },
 ];

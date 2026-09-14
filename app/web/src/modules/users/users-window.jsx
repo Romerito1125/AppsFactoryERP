@@ -5,7 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleX,
-  Edit3,
+  LoaderCircle,
   Plus,
   Search,
   ShieldCheck,
@@ -15,11 +15,12 @@ import {
 } from "lucide-react";
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
+import { SearchOptionsMenu } from "@/components/desktop/search-options-menu";
 import { apiClient } from "@/lib/api-client";
 import {
   buildPermissionDraft,
   permissionCatalog,
-  permissionOverrides,
+  permissionSelections,
 } from "@/app/permissions";
 
 const roleOptions = [
@@ -48,11 +49,15 @@ export function UsersWindow({ onClose, onRequestLogin }) {
   const [warehouses, setWarehouses] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("todos");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [permissionDraft, setPermissionDraft] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
   const {
     handlePointerDown,
     isDragging,
@@ -73,6 +78,16 @@ export function UsersWindow({ onClose, onRequestLogin }) {
         setClients(clientItems);
         setWarehouses(warehouseItems);
         setSelectedId(nextUsers[0]?.id ?? null);
+        if (nextUsers[0]) {
+          setDraft({ ...nextUsers[0], password: "" });
+          setPermissionDraft(
+            buildPermissionDraft(nextUsers[0].role, nextUsers[0].permissions),
+          );
+        } else {
+          setDraft({ ...emptyUser, password: "" });
+          setPermissionDraft(buildPermissionDraft(emptyUser.role));
+        }
+        setEditing(true);
       })
       .catch((requestError) => {
         if (!cancelled) setError(requestError.message);
@@ -87,22 +102,38 @@ export function UsersWindow({ onClose, onRequestLogin }) {
 
   const filteredUsers = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
-    if (!query) return users;
     return users.filter((user) =>
-      `${user.username} ${roleLabel(user.role)} ${user.employee?.firstName ?? ""} ${user.employee?.lastName ?? ""}`
-        .toLowerCase()
-        .includes(query),
+      (statusFilter === "todos" ||
+        (statusFilter === "activos" ? user.isActive : !user.isActive)) &&
+      (!query ||
+        `${user.username} ${roleLabel(user.role)} ${user.employee?.firstName ?? ""} ${user.employee?.lastName ?? ""}`
+          .toLowerCase()
+          .includes(query)),
     );
-  }, [users, searchTerm]);
+  }, [users, searchTerm, statusFilter]);
   const selectedUser = users.find((user) => user.id === selectedId) ?? null;
   const shownUser = editing ? draft : selectedUser;
+  const hasChanges = useMemo(
+    () => hasUserDraftChanges(draft, selectedUser, permissionDraft),
+    [draft, permissionDraft, selectedUser],
+  );
+  const selectedIndex = filteredUsers.findIndex(
+    (user) => user.id === selectedId,
+  );
+  const canMovePrevious = selectedIndex > 0;
+  const canMoveNext =
+    selectedIndex >= 0 && selectedIndex < filteredUsers.length - 1;
 
   function selectUser(id) {
     setSelectedId(id);
-    setEditing(false);
-    setDraft(null);
-    setPermissionDraft(null);
+    const user = users.find((item) => item.id === id);
+    setDraft(user ? { ...user, email: user.username, password: "" } : null);
+    setPermissionDraft(
+      user ? buildPermissionDraft(user.role, user.permissions) : null,
+    );
+    setEditing(Boolean(user));
     setError("");
+    setFieldErrors({});
   }
 
   function startAdd() {
@@ -111,20 +142,17 @@ export function UsersWindow({ onClose, onRequestLogin }) {
     setPermissionDraft(buildPermissionDraft(emptyUser.role));
     setEditing(true);
     setError("");
-  }
-
-  function startEdit() {
-    if (!selectedUser) return;
-    setDraft({ ...selectedUser, email: selectedUser.username, password: "" });
-    setPermissionDraft(
-      buildPermissionDraft(selectedUser.role, selectedUser.permissions),
-    );
-    setEditing(true);
-    setError("");
+    setFieldErrors({});
   }
 
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
   }
 
   function updateRole(role) {
@@ -138,20 +166,18 @@ export function UsersWindow({ onClose, onRequestLogin }) {
 
   function handleRequestError(requestError) {
     setError(requestError.message);
+    setFieldErrors(getUserFieldErrors(requestError));
     if (isAuthError(requestError)) onRequestLogin?.();
   }
 
   async function saveUser() {
-    if (!draft?.email.trim()) {
-      setError("Escribe el correo del usuario.");
-      return;
-    }
-    if (!draft.id && draft.password.length < 6) {
-      setError("La contraseña debe tener al menos 6 caracteres.");
-      return;
-    }
-    if (draft.role === "BODEGA" && !draft.warehouseId) {
-      setError("Un usuario Bodega debe tener una bodega asignada.");
+    if (!hasChanges || saving || deleting) return;
+    setError("");
+    setFieldErrors({});
+    const validationErrors = validateUserDraft(draft);
+    if (Object.keys(validationErrors).length) {
+      setFieldErrors(validationErrors);
+      setError("Corrige los campos marcados antes de guardar.");
       return;
     }
     const body = {
@@ -161,10 +187,19 @@ export function UsersWindow({ onClose, onRequestLogin }) {
       warehouseId: draft.warehouseId ? Number(draft.warehouseId) : null,
       isActive: Boolean(draft.isActive),
     };
+    if (
+      selectedId !== null &&
+      draft.id !== null &&
+      draft.id !== undefined &&
+      draft.id !== ""
+    ) {
+      body.id = Number(draft.id);
+    }
     if (draft.password) body.password = draft.password;
+    setSaving(true);
     try {
-      const saved = draft.id
-        ? await apiClient.patch(`/usuarios/${draft.id}`, body)
+      const saved = selectedId !== null
+        ? await apiClient.patch(`/usuarios/${selectedId}`, body)
         : await apiClient.post("/usuarios", {
             ...body,
             password: draft.password,
@@ -173,38 +208,79 @@ export function UsersWindow({ onClose, onRequestLogin }) {
       const permissionResult = await apiClient.put(
         `/usuarios/${normalized.id}/permisos`,
         {
-          permissions: permissionOverrides(draft.role, permissionDraft ?? {}),
+          permissions: permissionSelections(permissionDraft ?? {}),
         },
       );
       normalized.permissions = permissionResult.permissions;
       setUsers((current) =>
-        draft.id
+        selectedId !== null
           ? current.map((user) =>
-              user.id === normalized.id ? normalized : user,
+              user.id === selectedId ? normalized : user,
             )
           : [...current, normalized],
       );
       setSelectedId(normalized.id);
-      setEditing(false);
-      setDraft(null);
-      setPermissionDraft(null);
+      setDraft({ ...normalized, email: normalized.username, password: "" });
+      setPermissionDraft(
+        buildPermissionDraft(normalized.role, normalized.permissions),
+      );
+      setEditing(true);
+      setFieldErrors({});
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setSaving(false);
     }
   }
 
-  async function deactivateUser() {
-    if (!selectedId || !window.confirm("¿Deseas desactivar este usuario?"))
+  function cancelChanges() {
+    if (selectedUser) {
+      setDraft({ ...selectedUser, email: selectedUser.username, password: "" });
+      setPermissionDraft(
+        buildPermissionDraft(selectedUser.role, selectedUser.permissions),
+      );
+      setEditing(true);
+    } else {
+      setDraft({ ...emptyUser, password: "" });
+      setPermissionDraft(buildPermissionDraft(emptyUser.role));
+      setEditing(true);
+    }
+    setError("");
+    setFieldErrors({});
+  }
+
+  async function deleteUser() {
+    if (
+      !selectedId ||
+      deleting ||
+      !window.confirm(
+        "¿Deseas eliminar definitivamente este usuario? Esta acción no se puede deshacer.",
+      )
+    )
       return;
+    setDeleting(true);
     try {
       await apiClient.delete(`/usuarios/${selectedId}`);
-      setUsers((current) =>
-        current.map((user) =>
-          user.id === selectedId ? { ...user, isActive: false } : user,
-        ),
+      const remainingUsers = users.filter((user) => user.id !== selectedId);
+      const nextUser = remainingUsers[0] ?? null;
+      setUsers(remainingUsers);
+      setSelectedId(nextUser?.id ?? null);
+      setDraft(
+        nextUser
+          ? { ...nextUser, email: nextUser.username, password: "" }
+          : { ...emptyUser, password: "" },
       );
+      setPermissionDraft(
+        nextUser
+          ? buildPermissionDraft(nextUser.role, nextUser.permissions)
+          : buildPermissionDraft(emptyUser.role),
+      );
+      setEditing(true);
+      setFieldErrors({});
     } catch (requestError) {
       handleRequestError(requestError);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -251,13 +327,7 @@ export function UsersWindow({ onClose, onRequestLogin }) {
                 onChange={(event) => setSearchTerm(event.target.value)}
               />
             </div>
-            <button
-              type="button"
-              className="search-options"
-              aria-label="Opciones de búsqueda"
-            >
-              <ChevronDown size={14} />
-            </button>
+            <SearchOptionsMenu value={statusFilter} onChange={setStatusFilter} />
           </div>
           <div
             className="provider-table users-list-table"
@@ -299,23 +369,37 @@ export function UsersWindow({ onClose, onRequestLogin }) {
         </aside>
         <div className="provider-detail-panel users-detail-panel">
           <div className="provider-summary-form users-summary-form">
-            <SummaryField
+            <EditableSummaryField
               label="ID"
-              value={shownUser?.id ? String(shownUser.id).padStart(6, "0") : ""}
+              value={shownUser?.id ?? ""}
+              editing={Boolean(editing && shownUser?.id !== null)}
+              onChange={(value) => updateDraft("id", value)}
+              error={fieldErrors.id}
             />
             <SummaryField
               label="Usuario"
-              value={shownUser?.username ?? shownUser?.email ?? ""}
+              value={shownUser?.email ?? shownUser?.username ?? ""}
             />
             <div className="summary-field summary-type">
               <label>Rol</label>
-              <div className="select-like">
-                <span>{roleLabel(shownUser?.role)}</span>
-                <ChevronDown size={14} />
-              </div>
+              {editing ? (
+                <select
+                  className="detail-input"
+                  value={shownUser?.role ?? ""}
+                  onChange={(event) => updateRole(event.target.value)}
+                >
+                  {roleOptions.map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input value={roleLabel(shownUser?.role)} readOnly />
+              )}
             </div>
           </div>
-          {shownUser ? (
+           {shownUser ? (
             <UserDetails
               user={shownUser}
               editing={editing}
@@ -323,6 +407,7 @@ export function UsersWindow({ onClose, onRequestLogin }) {
               warehouses={warehouses}
               onChange={updateDraft}
               onRoleChange={updateRole}
+              fieldErrors={fieldErrors}
               permissions={
                 editing
                   ? (permissionDraft ??
@@ -340,6 +425,21 @@ export function UsersWindow({ onClose, onRequestLogin }) {
               </span>
             </div>
           )}
+          {shownUser && hasChanges && (
+            <div className="user-change-actions" role="group" aria-label="Acciones de cambios">
+              <button type="button" onClick={saveUser} disabled={saving || deleting}>
+                {saving ? <LoaderCircle className="button-spinner" size={14} /> : <Check size={14} />}
+                {saving
+                  ? "Guardando…"
+                  : selectedId !== null
+                    ? "Guardar cambios"
+                    : "Crear usuario"}
+              </button>
+              <button type="button" onClick={cancelChanges} disabled={saving || deleting}>
+                <CircleX size={14} /> Cancelar
+              </button>
+            </div>
+          )}
         </div>
       </div>
       {error && (
@@ -349,39 +449,21 @@ export function UsersWindow({ onClose, onRequestLogin }) {
       )}
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">
-          {editing ? (
-            <button type="button" onClick={saveUser}>
-              <Check size={14} /> Guardar
-            </button>
-          ) : (
-            <button type="button" onClick={startAdd}>
-              <Plus size={14} /> Agregar
-            </button>
-          )}
-          {!editing && (
-            <button type="button" onClick={startEdit} disabled={!selectedUser}>
-              <Edit3 size={14} /> Modificar
-            </button>
-          )}
-          {!editing && (
+          <button
+            type="button"
+            onClick={startAdd}
+            disabled={saving || deleting}
+          >
+            <Plus size={14} /> Agregar
+          </button>
+          {selectedUser && (
             <button
               type="button"
-              onClick={deactivateUser}
-              disabled={!selectedUser}
+              onClick={deleteUser}
+              disabled={!selectedUser || deleting || saving}
             >
-              <Trash2 size={14} /> Borrar
-            </button>
-          )}
-          {editing && (
-            <button
-              type="button"
-              onClick={() => {
-                setEditing(false);
-                setDraft(null);
-                setPermissionDraft(null);
-              }}
-            >
-              <CircleX size={14} /> Cancelar
+              {deleting ? <LoaderCircle className="button-spinner" size={14} /> : <Trash2 size={14} />}
+              {deleting ? "Eliminando…" : "Borrar"}
             </button>
           )}
         </div>
@@ -389,6 +471,7 @@ export function UsersWindow({ onClose, onRequestLogin }) {
           <button
             type="button"
             className="muted-action"
+            disabled={!canMovePrevious}
             onClick={() => moveSelection(-1)}
           >
             <ChevronLeft size={14} /> Anterior
@@ -396,6 +479,7 @@ export function UsersWindow({ onClose, onRequestLogin }) {
           <button
             type="button"
             className="muted-action"
+            disabled={!canMoveNext}
             onClick={() => moveSelection(1)}
           >
             Próximo <ChevronRight size={14} />
@@ -416,6 +500,7 @@ function UserDetails({
   warehouses,
   onChange,
   onRoleChange,
+  fieldErrors,
   permissions,
   onPermissionChange,
 }) {
@@ -436,23 +521,27 @@ function UserDetails({
           value={user.email ?? user.username}
           editing={editing}
           onChange={(value) => onChange("email", value)}
+          error={fieldErrors.email}
           wide
         />
-        {editing && (
-          <UserField
-            label="Contraseña"
-            value={user.password}
-            type="password"
-            onChange={(value) => onChange("password", value)}
-            wide
-          />
-        )}
+        <UserField
+          label="Contraseña"
+          value={user.password}
+          editing={editing}
+          type="password"
+          placeholder="Escribe una nueva contraseña"
+          autoComplete="new-password"
+          onChange={(value) => onChange("password", value)}
+          error={fieldErrors.password}
+          wide
+        />
         <UserSelect
           label="Tipo de usuario"
           value={user.role}
           editing={editing}
           options={roleOptions}
           onChange={onRoleChange}
+          error={fieldErrors.role}
         />
         <UserSelect
           label="Bodega asignada"
@@ -464,6 +553,7 @@ function UserDetails({
           ])}
           emptyLabel="Sin bodega asignada"
           onChange={(value) => onChange("warehouseId", value)}
+          error={fieldErrors.warehouseId}
         />
         <UserSelect
           label="Cliente asociado"
@@ -524,7 +614,7 @@ function UserDetails({
           </span>
           <small>
             Este vínculo se administra desde el registro de funcionarios del
-            API.
+            sistema.
           </small>
         </div>
       )}
@@ -590,15 +680,26 @@ function UserField({
   onChange,
   type = "text",
   wide = false,
+  error = "",
+  placeholder,
+  autoComplete,
 }) {
   return (
-    <div className={`detail-field ${wide ? "wide-field" : ""}`}>
+    <div
+      className={["detail-field", wide && "wide-field", error && "has-error"]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <label>{label}</label>
       {editing ? (
         <input
-          className="detail-input"
+          className={error ? "detail-input is-invalid" : "detail-input"}
           type={type}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
           value={value ?? ""}
+          aria-invalid={Boolean(error)}
+          title={error || undefined}
           onChange={(event) => onChange(event.target.value)}
         />
       ) : (
@@ -606,18 +707,29 @@ function UserField({
           <span>{value || " "}</span>
         </div>
       )}
+      {error && <span className="field-error">{error}</span>}
     </div>
   );
 }
 
-function UserSelect({ label, value, editing, options, onChange, emptyLabel }) {
+function UserSelect({
+  label,
+  value,
+  editing,
+  options,
+  onChange,
+  emptyLabel,
+  error = "",
+}) {
   return (
-    <div className="detail-field">
+    <div className={error ? "detail-field has-error" : "detail-field"}>
       <label>{label}</label>
       {editing ? (
         <select
-          className="detail-input"
+          className={error ? "detail-input is-invalid" : "detail-input"}
           value={value ?? ""}
+          aria-invalid={Boolean(error)}
+          title={error || undefined}
           onChange={(event) => onChange(event.target.value)}
         >
           <option value="">{emptyLabel}</option>
@@ -637,6 +749,7 @@ function UserSelect({ label, value, editing, options, onChange, emptyLabel }) {
           <ChevronDown size={13} />
         </div>
       )}
+      {error && <span className="field-error">{error}</span>}
     </div>
   );
 }
@@ -649,6 +762,54 @@ function SummaryField({ label, value }) {
     </div>
   );
 }
+
+function EditableSummaryField({ label, value, editing, onChange, error = "" }) {
+  return (
+    <div className={error ? "summary-field has-error" : "summary-field"}>
+      <label>{label}</label>
+      {editing ? (
+        <input
+          className={error ? "is-invalid" : ""}
+          value={value ?? ""}
+          inputMode="numeric"
+          aria-invalid={Boolean(error)}
+          title={error || undefined}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      ) : (
+        <input value={value ?? ""} readOnly />
+      )}
+      {error && <span className="field-error">{error}</span>}
+    </div>
+  );
+}
+
+function hasUserDraftChanges(draft, selectedUser, permissionDraft) {
+  if (!draft) return false;
+
+  const baseline = selectedUser ?? emptyUser;
+  const fieldsChanged = [
+    [String(draft.id ?? ""), String(baseline.id ?? "")],
+    [draft.email?.trim().toLowerCase(), baseline.username ?? ""],
+    [draft.role, baseline.role],
+    [String(draft.clientId ?? ""), String(baseline.clientId ?? "")],
+    [String(draft.warehouseId ?? ""), String(baseline.warehouseId ?? "")],
+    [Boolean(draft.isActive), Boolean(baseline.isActive)],
+  ].some(([current, previous]) => current !== previous);
+
+  if (fieldsChanged || draft.password) return true;
+
+  const baselinePermissions = buildPermissionDraft(
+    baseline.role,
+    baseline.permissions,
+  );
+  return permissionCatalog.some(
+    (item) =>
+      Boolean(permissionDraft?.[item.code]) !==
+      Boolean(baselinePermissions[item.code]),
+  );
+}
+
 function mapUser(user) {
   return {
     ...emptyUser,
@@ -672,4 +833,47 @@ function roleLabel(role) {
 }
 function isAuthError(error) {
   return /sesión|inicia sesión|401|autentic/i.test(error?.message ?? "");
+}
+
+function validateUserDraft(user) {
+  const errors = {};
+  const email = user?.email?.trim() ?? "";
+  const password = user?.password ?? "";
+
+  if (
+    user?.id !== null &&
+    user?.id !== undefined &&
+    (Number.isNaN(Number(user.id)) ||
+      !Number.isInteger(Number(user.id)) ||
+      Number(user.id) <= 0)
+  ) {
+    errors.id = "El ID debe ser un número entero positivo.";
+  }
+  if (!email) {
+    errors.email = "El correo es obligatorio.";
+  } else if (!/^\S+@\S+\.\S+$/.test(email)) {
+    errors.email = "Escribe un correo válido.";
+  }
+  if (!user?.id && password.length < 6) {
+    errors.password = "La contraseña debe tener al menos 6 caracteres.";
+  } else if (user?.id && password && password.length < 6) {
+    errors.password = "La contraseña debe tener al menos 6 caracteres.";
+  }
+  if (!user?.role) errors.role = "Selecciona un rol.";
+  if (user?.role === "BODEGA" && !user.warehouseId) {
+    errors.warehouseId = "Asigna una bodega a los usuarios Bodega.";
+  }
+
+  return errors;
+}
+
+function getUserFieldErrors(requestError) {
+  const message = requestError?.message ?? "";
+  const errors = {};
+  if (/correo|email/i.test(message)) errors.email = message;
+  if (/contrase[nñ]a|password/i.test(message)) errors.password = message;
+  if (/rol|role/i.test(message)) errors.role = message;
+  if (/bodega|warehouse/i.test(message)) errors.warehouseId = message;
+  if (/cliente|client/i.test(message)) errors.clientId = message;
+  return errors;
 }

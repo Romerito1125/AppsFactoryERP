@@ -146,19 +146,18 @@ export class RetencionesService {
 
   async remove(id: number, actor: AuthUser) {
     const current = await this.findOne(id);
-    const retention = await this.prisma.retention.update({
+    const retention = await this.prisma.retention.delete({
       where: { id },
-      data: { isActive: false, deletedAt: new Date() },
       include: { ranges: true },
     });
     await this.auditLogService.log({
       actor,
       module: 'RETENCIONES',
-      action: 'DEACTIVATE',
+      action: 'DELETE',
       entityType: 'Retention',
       entityId: id,
       entityLabel: current.code,
-      description: `Desactivo la retención ${current.code}`,
+      description: `Elimino definitivamente la retención ${current.code}`,
     });
     return retention;
   }

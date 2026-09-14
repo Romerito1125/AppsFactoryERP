@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  CalendarDays,
   Check,
+  CalendarDays,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleX,
-  Edit3,
+  LoaderCircle,
   Package,
   Plus,
   Search,
@@ -16,12 +16,17 @@ import {
 } from "lucide-react";
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
+import { SearchOptionsMenu } from "@/components/desktop/search-options-menu";
 import { apiClient } from "@/lib/api-client";
 import { ProductsWindow } from "@/modules/products/products-window";
 
 const tabs = [
   { id: "statistics", label: "Estadística", icon: Sigma },
   { id: "products", label: "Productos", icon: Package },
+];
+const providerTypeOptions = [
+  { value: "JURÍDICO", label: "Jurídico" },
+  { value: "NATURAL", label: "Natural" },
 ];
 
 const emptyProvider = {
@@ -30,22 +35,18 @@ const emptyProvider = {
   name: "",
   description: "",
   type: "JURÍDICO",
-  supplierType: "Nacional",
+  supplierType: "JURÍDICO",
   taxId: "",
-  className: "",
   representative: "",
   address1: "",
   address2: "",
   country: "",
   department: "",
   city: "",
-  municipality: "",
   postalCode: "",
   phones: "",
   mobile: "",
-  fax: "",
   email: "",
-  startDate: "",
   active: true,
   withholdingType: "",
   hasIslrWithholding: false,
@@ -62,6 +63,7 @@ const emptyProvider = {
 
 function mapProvider(provider) {
   const recordId = Number(provider.id);
+  const providerType = normalizeProviderType(provider.providerType);
   return {
     ...emptyProvider,
     ...provider,
@@ -72,26 +74,19 @@ function mapProvider(provider) {
     recordId,
     name: provider.name ?? "",
     description: provider.description || provider.name || "",
-    type: String(provider.providerType || "")
-      .toUpperCase()
-      .includes("NATURAL")
-      ? "NATURAL"
-      : "JURÍDICO",
-    supplierType: provider.providerType || "Nacional",
+    type: providerType,
+    supplierType: providerType,
     taxId: provider.taxId || "",
     representative: provider.legalRepresentative || "",
     address1: provider.address || "",
     address2: provider.address2 || "",
     department: provider.department || "",
     city: provider.city || "",
-    municipality: provider.municipality || "",
     postalCode: provider.postalCode || "",
     phones: provider.phonePrimary || "",
     mobile: provider.phoneSecondary || "",
-    fax: provider.fax || "",
     email: provider.email || "",
     active: provider.isActive !== false,
-    className: provider.className || "",
     withholdingType: provider.withholdingType || "",
     creditDays:
       provider.creditDays === null || provider.creditDays === undefined
@@ -103,15 +98,25 @@ function mapProvider(provider) {
   };
 }
 
+function normalizeProviderType(value) {
+  return String(value ?? "").toUpperCase().includes("NATURAL")
+    ? "NATURAL"
+    : "JURÍDICO";
+}
+
 export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
   const [providers, setProviders] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [statusFilter, setStatusFilter] = useState("todos");
   const [activeTab, setActiveTab] = useState("main");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
   const [providerProducts, setProviderProducts] = useState([]);
   const [nestedProductId, setNestedProductId] = useState(null);
   const {
@@ -129,6 +134,12 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
         const nextProviders = items.map(mapProvider);
         setProviders(nextProviders);
         setSelectedId(nextProviders[0]?.recordId ?? null);
+        if (nextProviders[0]) {
+          setDraft({ ...nextProviders[0] });
+        } else {
+          setDraft({ ...emptyProvider });
+        }
+        setEditing(true);
       })
       .catch((requestError) => {
         if (!cancelled) setError(requestError.message);
@@ -142,25 +153,38 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
   }, []);
 
   const selectedProvider =
-    providers.find((provider) => provider.recordId === selectedId) ??
-    providers[0];
+    providers.find((provider) => provider.recordId === selectedId) ?? null;
   const canEdit = canAccess?.("PROVIDERS_EDIT") ?? true;
   const shownProvider = editing ? draft : selectedProvider;
+  const hasChanges = useMemo(
+    () => hasProviderDraftChanges(draft, selectedProvider),
+    [draft, selectedProvider],
+  );
   const filteredProviders = useMemo(
     () =>
       providers.filter((provider) =>
+        (statusFilter === "todos" ||
+          (statusFilter === "activos" ? provider.active : !provider.active)) &&
         `${provider.id} ${provider.description}`
           .toLowerCase()
           .includes(searchTerm.toLowerCase()),
       ),
-    [providers, searchTerm],
+    [providers, searchTerm, statusFilter],
   );
   const isNaturalProvider = shownProvider?.type === "NATURAL";
+  const selectedIndex = filteredProviders.findIndex(
+    (provider) => provider.recordId === selectedId,
+  );
+  const canMovePrevious = selectedIndex > 0;
+  const canMoveNext =
+    selectedIndex >= 0 && selectedIndex < filteredProviders.length - 1;
 
   function selectProvider(recordId) {
     setSelectedId(recordId);
-    setEditing(false);
-    setDraft(null);
+    const provider = providers.find((item) => item.recordId === recordId);
+    setDraft(provider ? { ...provider } : null);
+    setEditing(Boolean(provider));
+    setFieldErrors({});
     setNestedProductId(null);
     setProviderProducts([]);
     if (activeTab === "products") loadProviderProducts(recordId);
@@ -171,22 +195,29 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
     setDraft({ ...emptyProvider });
     setEditing(true);
     setActiveTab("main");
+    setFieldErrors({});
     setError("");
-  }
-  function handleEdit() {
-    if (!canEdit) return;
-    if (selectedProvider) {
-      setDraft({ ...selectedProvider });
-      setEditing(true);
-      setError("");
-    }
   }
   function updateDraft(field, value) {
     setDraft((current) => ({ ...current, [field]: value }));
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
   }
   async function handleSave() {
-    if (!canEdit) return;
+    if (!canEdit || !draft || !hasChanges || saving || deleting) return;
     setError("");
+    setFieldErrors({});
+    const validationErrors = validateProviderDraft(draft);
+    if (Object.keys(validationErrors).length) {
+      setFieldErrors(validationErrors);
+      setError("Corrige los campos marcados antes de guardar.");
+      return;
+    }
+    setSaving(true);
     const body = {
       name: draft.name.trim(),
       taxId: draft.taxId.trim() || undefined,
@@ -197,18 +228,17 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
       country: draft.country.trim() || undefined,
       city: draft.city.trim() || undefined,
       department: draft.department.trim() || undefined,
-      municipality: draft.municipality.trim() || undefined,
       postalCode: draft.postalCode.trim() || undefined,
       phonePrimary: draft.phones.trim() || undefined,
       phoneSecondary: draft.mobile.trim() || undefined,
-      fax: draft.fax.trim() || undefined,
       email: draft.email.trim() || undefined,
       legalRepresentative: draft.representative.trim() || undefined,
-      className: draft.className.trim() || undefined,
       withholdingType: draft.withholdingType.trim() || undefined,
       creditDays:
         draft.creditDays === "" ? undefined : Number(draft.creditDays),
       observations: draft.observations.trim() || undefined,
+      isActive: Boolean(draft.active),
+      hasIslrWithholding: Boolean(draft.hasIslrWithholding),
     };
     try {
       const saved = selectedId
@@ -223,30 +253,44 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
           : [...current, normalized],
       );
       setSelectedId(normalized.recordId);
-      setDraft(null);
-      setEditing(false);
+      setDraft({ ...normalized });
+      setEditing(true);
     } catch (requestError) {
       setError(requestError.message);
       if (/sesión|inicia sesión|401|autentic/i.test(requestError.message))
-        onRequestLogin();
+        onRequestLogin?.();
+    } finally {
+      setSaving(false);
     }
   }
   async function handleDelete() {
-    if (!canEdit) return;
-    if (!selectedId || !window.confirm("¿Deseas desactivar este proveedor?"))
+    if (!canEdit || deleting || saving) return;
+    if (
+      selectedId === null ||
+      !window.confirm(
+        "¿Deseas eliminar definitivamente este proveedor? Esta acción no se puede deshacer.",
+      )
+    )
       return;
+    setDeleting(true);
+    setError("");
     try {
       await apiClient.delete(`/proveedores/${selectedId}`);
-      setProviders((current) =>
-        current.map((item) =>
-          item.recordId === selectedId ? { ...item, active: false } : item,
-        ),
+      const remaining = providers.filter(
+        (item) => item.recordId !== selectedId,
       );
-      setEditing(false);
+      setProviders(remaining);
+      const nextProvider = remaining[0] ?? null;
+      setSelectedId(nextProvider?.recordId ?? null);
+      setDraft(nextProvider ? { ...nextProvider } : { ...emptyProvider });
+      setEditing(true);
+      setFieldErrors({});
     } catch (requestError) {
       setError(requestError.message);
       if (/sesión|inicia sesión|401|autentic/i.test(requestError.message))
-        onRequestLogin();
+        onRequestLogin?.();
+    } finally {
+      setDeleting(false);
     }
   }
   function moveSelection(offset) {
@@ -257,6 +301,10 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
     if (next) selectProvider(next.recordId);
   }
   async function loadProviderProducts(recordId) {
+    if (recordId === null || recordId === undefined) {
+      setProviderProducts([]);
+      return;
+    }
     try {
       const items = await apiClient.getAllPages("/productos", {
         providerId: recordId,
@@ -305,13 +353,7 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
                   onChange={(event) => setSearchTerm(event.target.value)}
                 />
               </div>
-              <button
-                type="button"
-                className="search-options"
-                aria-label="Opciones de búsqueda"
-              >
-                <ChevronDown size={14} />
-              </button>
+              <SearchOptionsMenu value={statusFilter} onChange={setStatusFilter} />
             </div>
             <div
               className="provider-table"
@@ -359,9 +401,12 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
             <div
               className={`provider-summary-form ${isNaturalProvider ? "natural-summary" : ""}`}
             >
-              <SummaryField
+              <EditableSummaryField
                 label="Id. Fiscal"
-                value={shownProvider?.id ?? ""}
+                value={shownProvider?.taxId ?? ""}
+                editing={editing && canEdit}
+                onChange={(value) => updateDraft("taxId", value)}
+                error={fieldErrors?.taxId}
               />
               {isNaturalProvider ? (
                 <>
@@ -383,17 +428,33 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
                   />
                 </>
               ) : (
-                <SummaryField
+                <EditableSummaryField
                   label="Descripción"
-                  value={shownProvider?.description}
+                  value={shownProvider?.description ?? ""}
+                  editing={editing && canEdit}
+                  onChange={(value) => updateDraft("description", value)}
                 />
               )}
               <div className="summary-field summary-type">
                 <label>Tipo</label>
-                <div className="select-like">
-                  <span>{shownProvider?.type}</span>
-                  <ChevronDown size={14} />
-                </div>
+                {editing && canEdit ? (
+                  <select
+                    className="detail-input"
+                    value={shownProvider?.type ?? ""}
+                    onChange={(event) => {
+                      updateDraft("type", event.target.value);
+                      updateDraft("supplierType", event.target.value);
+                    }}
+                  >
+                    {providerTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input value={shownProvider?.type ?? ""} readOnly />
+                )}
               </div>
             </div>
 
@@ -450,12 +511,45 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
             <ProviderDetails
               activeTab={activeTab}
               provider={shownProvider}
-              editing={editing}
+              editing={editing && canEdit}
               onChange={updateDraft}
               loading={loading}
+              fieldErrors={fieldErrors}
               providerProducts={providerProducts}
               onOpenProduct={setNestedProductId}
             />
+            {editing && hasChanges && activeTab !== "statistics" && activeTab !== "products" && (
+              <div className="provider-change-actions" role="group" aria-label="Acciones de cambios">
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving || deleting || !canEdit}
+                >
+                  {saving ? (
+                    <LoaderCircle className="button-spinner" size={14} />
+                  ) : (
+                    <Check size={14} />
+                  )}
+                  {saving ? "Guardando…" : selectedId !== null ? "Guardar cambios" : "Crear proveedor"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFieldErrors({});
+                    if (selectedProvider) setDraft({ ...selectedProvider });
+                    else {
+                      setSelectedId(null);
+                      setDraft({ ...emptyProvider });
+                      setEditing(true);
+                    }
+                    setError("");
+                  }}
+                  disabled={saving || deleting}
+                >
+                  <CircleX size={14} /> Cancelar
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -466,42 +560,25 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
         )}
         <footer className="provider-window-footer">
           <div className="provider-crud-actions">
-            {editing ? (
-              <button type="button" onClick={handleSave} disabled={!canEdit}>
-                <Check size={14} /> Guardar
-              </button>
-            ) : (
-              <button type="button" onClick={handleAdd} disabled={!canEdit}>
-                <Plus size={14} /> Agregar
-              </button>
-            )}
-            {!editing && (
-              <button
-                type="button"
-                onClick={handleEdit}
-                disabled={!selectedProvider || !canEdit}
-              >
-                <Edit3 size={14} /> Modificar
-              </button>
-            )}
-            {!editing && (
+            <button
+              type="button"
+              onClick={handleAdd}
+              disabled={!canEdit || saving || deleting}
+            >
+              <Plus size={14} /> Agregar
+            </button>
+            {selectedProvider && (
               <button
                 type="button"
                 onClick={handleDelete}
-                disabled={!selectedProvider || !canEdit}
+                disabled={!canEdit || deleting || saving}
               >
-                <Trash2 size={14} /> Borrar
-              </button>
-            )}
-            {editing && (
-              <button
-                type="button"
-                onClick={() => {
-                  setEditing(false);
-                  setDraft(null);
-                }}
-              >
-                <CircleX size={14} /> Cancelar
+                {deleting ? (
+                  <LoaderCircle className="button-spinner" size={14} />
+                ) : (
+                  <Trash2 size={14} />
+                )}
+                {deleting ? "Eliminando…" : "Borrar"}
               </button>
             )}
           </div>
@@ -509,6 +586,7 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
             <button
               type="button"
               className="muted-action"
+              disabled={!canMovePrevious || editing && hasChanges || saving || deleting}
               onClick={() => moveSelection(-1)}
             >
               <ChevronLeft size={14} /> Anterior
@@ -516,6 +594,7 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
             <button
               type="button"
               className="muted-action"
+              disabled={!canMoveNext || editing && hasChanges || saving || deleting}
               onClick={() => moveSelection(1)}
             >
               Próximo <ChevronRight size={14} />
@@ -545,6 +624,7 @@ function ProviderDetails({
   editing,
   onChange,
   loading,
+  fieldErrors,
   providerProducts,
   onOpenProduct,
 }) {
@@ -608,27 +688,40 @@ function ProviderDetails({
             wide
             editing={editing}
             onChange={(value) => onChange("withholdingType", value)}
+            error={fieldErrors?.withholdingType}
           />
           <div className="detail-field">
             <label>Tiene retención ISLR</label>
-            <span className="checkbox-value">
-              <span
-                className={
-                  provider.hasIslrWithholding
-                    ? "fake-checkbox"
-                    : "fake-checkbox is-empty"
+            {editing ? (
+              <input
+                className="detail-checkbox-input"
+                type="checkbox"
+                checked={Boolean(provider.hasIslrWithholding)}
+                onChange={(event) =>
+                  onChange("hasIslrWithholding", event.target.checked)
                 }
-              >
-                {provider.hasIslrWithholding && <Check size={12} />}
+              />
+            ) : (
+              <span className="checkbox-value">
+                <span
+                  className={
+                    provider.hasIslrWithholding
+                      ? "fake-checkbox"
+                      : "fake-checkbox is-empty"
+                  }
+                >
+                  {provider.hasIslrWithholding && <Check size={12} />}
+                </span>
+                {provider.hasIslrWithholding ? "Sí" : "No"}
               </span>
-              {provider.hasIslrWithholding ? "Sí" : "No"}
-            </span>
+            )}
           </div>
           <DetailField
             label="Días de crédito"
             value={provider.creditDays}
             editing={editing}
             onChange={(value) => onChange("creditDays", value)}
+            error={fieldErrors?.creditDays}
           />
           <DetailField
             label="Observaciones"
@@ -665,27 +758,25 @@ function ProviderDetails({
         value={provider.supplierType}
         select
         editing={editing}
-        onChange={(value) => onChange("supplierType", value)}
+        options={providerTypeOptions}
+        onChange={(value) => {
+          onChange("supplierType", value);
+          onChange("type", value);
+        }}
       />
-      <div className="detail-field active-field">
-        <label>Activo</label>
-        <span className="checkbox-value">
-          <span
-            className={
-              provider.active ? "fake-checkbox" : "fake-checkbox is-empty"
-            }
-          >
-            {provider.active && <Check size={12} />}
-          </span>{" "}
-          {provider.active ? "Sí" : "No"}
-        </span>
-      </div>
+      <BooleanField
+        label="Activo"
+        checked={provider.active}
+        editing={editing}
+        onChange={(value) => onChange("active", value)}
+      />
       <DetailField
         label="Nombre / razón social"
         value={provider.name}
         wide
         editing={editing}
         onChange={(value) => onChange("name", value)}
+        error={fieldErrors?.name}
       />
       <DetailField
         label="Descripción"
@@ -699,12 +790,7 @@ function ProviderDetails({
         value={provider.taxId}
         editing={editing}
         onChange={(value) => onChange("taxId", value)}
-      />
-      <DetailField
-        label="Clase"
-        value={provider.className}
-        editing={editing}
-        onChange={(value) => onChange("className", value)}
+        error={fieldErrors?.taxId}
       />
       <DetailField
         label="Representante"
@@ -749,14 +835,6 @@ function ProviderDetails({
         onChange={(value) => onChange("city", value)}
       />
       <DetailField
-        label="Municipio"
-        value={provider.municipality}
-        select
-        wide
-        editing={editing}
-        onChange={(value) => onChange("municipality", value)}
-      />
-      <DetailField
         label="Zona postal"
         value={provider.postalCode}
         editing={editing}
@@ -776,19 +854,13 @@ function ProviderDetails({
         onChange={(value) => onChange("mobile", value)}
       />
       <DetailField
-        label="Fax"
-        value={provider.fax}
-        editing={editing}
-        onChange={(value) => onChange("fax", value)}
-      />
-      <DetailField
         label="e-mail"
         value={provider.email}
         wide
         editing={editing}
         onChange={(value) => onChange("email", value)}
+        error={fieldErrors?.email}
       />
-      <DetailField label="Fecha inicio" value={provider.startDate} date />
     </div>
   );
 }
@@ -842,24 +914,77 @@ function SummaryField({ label, value }) {
   );
 }
 
+function EditableSummaryField({
+  label,
+  value,
+  editing = false,
+  onChange,
+  error = "",
+}) {
+  return (
+    <div className={`summary-field ${error ? "has-error" : ""}`}>
+      <label>{label}</label>
+      <input
+        className={error ? "is-invalid" : ""}
+        value={value ?? ""}
+        readOnly={!editing}
+        aria-invalid={Boolean(error)}
+        title={error || undefined}
+        onChange={(event) => onChange?.(event.target.value)}
+      />
+      {error && <span className="field-error">{error}</span>}
+    </div>
+  );
+}
+
 function DetailField({
   label,
   value,
   select = false,
+  options = [],
   wide = false,
   date = false,
   editing = false,
   onChange,
+  error = "",
 }) {
   return (
-    <div className={`detail-field ${wide ? "wide-field" : ""}`}>
+    <div
+      className={`detail-field ${wide ? "wide-field" : ""} ${
+        error ? "has-error" : ""
+      }`}
+    >
       <label>{label}</label>
       {editing ? (
-        <input
-          className="detail-input"
-          value={value ?? ""}
-          onChange={(event) => onChange?.(event.target.value)}
-        />
+        select && options.length ? (
+          <select
+            className={`detail-input ${error ? "is-invalid" : ""}`}
+            value={value ?? ""}
+            aria-invalid={Boolean(error)}
+            title={error || undefined}
+            onChange={(event) => onChange?.(event.target.value)}
+          >
+            {options.map((option) => {
+              const optionValue =
+                typeof option === "object" ? option.value : option;
+              const optionLabel =
+                typeof option === "object" ? option.label : option;
+              return (
+                <option key={optionValue} value={optionValue}>
+                  {optionLabel}
+                </option>
+              );
+            })}
+          </select>
+        ) : (
+          <input
+            className={`detail-input ${error ? "is-invalid" : ""}`}
+            value={value ?? ""}
+            aria-invalid={Boolean(error)}
+            title={error || undefined}
+            onChange={(event) => onChange?.(event.target.value)}
+          />
+        )
       ) : (
         <div
           className={
@@ -870,6 +995,30 @@ function DetailField({
           {select && <ChevronDown size={13} />}
           {date && <CalendarDays size={13} />}
         </div>
+      )}
+      {error && <span className="field-error">{error}</span>}
+    </div>
+  );
+}
+
+function BooleanField({ label, checked, editing, onChange }) {
+  return (
+    <div className="detail-field active-field">
+      <label>{label}</label>
+      {editing ? (
+        <input
+          className="detail-checkbox-input"
+          type="checkbox"
+          checked={Boolean(checked)}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+      ) : (
+        <span className="checkbox-value">
+          <span className={checked ? "fake-checkbox" : "fake-checkbox is-empty"}>
+            {checked && <Check size={12} />}
+          </span>
+          {checked ? "Sí" : "No"}
+        </span>
       )}
     </div>
   );
@@ -894,4 +1043,51 @@ function BuildingGlyph() {
       <span />
     </span>
   );
+}
+
+function hasProviderDraftChanges(draft, provider) {
+  if (!draft) return false;
+  if (!provider) return true;
+  const fields = [
+    "name",
+    "description",
+    "supplierType",
+    "taxId",
+    "representative",
+    "address1",
+    "address2",
+    "country",
+    "department",
+    "city",
+    "postalCode",
+    "phones",
+    "mobile",
+    "email",
+    "withholdingType",
+    "creditDays",
+    "observations",
+    "active",
+    "hasIslrWithholding",
+  ];
+  return fields.some(
+    (field) => String(draft[field] ?? "") !== String(provider[field] ?? ""),
+  );
+}
+
+function validateProviderDraft(provider) {
+  const errors = {};
+  if (!provider.name?.trim()) errors.name = "El nombre es obligatorio.";
+  else if (provider.name.trim().length < 2)
+    errors.name = "El nombre debe tener al menos 2 caracteres.";
+  if (provider.taxId?.trim() && provider.taxId.trim().length < 3)
+    errors.taxId = "El ID fiscal debe tener al menos 3 caracteres.";
+  if (provider.email?.trim() && !/^\S+@\S+\.\S+$/.test(provider.email.trim()))
+    errors.email = "Ingresa un correo válido.";
+  if (
+    provider.creditDays !== "" &&
+    (!Number.isInteger(Number(provider.creditDays)) ||
+      Number(provider.creditDays) < 0)
+  )
+    errors.creditDays = "Los días de crédito deben ser un entero mayor o igual a cero.";
+  return errors;
 }

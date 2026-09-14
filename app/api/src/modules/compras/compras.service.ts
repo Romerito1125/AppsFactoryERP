@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  BankMovementType,
   InventoryMovementType,
   Prisma,
   PurchaseOrderStatus,
@@ -15,6 +16,7 @@ import {
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
+import { CreatePurchasePaymentDto } from './dto/create-purchase-payment.dto';
 import { ListPurchaseOrdersQueryDto } from './dto/list-purchase-orders-query.dto';
 import { PurchaseOrderItemDto } from './dto/purchase-order-item.dto';
 import {
@@ -24,6 +26,13 @@ import {
 import { UpdatePurchaseOrderDto } from './dto/update-purchase-order.dto';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { Role } from '../../common/enums/role.enum';
+
+function buildPurchasePaymentDescription(consecutive: string, notes?: string) {
+  const detail = notes?.trim();
+  return detail
+    ? `Pago compra ${consecutive} - ${detail}`
+    : `Pago compra ${consecutive}`;
+}
 
 @Injectable()
 export class ComprasService {
@@ -58,8 +67,16 @@ export class ComprasService {
         take,
       }),
     ]);
+    const paymentTotals = await this.getPaymentTotals(data);
 
-    return buildPaginatedResponse(data, total, page, limit);
+    return buildPaginatedResponse(
+      data.map((purchaseOrder) =>
+        this.withPaymentSummary(purchaseOrder, paymentTotals.get(purchaseOrder.id)),
+      ),
+      total,
+      page,
+      limit,
+    );
   }
 
   async getPendingToday(authUser: AuthUser) {
@@ -73,9 +90,12 @@ export class ComprasService {
       include: this.detailInclude,
       orderBy: [{ expectedAt: 'asc' }, { id: 'asc' }],
     });
+    const paymentTotals = await this.getPaymentTotals(data);
 
     return buildPaginatedResponse(
-      data,
+      data.map((purchaseOrder) =>
+        this.withPaymentSummary(purchaseOrder, paymentTotals.get(purchaseOrder.id)),
+      ),
       data.length,
       1,
       Math.max(1, data.length),
@@ -93,8 +113,12 @@ export class ComprasService {
       throw new NotFoundException('Orden de compra no encontrada');
     }
     this.ensureWarehouseAccess(purchaseOrder.warehouseId, authUser);
+    const paymentTotals = await this.getPaymentTotals([purchaseOrder]);
 
-    return purchaseOrder;
+    return this.withPaymentSummary(
+      purchaseOrder,
+      paymentTotals.get(purchaseOrder.id),
+    );
   }
 
   create(dto: CreatePurchaseOrderDto) {
@@ -104,7 +128,7 @@ export class ComprasService {
       const items = await this.buildItems(tx, dto.items, dto.providerId);
       const totals = this.calculateTotals(items);
 
-      return tx.purchaseOrder.create({
+      const created = await tx.purchaseOrder.create({
         data: {
           consecutive: this.generateConsecutive(),
           providerId: dto.providerId,
@@ -118,6 +142,7 @@ export class ComprasService {
         },
         include: this.detailInclude,
       });
+      return this.withPaymentSummary(created);
     });
   }
 
@@ -173,7 +198,7 @@ export class ComprasService {
         });
       }
 
-      return tx.purchaseOrder.update({
+      const updated = await tx.purchaseOrder.update({
         where: { id },
         data: {
           providerId: dto.providerId,
@@ -192,6 +217,77 @@ export class ComprasService {
         },
         include: this.detailInclude,
       });
+      return this.withPaymentSummary(updated);
+    });
+  }
+
+  async pay(id: number, dto: CreatePurchasePaymentDto) {
+    this.ensurePositiveId(id);
+    return this.prisma.$transaction(async (tx) => {
+      const purchaseOrder = await tx.purchaseOrder.findUnique({
+        where: { id },
+      });
+
+      if (!purchaseOrder) {
+        throw new NotFoundException('Orden de compra no encontrada');
+      }
+      if (purchaseOrder.status !== PurchaseOrderStatus.RECIBIDA) {
+        throw new BadRequestException(
+          'Solo puedes pagar compras recibidas y pendientes.',
+        );
+      }
+
+      const paidAmount = await this.getPaidAmount(
+        tx,
+        purchaseOrder.consecutive,
+      );
+      const balance = Math.max(0, Number(purchaseOrder.total) - paidAmount);
+      if (dto.amount > balance) {
+        throw new BadRequestException(
+          `El pago no puede superar el saldo pendiente de ${balance.toFixed(2)}`,
+        );
+      }
+
+      if (!dto.bankAccountId) {
+        throw new BadRequestException(
+          'Selecciona la cuenta bancaria desde la que se realizará el pago',
+        );
+      }
+
+      const account = await tx.bankAccount.findUnique({
+        where: { id: dto.bankAccountId },
+      });
+      if (!account || !account.isActive) {
+        throw new BadRequestException(
+          'La cuenta bancaria no existe o está inactiva',
+        );
+      }
+      if (Number(account.currentBalance) < dto.amount) {
+        throw new BadRequestException('Saldo insuficiente en la cuenta bancaria');
+      }
+      await tx.bankAccount.update({
+        where: { id: dto.bankAccountId },
+        data: { currentBalance: { decrement: dto.amount } },
+      });
+      await tx.bankAccountMovement.create({
+        data: {
+          bankAccountId: dto.bankAccountId,
+          movementType: BankMovementType.EGRESO,
+          amount: dto.amount,
+          baseAmount: dto.amount,
+          totalAmount: dto.amount,
+          description: buildPurchasePaymentDescription(
+            purchaseOrder.consecutive,
+            dto.notes,
+          ),
+        },
+      });
+
+      const saved = await tx.purchaseOrder.findUniqueOrThrow({
+        where: { id },
+        include: this.detailInclude,
+      });
+      return this.withPaymentSummary(saved);
     });
   }
 
@@ -225,13 +321,14 @@ export class ComprasService {
         purchaseOrder.providerId,
       );
 
-      return tx.purchaseOrder.update({
+      const updated = await tx.purchaseOrder.update({
         where: { id },
         data: {
           status: PurchaseOrderStatus.ORDENADA,
         },
         include: this.detailInclude,
       });
+      return this.withPaymentSummary(updated);
     });
   }
 
@@ -253,7 +350,7 @@ export class ComprasService {
           throw new NotFoundException('Orden de compra no encontrada');
         }
         if (current.status === PurchaseOrderStatus.RECIBIDA) {
-          return current;
+          return this.withPaymentSummary(current);
         }
         throw new BadRequestException(
           'Solo se puede recibir una orden en estado ORDENADA',
@@ -314,10 +411,11 @@ export class ComprasService {
         });
       }
 
-      return tx.purchaseOrder.findUnique({
+      const received = await tx.purchaseOrder.findUnique({
         where: { id },
         include: this.detailInclude,
       });
+      return received ? this.withPaymentSummary(received) : received;
     });
   }
 
@@ -345,7 +443,7 @@ export class ComprasService {
         cancelled.count === 1 ||
         current.status === PurchaseOrderStatus.ANULADA
       ) {
-        return current;
+        return this.withPaymentSummary(current);
       }
       throw new BadRequestException('Una orden recibida no se puede anular');
     });
@@ -640,6 +738,60 @@ export class ComprasService {
       orderBy: { id: 'asc' as const },
     },
   } as const;
+
+  private withPaymentSummary(purchaseOrder, paidAmount = 0) {
+    const balance = Math.max(0, Number(purchaseOrder.total ?? 0) - paidAmount);
+    return { ...purchaseOrder, paidAmount, balance };
+  }
+
+  private async getPaymentTotals(purchaseOrders: Array<{ id: number; consecutive: string }>) {
+    const orderIdByConsecutive = new Map(
+      purchaseOrders.map((purchaseOrder) => [
+        purchaseOrder.consecutive,
+        purchaseOrder.id,
+      ]),
+    );
+    const totals = new Map<number, number>();
+    if (!orderIdByConsecutive.size) return totals;
+
+    const movements = await this.prisma.bankAccountMovement.findMany({
+      where: {
+        movementType: BankMovementType.EGRESO,
+        description: { startsWith: 'Pago compra ' },
+      },
+      select: { amount: true, description: true },
+    });
+    for (const movement of movements) {
+      const description = movement.description ?? '';
+      const consecutive = description
+        .slice('Pago compra '.length)
+        .split(' - ')[0];
+      const orderId = orderIdByConsecutive.get(consecutive);
+      if (orderId) {
+        totals.set(orderId, (totals.get(orderId) ?? 0) + Number(movement.amount));
+      }
+    }
+    return totals;
+  }
+
+  private async getPaidAmount(tx: Prisma.TransactionClient, consecutive: string) {
+    const movements = await tx.bankAccountMovement.findMany({
+      where: {
+        movementType: BankMovementType.EGRESO,
+        description: { startsWith: `Pago compra ${consecutive}` },
+      },
+      select: { amount: true, description: true },
+    });
+    return movements
+      .filter((movement) => {
+        const description = movement.description ?? '';
+        return (
+          description === `Pago compra ${consecutive}` ||
+          description.startsWith(`Pago compra ${consecutive} - `)
+        );
+      })
+      .reduce((sum, movement) => sum + Number(movement.amount), 0);
+  }
 
   private async buildItems(
     tx: Prisma.TransactionClient,

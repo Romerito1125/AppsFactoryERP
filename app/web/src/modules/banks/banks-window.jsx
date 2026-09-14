@@ -5,9 +5,9 @@ import {
   ArrowUpRight,
   Banknote,
   BarChart3,
-  CalendarDays,
   CreditCard,
   Landmark,
+  LoaderCircle,
   Plus,
   ReceiptText,
   Search,
@@ -102,8 +102,6 @@ export function BanksWindow({
     style: windowStyle,
   } = useDraggableWindow();
 
-  useEffect(() => setView(initialView), [initialView]);
-
   useEffect(() => {
     let cancelled = false;
     loadBankData().then((data) => {
@@ -141,7 +139,7 @@ export function BanksWindow({
       setSelectedAccountId(String(nextAccounts[0]?.id ?? ""));
       if (data.accountsResult.status === "rejected") {
         setError(
-          `No se pudo cargar Bancos: ${data.accountsResult.reason?.message ?? "verifica la conexión con el API"}`,
+          `No se pudo cargar Bancos: ${data.accountsResult.reason?.message ?? "verifica la conexión con el sistema"}`,
         );
         if (isAuthError(data.accountsResult.reason)) onRequestLogin?.();
       }
@@ -184,12 +182,44 @@ export function BanksWindow({
     }
   }
 
+  async function refreshAccounts() {
+    try {
+      const nextAccounts = (await apiClient.getAllPages(
+        "/cuentas-bancarias",
+        { estado: "todos" },
+      )).filter(isActive);
+      setAccounts(nextAccounts);
+    } catch (requestError) {
+      setError(requestError.message);
+      if (isAuthError(requestError)) onRequestLogin?.();
+    }
+  }
+
+  const bankViews = [
+    "home",
+    "accounts",
+    "transactions",
+    "beneficiaries",
+    "banks",
+    "receivables",
+    "payables",
+    "reports",
+    "various",
+  ];
+  const bankViewIndex = bankViews.indexOf(view);
+
+  function moveView(offset) {
+    const nextView = bankViews[bankViewIndex + offset];
+    if (nextView) navigate(nextView);
+  }
+
   const commonProps = {
     accounts,
     selectedAccountId,
     onSelectAccount: setSelectedAccountId,
     onOpenView: navigate,
     onNotice: setNotice,
+    onAccountsChanged: refreshAccounts,
   };
 
   return (
@@ -203,6 +233,9 @@ export function BanksWindow({
         onPointerDown={handlePointerDown}
         title="Arrastre para mover la ventana"
       >
+        <div className="provider-title-mark">
+          <Landmark size={14} />
+        </div>
         <span>MÓDULO DE BANCOS</span>
         <strong>{(viewLabels[view] ?? "Bancos").toUpperCase()}</strong>
         <span className="bank-mode-label">MODO: NORMAL</span>
@@ -236,6 +269,7 @@ export function BanksWindow({
             {...commonProps}
             movements={movements}
             onMovementsChanged={refreshMovements}
+            onAccountsChanged={refreshAccounts}
             onError={setError}
             onRequestLogin={onRequestLogin}
           />
@@ -257,6 +291,30 @@ export function BanksWindow({
           {error || notice}
         </div>
       )}
+      <footer className="provider-window-footer bank-window-footer">
+        <span className="bank-footer-caption">
+          Módulo de Bancos · {viewLabels[view]} · {accounts.length} cuenta(s)
+        </span>
+        <div className="provider-navigation-actions">
+          <button
+            type="button"
+            disabled={bankViewIndex <= 0}
+            onClick={() => moveView(-1)}
+          >
+            Anterior
+          </button>
+          <button
+            type="button"
+            disabled={bankViewIndex < 0 || bankViewIndex >= bankViews.length - 1}
+            onClick={() => moveView(1)}
+          >
+            Próximo
+          </button>
+          <button type="button" className="exit-action" onClick={onClose}>
+            Salir
+          </button>
+        </div>
+      </footer>
     </section>
   );
 }
@@ -285,11 +343,14 @@ function BankAccountsPanel({
   onSelectAccount,
   onSaved,
   onError,
+  onNotice,
+  onAccountsChanged,
   session,
 }) {
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState(emptyAccount);
   const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const filteredAccounts = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return accounts;
@@ -304,6 +365,8 @@ function BankAccountsPanel({
     const selected = accounts.find(
       (account) => String(account.id) === String(selectedAccountId),
     );
+    // La selección de la grilla hidrata el formulario editable de la cuenta.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (selected) setDraft(toAccountDraft(selected));
   }, [accounts, selectedAccountId]);
 
@@ -314,6 +377,7 @@ function BankAccountsPanel({
   function startNew() {
     setDraft(emptyAccount);
     setEditing(false);
+    onSelectAccount("");
   }
 
   async function save() {
@@ -321,6 +385,12 @@ function BankAccountsPanel({
       onError("Escribe el nombre de la cuenta y el banco.");
       return;
     }
+    if (Number(draft.currentBalance) < 0) {
+      onError("El saldo actual no puede ser negativo.");
+      return;
+    }
+    setSaving(true);
+    onError("");
     try {
       const body = {
         name: draft.name,
@@ -334,20 +404,35 @@ function BankAccountsPanel({
         : await apiClient.post("/cuentas-bancarias", body);
       onSaved(saved);
       setEditing(true);
+      onNotice?.(
+        "Cuenta " +
+          saved.name +
+          (draft.id ? " actualizada" : " creada") +
+          " correctamente.",
+      );
+      await onAccountsChanged?.();
     } catch (requestError) {
       onError(requestError.message);
+    } finally {
+      setSaving(false);
     }
   }
 
   async function remove() {
     if (!draft.id || !window.confirm("¿Desactivar esta cuenta bancaria?"))
       return;
+    setSaving(true);
+    onError("");
     try {
-      await apiClient.delete(`/cuentas-bancarias/${draft.id}`);
+      await apiClient.delete("/cuentas-bancarias/" + draft.id);
       onSaved(draft, true);
+      onNotice?.("Cuenta bancaria desactivada correctamente.");
       startNew();
+      await onAccountsChanged?.();
     } catch (requestError) {
       onError(requestError.message);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -355,7 +440,7 @@ function BankAccountsPanel({
     <div className="bank-child-window bank-accounts-panel">
       <div className="bank-child-titlebar">
         <strong>CUENTAS</strong>
-        <span>Archivo de cuentas de clasificación o categorías</span>
+        <span>Cuentas bancarias disponibles para registrar movimientos</span>
       </div>
       <div className="bank-accounts-layout">
         <section className="bank-account-list">
@@ -462,12 +547,13 @@ function BankAccountsPanel({
                 type="number"
                 step="0.01"
                 value={draft.currentBalance}
-                onChange={(event) =>
-                  updateDraft("currentBalance", event.target.value)
-                }
+                readOnly
               />
             </label>
           </div>
+          <small className="bank-editor-hint">
+            Para cuadrar el saldo utiliza Transacciones → Ajuste.
+          </small>
           <div className="bank-editor-actions">
             <button type="button" onClick={startNew}>
               <Plus size={14} /> Agregar
@@ -476,18 +562,29 @@ function BankAccountsPanel({
               type="button"
               onClick={save}
               disabled={
+                saving ||
                 session?.role && !["ADMIN", "CONTADOR"].includes(session.role)
               }
             >
-              <WalletCards size={14} /> {editing ? "Modificar" : "Guardar"}
+              {saving ? (
+                <LoaderCircle size={14} className="is-spinning" />
+              ) : (
+                <WalletCards size={14} />
+              )}{" "}
+              {saving ? "Guardando…" : editing ? "Modificar" : "Guardar"}
             </button>
             <button
               type="button"
               className="danger-button"
               onClick={remove}
-              disabled={!draft.id}
+              disabled={!draft.id || saving}
             >
-              <Trash2 size={14} /> Borrar
+              {saving ? (
+                <LoaderCircle size={14} className="is-spinning" />
+              ) : (
+                <Trash2 size={14} />
+              )}{" "}
+              {saving ? "Guardando…" : "Desactivar"}
             </button>
           </div>
         </section>
@@ -504,7 +601,7 @@ function BankBeneficiariesPanel({ clients, providers }) {
         ...clients.map((item) => ({ ...item, kind: "Cliente" })),
         ...providers.map((item) => ({ ...item, kind: "Proveedor" })),
       ].filter((item) =>
-        `${item.name ?? item.description} ${item.taxId ?? item.id}`
+        `${participantName(item)} ${item.taxId ?? item.identification ?? item.id}`
           .toLowerCase()
           .includes(search.trim().toLowerCase()),
       ),
@@ -532,9 +629,9 @@ function BankBeneficiariesPanel({ clients, providers }) {
           {items.map((item) => (
             <tr key={`${item.kind}-${item.id}`}>
               <td>{item.code ?? item.id}</td>
-              <td>{item.name ?? item.description}</td>
+              <td>{participantName(item)}</td>
               <td>{item.kind}</td>
-              <td>{item.taxId ?? "—"}</td>
+              <td>{item.taxId ?? item.identification ?? "—"}</td>
               <td className="number-cell">
                 {formatCurrency(item.pendingBalance ?? 0)}
               </td>
@@ -549,6 +646,11 @@ function BankBeneficiariesPanel({ clients, providers }) {
       </table>
     </BankTablePanel>
   );
+}
+
+function participantName(item) {
+  const fullName = [item?.firstName, item?.lastName].filter(Boolean).join(" ");
+  return item?.name || fullName || item?.description || "—";
 }
 
 function BankBanksPanel({ accounts }) {
@@ -604,17 +706,22 @@ function BankTransactionsPanel({
   onSelectAccount,
   movements,
   onMovementsChanged,
+  onAccountsChanged,
   onError,
+  onNotice,
   onRequestLogin,
 }) {
   const [transactionType, setTransactionType] = useState("EGRESO");
   const [search, setSearch] = useState("");
+  const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState({
     document: "",
     date: todayValue(),
     beneficiary: "",
     amount: "",
     description: "",
+    toAccountId: "",
+    appliesGmf: false,
   });
   const filteredMovements = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -627,37 +734,82 @@ function BankTransactionsPanel({
   }, [movements, search]);
 
   async function saveMovement() {
-    if (
-      !selectedAccountId ||
-      Number(draft.amount) <= 0 ||
-      !draft.description.trim()
-    ) {
+    const description = [
+      draft.document.trim() ? "Dcto. " + draft.document.trim() : "",
+      draft.beneficiary.trim()
+        ? "Beneficiario: " + draft.beneficiary.trim()
+        : "",
+      draft.description.trim(),
+      draft.date ? "Fecha: " + draft.date : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    const isAdjustment = transactionType === "AJUSTE";
+    const isTransfer = transactionType === "TRANSFERENCIA";
+    if (!selectedAccountId || Number(draft.amount) <= 0 || !description) {
       onError(
-        "Selecciona una cuenta, monto y descripción para registrar el movimiento.",
+        isAdjustment
+          ? "Selecciona una cuenta, saldo real y descripción para registrar el ajuste."
+          : "Selecciona una cuenta, monto y descripción para registrar el movimiento.",
       );
       return;
     }
-    const endpoint = ["INGRESO", "N.CREDITO"].includes(transactionType)
-      ? "ingreso"
-      : "egreso";
+    if (isTransfer && !draft.toAccountId) {
+      onError("Selecciona la cuenta destino de la transferencia.");
+      return;
+    }
+    if (
+      isTransfer &&
+      String(draft.toAccountId) === String(selectedAccountId)
+    ) {
+      onError("La cuenta origen y destino deben ser diferentes.");
+      return;
+    }
+    setSaving(true);
+    onError("");
     try {
-      await apiClient.post(`/movimientos-bancarios/${endpoint}`, {
-        bankAccountId: numberOrValue(selectedAccountId),
-        amount: Number(draft.amount),
-        description: draft.description,
-        invoiceId: undefined,
-      });
+      if (isAdjustment) {
+        await apiClient.post("/movimientos-bancarios/ajuste", {
+          bankAccountId: numberOrValue(selectedAccountId),
+          balance: Number(draft.amount),
+          description,
+        });
+      } else if (isTransfer) {
+        await apiClient.post("/movimientos-bancarios/transferencia", {
+          fromBankAccountId: numberOrValue(selectedAccountId),
+          toBankAccountId: numberOrValue(draft.toAccountId),
+          amount: Number(draft.amount),
+          description,
+          appliesGmf: Boolean(draft.appliesGmf),
+        });
+      } else {
+        const endpoint = ["INGRESO", "N.CREDITO"].includes(transactionType)
+          ? "ingreso"
+          : "egreso";
+        await apiClient.post("/movimientos-bancarios/" + endpoint, {
+          bankAccountId: numberOrValue(selectedAccountId),
+          amount: Number(draft.amount),
+          description,
+          appliesGmf: Boolean(draft.appliesGmf),
+        });
+      }
       setDraft({
         document: "",
         date: todayValue(),
         beneficiary: "",
         amount: "",
         description: "",
+        toAccountId: "",
+        appliesGmf: false,
       });
       await onMovementsChanged();
+      await onAccountsChanged?.();
+      onNotice?.("Movimiento bancario registrado correctamente.");
     } catch (requestError) {
       onError(requestError.message);
       if (isAuthError(requestError)) onRequestLogin?.();
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -737,6 +889,8 @@ function BankTransactionsPanel({
             ["INGRESO", "Ingreso", ArrowDownLeft],
             ["N.CREDITO", "N.Crédito", CreditCard],
             ["N.DEBITO", "N.Débito", ReceiptText],
+            ["TRANSFERENCIA", "Transferencia", ArrowLeftRight],
+            ["AJUSTE", "Ajuste", WalletCards],
           ].map(([value, label, Icon]) => (
             <button
               key={value}
@@ -787,7 +941,7 @@ function BankTransactionsPanel({
             />
           </label>
           <label>
-            Monto
+            {transactionType === "AJUSTE" ? "Saldo real" : "Monto"}
             <input
               type="number"
               min="0"
@@ -814,6 +968,32 @@ function BankTransactionsPanel({
               ))}
             </select>
           </label>
+          {transactionType === "TRANSFERENCIA" && (
+            <label>
+              Cuenta destino
+              <select
+                value={draft.toAccountId}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    toAccountId: event.target.value,
+                  }))
+                }
+              >
+                <option value="">Selecciona una cuenta</option>
+                {accounts
+                  .filter(
+                    (account) =>
+                      String(account.id) !== String(selectedAccountId),
+                  )
+                  .map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
           <label className="bank-entry-description">
             Comentarios
             <input
@@ -830,10 +1010,29 @@ function BankTransactionsPanel({
             type="button"
             className="bank-save-entry"
             onClick={saveMovement}
+            disabled={saving}
           >
-            Guardar
+            {saving ? (
+              <LoaderCircle size={13} className="is-spinning" />
+            ) : null}
+            {saving ? "Guardando…" : "Guardar"}
           </button>
         </div>
+        {["EGRESO", "TRANSFERENCIA"].includes(transactionType) && (
+          <label className="bank-gmf-option">
+            <input
+              type="checkbox"
+              checked={draft.appliesGmf}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  appliesGmf: event.target.checked,
+                }))
+              }
+            />
+            Aplicar 4×1000
+          </label>
+        )}
       </div>
     </div>
   );
@@ -859,7 +1058,11 @@ function BankReceivablesPanel({ credits }) {
           {credits.map((credit) => (
             <tr key={credit.id}>
               <td>{credit.invoice?.consecutive ?? credit.id}</td>
-              <td>{credit.client?.name ?? credit.clientName ?? "—"}</td>
+              <td>
+                {credit.client
+                  ? participantName(credit.client)
+                  : credit.clientName || "—"}
+              </td>
               <td>{formatDate(credit.dueDate)}</td>
               <td className="number-cell">
                 {formatCurrency(credit.totalAmount)}
@@ -879,6 +1082,11 @@ function BankReceivablesPanel({ credits }) {
 }
 
 function BankPayablesPanel({ purchases }) {
+  const pendingPurchases = purchases.filter(
+    (purchase) =>
+      purchase.status === "RECIBIDA" &&
+      Number(purchase.balance ?? purchase.total ?? 0) > 0,
+  );
   return (
     <BankTablePanel
       title="CUENTAS POR PAGAR"
@@ -895,16 +1103,18 @@ function BankPayablesPanel({ purchases }) {
           </tr>
         </thead>
         <tbody>
-          {purchases.map((purchase) => (
+          {pendingPurchases.map((purchase) => (
             <tr key={purchase.id}>
               <td>{purchase.consecutive ?? purchase.number ?? purchase.id}</td>
               <td>{purchase.provider?.name ?? "—"}</td>
               <td>{formatDate(purchase.orderedAt ?? purchase.createdAt)}</td>
               <td>{purchase.status ?? "Borrador"}</td>
-              <td className="number-cell">{formatCurrency(purchase.total)}</td>
+              <td className="number-cell">
+                {formatCurrency(purchase.balance ?? purchase.total)}
+              </td>
             </tr>
           ))}
-          {!purchases.length && (
+          {!pendingPurchases.length && (
             <tr>
               <td colSpan="5">No hay cuentas por pagar para mostrar.</td>
             </tr>
@@ -921,18 +1131,14 @@ function BankReportsPanel({ accounts, movements }) {
     0,
   );
   const income = movements
-    .filter((movement) =>
-      String(movement.movementType ?? "").includes("INGRESO"),
-    )
+    .filter(isIncomeMovement)
     .reduce(
       (sum, movement) =>
         sum + Number(movement.totalAmount ?? movement.amount ?? 0),
       0,
     );
   const expenses = movements
-    .filter((movement) =>
-      String(movement.movementType ?? "").includes("EGRESO"),
-    )
+    .filter(isExpenseMovement)
     .reduce(
       (sum, movement) =>
         sum + Number(movement.totalAmount ?? movement.amount ?? 0),
@@ -942,7 +1148,7 @@ function BankReportsPanel({ accounts, movements }) {
     <div className="bank-report-shell">
       <div className="bank-section-heading">
         <div>
-          <span>SAINT Enterprise módulo de Bancos.</span>
+          <span>Resumen del módulo de Bancos.</span>
           <h2>REPORTES</h2>
         </div>
         <BarChart3 size={28} />
@@ -1038,6 +1244,16 @@ function toAccountDraft(account) {
 
 function isActive(item) {
   return item?.isActive !== false && item?.active !== false;
+}
+
+function isIncomeMovement(movement) {
+  const type = String(movement?.movementType ?? "");
+  return type.includes("INGRESO") || type.includes("ENTRANTE");
+}
+
+function isExpenseMovement(movement) {
+  const type = String(movement?.movementType ?? "");
+  return type.includes("EGRESO") || type.includes("SALIENTE");
 }
 
 function numberOrValue(value) {

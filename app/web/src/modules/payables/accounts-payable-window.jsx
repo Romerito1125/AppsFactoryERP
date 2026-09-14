@@ -30,23 +30,32 @@ const statusLabels = {
   ANULADA: "Anulada",
 };
 
-const emptyOrder = {
-  providerId: "",
-  warehouseId: "",
-  productId: "",
-  quantity: "1",
-  unitCost: "",
-  taxRate: "0",
-  orderedAt: todayValue(),
-  expectedAt: "",
-  externalReference: "",
-  notes: "",
-};
+function emptyPurchaseItem(productId = "") {
+  return {
+    productId: String(productId),
+    quantity: "1",
+    unitCost: "",
+    taxRate: "0",
+  };
+}
+
+function emptyOrder(providerId = "", warehouseId = "", productId = "") {
+  return {
+    providerId: String(providerId),
+    warehouseId: String(warehouseId),
+    items: [emptyPurchaseItem(productId)],
+    orderedAt: todayValue(),
+    expectedAt: "",
+    externalReference: "",
+    notes: "",
+  };
+}
 
 export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
   const [providers, setProviders] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
   const [products, setProducts] = useState([]);
+  const [bankAccounts, setBankAccounts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [selectedProviderId, setSelectedProviderId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -55,7 +64,10 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [orderEditor, setOrderEditor] = useState(null);
+  const [loadingOrderId, setLoadingOrderId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [paymentEditor, setPaymentEditor] = useState(null);
+  const [paymentSaving, setPaymentSaving] = useState(false);
   const {
     handlePointerDown,
     isDragging,
@@ -69,9 +81,16 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
       apiClient.getAllPages("/bodegas", { estado: "activos" }),
       apiClient.getAllPages("/productos", { estado: "activos" }),
       apiClient.getAllPages("/compras"),
+      apiClient.getAllPages("/cuentas-bancarias", { estado: "activos" }),
     ])
       .then(
-        ([providersResult, warehousesResult, productsResult, ordersResult]) => {
+        ( [
+          providersResult,
+          warehousesResult,
+          productsResult,
+          ordersResult,
+          bankAccountsResult,
+        ]) => {
           if (cancelled) return;
           if (providersResult.status === "rejected")
             throw providersResult.reason;
@@ -85,16 +104,24 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
             productsResult.status === "fulfilled" ? productsResult.value : [];
           const orderItems =
             ordersResult.status === "fulfilled" ? ordersResult.value : [];
+          const bankItems =
+            bankAccountsResult.status === "fulfilled"
+              ? bankAccountsResult.value
+              : [];
           const nextProviders = providerItems.map(mapProvider);
           setProviders(nextProviders);
           setWarehouses(warehouseItems);
           setProducts(productItems);
+          setBankAccounts(bankItems);
           setOrders(orderItems);
           setSelectedProviderId(nextProviders[0]?.id ?? null);
           const unavailable = [
             warehousesResult.status === "rejected" ? "bodegas" : null,
             productsResult.status === "rejected" ? "productos" : null,
             ordersResult.status === "rejected" ? "compras" : null,
+            bankAccountsResult.status === "rejected"
+              ? "cuentas bancarias"
+              : null,
           ].filter(Boolean);
           if (unavailable.length) {
             setError(
@@ -132,6 +159,13 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
 
   const selectedProvider =
     providers.find((provider) => provider.id === selectedProviderId) ?? null;
+  const selectedProviderIndex = filteredProviders.findIndex(
+    (provider) => provider.id === selectedProviderId,
+  );
+  const canMovePrevious = selectedProviderIndex > 0;
+  const canMoveNext =
+    selectedProviderIndex >= 0 &&
+    selectedProviderIndex < filteredProviders.length - 1;
   const canEdit =
     (canAccess?.("PAYABLES_EDIT") ?? true) &&
     (canAccess?.("PURCHASES_EDIT") ?? true);
@@ -145,8 +179,8 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
     [orders, selectedProviderId],
   );
   const providerTotal = allProviderOrders
-    .filter((order) => ["BORRADOR", "ORDENADA"].includes(order.status))
-    .reduce((sum, order) => sum + Number(order.total ?? 0), 0);
+    .filter((order) => order.status === "RECIBIDA")
+    .reduce((sum, order) => sum + orderBalance(order), 0);
 
   function selectProvider(id) {
     setSelectedProviderId(id);
@@ -162,50 +196,174 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
 
   function startNewOrder() {
     if (!canEdit) return;
-    setOrderEditor({
-      ...emptyOrder,
-      providerId: String(selectedProviderId ?? ""),
-      warehouseId: String(warehouses[0]?.id ?? ""),
-      productId: String(
-        products.find((product) =>
-          productBelongsToProvider(product, selectedProviderId),
-        )?.id ?? "",
+    const firstProduct = products.find((product) =>
+      productBelongsToProvider(product, selectedProviderId),
+    );
+    setOrderEditor(
+      emptyOrder(
+        selectedProviderId ?? "",
+        warehouses[0]?.id ?? "",
+        firstProduct?.id ?? "",
       ),
+    );
+    setError("");
+  }
+
+  function startPayment(order = null) {
+    if (!canEdit) return;
+    const target =
+      order ??
+      allProviderOrders.find(
+        (item) => item.status === "RECIBIDA" && orderBalance(item) > 0,
+      );
+    if (!target) {
+      setError("Selecciona una compra recibida con saldo pendiente para pagarla.");
+      return;
+    }
+    if (!bankAccounts.length) {
+      setError("Crea una cuenta bancaria activa antes de registrar un pago.");
+      return;
+    }
+    setPaymentEditor({
+      purchaseOrderId: String(target.id),
+      amount: String(orderBalance(target)),
+      bankAccountId: String(bankAccounts[0]?.id ?? ""),
+      notes: "",
     });
     setError("");
   }
 
-  function startEditOrder(order) {
+  async function savePayment() {
+    if (!canEdit || !paymentEditor) return;
+    const target = orders.find(
+      (order) => String(order.id) === String(paymentEditor.purchaseOrderId),
+    );
+    const amount = Number(paymentEditor.amount);
+    if (!target || !Number.isFinite(amount) || amount <= 0 || amount > orderBalance(target)) {
+      setError("Ingresa un pago válido que no supere el saldo pendiente.");
+      return;
+    }
+    if (!paymentEditor.bankAccountId) {
+      setError("Selecciona la cuenta bancaria desde la que se realizará el pago.");
+      return;
+    }
+    setPaymentSaving(true);
+    setError("");
+    try {
+      const saved = await apiClient.post(
+        `/compras/${paymentEditor.purchaseOrderId}/pagos`,
+        {
+          amount,
+          bankAccountId: paymentEditor.bankAccountId
+            ? Number(paymentEditor.bankAccountId)
+            : undefined,
+          notes: paymentEditor.notes?.trim() || undefined,
+        },
+      );
+      setOrders((current) =>
+        current.map((item) => (item.id === saved.id ? saved : item)),
+      );
+      setPaymentEditor(null);
+    } catch (requestError) {
+      setError(requestError.message);
+      if (isAuthError(requestError)) onRequestLogin?.();
+    } finally {
+      setPaymentSaving(false);
+    }
+  }
+
+  async function startEditOrder(order) {
     if (!canEdit) return;
     if (order.status !== "BORRADOR") return;
-    const firstItem = order.items?.[0];
-    setOrderEditor({
-      id: order.id,
-      providerId: String(order.providerId),
-      warehouseId: String(order.warehouseId),
-      productId: String(firstItem?.productId ?? ""),
-      quantity: String(firstItem?.quantity ?? 1),
-      unitCost: String(firstItem?.unitCost ?? ""),
-      taxRate: String(firstItem?.taxRate ?? 0),
-      orderedAt: toDateInput(order.orderedAt),
-      expectedAt: toDateInput(order.expectedAt),
-      externalReference: order.externalReference ?? "",
-      notes: order.notes ?? "",
-    });
+    setLoadingOrderId(order.id);
+    setError("");
+    try {
+      const detail = await apiClient.get(`/compras/${order.id}`);
+      setOrderEditor(toPurchaseEditor(detail));
+    } catch (requestError) {
+      setError(requestError.message);
+      if (isAuthError(requestError)) onRequestLogin?.();
+    } finally {
+      setLoadingOrderId(null);
+    }
   }
 
   function updateEditor(field, value) {
     setOrderEditor((current) => ({ ...current, [field]: value }));
   }
 
+  function updatePaymentEditor(field, value) {
+    setPaymentEditor((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateOrderProvider(value) {
+    setOrderEditor((current) => ({
+      ...current,
+      providerId: value,
+      items: current.items.map((item) => {
+        const product = products.find(
+          (candidate) => Number(candidate.id) === Number(item.productId),
+        );
+        return productBelongsToProvider(product, Number(value))
+          ? item
+          : { ...item, productId: "" };
+      }),
+    }));
+  }
+
+  function updateOrderItem(index, field, value) {
+    setOrderEditor((current) => ({
+      ...current,
+      items: current.items.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item,
+      ),
+    }));
+  }
+
+  function addOrderItem() {
+    setOrderEditor((current) => ({
+      ...current,
+      items: [...current.items, emptyPurchaseItem()],
+    }));
+  }
+
+  function removeOrderItem(index) {
+    setOrderEditor((current) => ({
+      ...current,
+      items:
+        current.items.length > 1
+          ? current.items.filter((_, itemIndex) => itemIndex !== index)
+          : current.items,
+    }));
+  }
+
   async function saveOrder() {
     if (!canEdit) return;
     if (!orderEditor) return;
     const body = buildOrderBody(orderEditor);
-    if (!body.providerId || !body.warehouseId || !body.items[0]?.productId) {
+    if (
+      !body.providerId ||
+      !body.warehouseId ||
+      !body.items.length ||
+      body.items.some(
+        (item) =>
+          !item.productId ||
+          !Number.isFinite(item.quantity) ||
+          !Number.isFinite(item.unitCost) ||
+          item.quantity <= 0 ||
+          item.unitCost <= 0,
+      )
+    ) {
       setError(
-        "Selecciona proveedor, bodega y producto para guardar la compra.",
+        "Completa proveedor, bodega, productos, cantidades y costos válidos.",
       );
+      return;
+    }
+    if (
+      new Set(body.items.map((item) => item.productId)).size !==
+      body.items.length
+    ) {
+      setError("Cada producto debe aparecer una sola vez en la compra.");
       return;
     }
     setSaving(true);
@@ -365,7 +523,10 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
                 }
                 type="button"
                 key={id}
-                onClick={() => setActiveTab(id)}
+                onClick={() => {
+                  setActiveTab(id);
+                  setError("");
+                }}
               >
                 {label}
               </button>
@@ -374,8 +535,12 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
           {activeTab === "operations" ? (
             <OperationsPanel
               onNewOrder={startNewOrder}
+              onPayment={startPayment}
               onSelectView={selectPayableView}
               canEdit={canEdit}
+              hasPayable={allProviderOrders.some(
+                (order) => order.status === "RECIBIDA" && orderBalance(order) > 0,
+              )}
             />
           ) : (
             <AccountStatementPanel
@@ -384,7 +549,9 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
               statusFilter={statusFilter}
               onStatusFilter={setStatusFilter}
               onEdit={startEditOrder}
+              onPayment={startPayment}
               onTransition={transitionOrder}
+              loadingOrderId={loadingOrderId}
               canEdit={canEdit}
             />
           )}
@@ -396,8 +563,29 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
               products={products}
               saving={saving}
               onChange={updateEditor}
+              onProviderChange={updateOrderProvider}
+              onItemChange={updateOrderItem}
+              onAddItem={addOrderItem}
+              onRemoveItem={removeOrderItem}
               onSave={saveOrder}
-              onCancel={() => setOrderEditor(null)}
+              onCancel={() => {
+                setOrderEditor(null);
+                setError("");
+              }}
+            />
+          )}
+          {paymentEditor && (
+            <PurchasePaymentEditor
+              editor={paymentEditor}
+              orders={allProviderOrders}
+              bankAccounts={bankAccounts}
+              saving={paymentSaving}
+              onChange={updatePaymentEditor}
+              onSave={savePayment}
+              onCancel={() => {
+                setPaymentEditor(null);
+                setError("");
+              }}
             />
           )}
         </div>
@@ -409,12 +597,24 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
       )}
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">
-            <button
-              type="button"
-              onClick={startNewOrder}
-              disabled={!selectedProviderId || !canEdit}
+          <button
+            type="button"
+            onClick={startNewOrder}
+            disabled={!canEdit}
           >
             <Plus size={14} /> Nueva compra
+          </button>
+          <button
+            type="button"
+            onClick={() => startPayment()}
+            disabled={
+              !canEdit ||
+              !allProviderOrders.some(
+                (order) => order.status === "RECIBIDA" && orderBalance(order) > 0,
+              )
+            }
+          >
+            <Check size={14} /> Registrar pago
           </button>
         </div>
         <div className="provider-navigation-actions">
@@ -422,6 +622,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
             type="button"
             className="muted-action"
             onClick={() => moveProvider(-1)}
+            disabled={!canMovePrevious}
           >
             <ChevronLeft size={14} /> Anterior
           </button>
@@ -429,6 +630,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
             type="button"
             className="muted-action"
             onClick={() => moveProvider(1)}
+            disabled={!canMoveNext}
           >
             Próximo <ChevronRight size={14} />
           </button>
@@ -441,7 +643,13 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
   );
 }
 
-function OperationsPanel({ onNewOrder, onSelectView, canEdit }) {
+function OperationsPanel({
+  onNewOrder,
+  onPayment,
+  onSelectView,
+  canEdit,
+  hasPayable,
+}) {
   const operations = [
     [
       "Facturas",
@@ -464,8 +672,10 @@ function OperationsPanel({ onNewOrder, onSelectView, canEdit }) {
     [
       "Pagos y abonos",
       Check,
-      () => onSelectView("statement", "RECIBIDA"),
-      "Consultar compras conciliadas",
+      onPayment,
+      "Registrar un pago de esta compra",
+      true,
+      true,
     ],
     [
       "Notas débito / Anticipos",
@@ -479,11 +689,11 @@ function OperationsPanel({ onNewOrder, onSelectView, canEdit }) {
       () => onSelectView("statement", "ANULADA"),
       "Consultar documentos anulados",
     ],
-    ["Nueva compra", Plus, onNewOrder, "Crear un borrador en el API", true],
+    ["Nueva compra", Plus, onNewOrder, "Registrar una nueva compra", true],
     [
       "Anular compra",
       CircleX,
-      () => onSelectView("statement", "ORDENADA"),
+      () => onSelectView("pending", "TODOS"),
       "Selecciona una orden para anularla",
     ],
   ];
@@ -497,23 +707,33 @@ function OperationsPanel({ onNewOrder, onSelectView, canEdit }) {
       </div>
       <div className="payable-operation-grid">
         {operations.map(
-          ([label, Icon, onClick, description, requiresEdit = false]) => (
-          <button
-            type="button"
-            className="payable-operation-card"
-            key={label}
-            onClick={onClick}
-            disabled={requiresEdit && !canEdit}
-          >
-            <span className="payable-operation-icon">
-              <Icon size={15} />
-            </span>
-            <span>
-              <strong>{label}</strong>
-              <small>{description}</small>
-            </span>
-            <ChevronRight size={14} />
-          </button>
+          ([
+            label,
+            Icon,
+            onClick,
+            description,
+            requiresEdit = false,
+            requiresPayable = false,
+          ]) => (
+            <button
+              type="button"
+              className="payable-operation-card"
+              key={label}
+              onClick={onClick}
+              disabled={
+                (requiresEdit && !canEdit) ||
+                (requiresPayable && !hasPayable)
+              }
+            >
+              <span className="payable-operation-icon">
+                <Icon size={15} />
+              </span>
+              <span>
+                <strong>{label}</strong>
+                <small>{description}</small>
+              </span>
+              <ChevronRight size={14} />
+            </button>
           ),
         )}
       </div>
@@ -527,12 +747,14 @@ function AccountStatementPanel({
   statusFilter,
   onStatusFilter,
   onEdit,
+  onPayment,
   onTransition,
+  loadingOrderId,
   canEdit,
 }) {
   if (activeTab === "due") {
-    const openOrders = orders.filter((order) =>
-      ["BORRADOR", "ORDENADA"].includes(order.status),
+    const openOrders = orders.filter(
+      (order) => order.status === "RECIBIDA" && orderBalance(order) > 0,
     );
     const overdueOrders = openOrders.filter(
       (order) => getDueBucket(order) === "overdue",
@@ -547,7 +769,7 @@ function AccountStatementPanel({
     const upcomingTotal = sumOrderTotals(upcomingOrders);
     const noDateTotal = sumOrderTotals(noDateOrders);
     const maxAmount = Math.max(
-      ...openOrders.map((order) => Number(order.total ?? 0)),
+      ...openOrders.map((order) => orderBalance(order)),
       0,
     );
     return (
@@ -589,7 +811,7 @@ function AccountStatementPanel({
               )
               .map((order) => {
                 const bucket = getDueBucket(order);
-                const amount = Number(order.total ?? 0);
+                const amount = orderBalance(order);
                 return (
                   <div className="payable-chart-row" key={order.id}>
                     <div className="payable-chart-label">
@@ -673,11 +895,17 @@ function AccountStatementPanel({
               {visibleOrders.map((order) => (
                 <tr
                   key={order.id}
-                  onDoubleClick={canEdit ? () => onEdit(order) : undefined}
-                  title={
-                    order.status === "BORRADOR"
-                      ? "Doble clic para editar"
+                  onDoubleClick={
+                    canEdit && loadingOrderId !== order.id
+                      ? () => onEdit(order)
                       : undefined
+                  }
+                  title={
+                    loadingOrderId === order.id
+                      ? "Cargando detalle de la compra…"
+                      : order.status === "BORRADOR"
+                        ? "Doble clic para editar"
+                        : undefined
                   }
                 >
                   <td>{order.consecutive ?? `OC-${order.id}`}</td>
@@ -695,16 +923,12 @@ function AccountStatementPanel({
                       : formatCurrency(order.total)}
                   </td>
                   <td>
-                    {order.status === "RECIBIDA"
-                      ? formatCurrency(order.total)
+                    {order.status !== "ANULADA" && orderPaidAmount(order) > 0
+                      ? formatCurrency(orderPaidAmount(order))
                       : "—"}
                   </td>
                   <td>
-                    {order.status === "ANULADA"
-                      ? formatCurrency(0)
-                      : formatCurrency(
-                          order.status === "RECIBIDA" ? 0 : order.total,
-                        )}
+                    {formatCurrency(orderBalance(order))}
                   </td>
                   <td>
                     <div className="table-action-group">
@@ -736,6 +960,15 @@ function AccountStatementPanel({
                           }
                         >
                           Recibir
+                        </button>
+                      )}
+                      {order.status === "RECIBIDA" && orderBalance(order) > 0 && (
+                        <button
+                          type="button"
+                          disabled={!canEdit}
+                          onClick={() => onPayment(order)}
+                        >
+                          Pagar
                         </button>
                       )}
                       {order.status !== "ANULADA" &&
@@ -778,14 +1011,26 @@ function PurchaseEditor({
   products,
   saving,
   onChange,
+  onProviderChange,
+  onItemChange,
+  onAddItem,
+  onRemoveItem,
   onSave,
   onCancel,
 }) {
   const availableProducts = products.filter((product) =>
     productBelongsToProvider(product, Number(editor.providerId)),
   );
-  const subtotal = Number(editor.quantity || 0) * Number(editor.unitCost || 0);
-  const total = subtotal * (1 + Number(editor.taxRate || 0) / 100);
+  const subtotal = editor.items.reduce(
+    (sum, item) =>
+      sum + Number(item.quantity || 0) * Number(item.unitCost || 0),
+    0,
+  );
+  const total = editor.items.reduce((sum, item) => {
+    const itemSubtotal =
+      Number(item.quantity || 0) * Number(item.unitCost || 0);
+    return sum + itemSubtotal * (1 + Number(item.taxRate || 0) / 100);
+  }, 0);
   return (
     <div className="payable-editor-backdrop">
       <div
@@ -808,7 +1053,7 @@ function PurchaseEditor({
               value: String(item.id),
               label: item.name,
             }))}
-            onChange={(value) => onChange("providerId", value)}
+            onChange={onProviderChange}
           />
           <EditorSelect
             label="Bodega"
@@ -819,34 +1064,75 @@ function PurchaseEditor({
             }))}
             onChange={(value) => onChange("warehouseId", value)}
           />
-          <EditorSelect
-            label="Producto"
-            value={editor.productId}
-            options={availableProducts.map((item) => ({
-              value: String(item.id),
-              label: `${item.code ?? item.id} · ${item.name}`,
-            }))}
-            onChange={(value) => onChange("productId", value)}
-            wide
-          />
-          <EditorField
-            label="Cantidad"
-            value={editor.quantity}
-            type="number"
-            onChange={(value) => onChange("quantity", value)}
-          />
-          <EditorField
-            label="Costo unitario"
-            value={editor.unitCost}
-            type="number"
-            onChange={(value) => onChange("unitCost", value)}
-          />
-          <EditorField
-            label="Impuesto %"
-            value={editor.taxRate}
-            type="number"
-            onChange={(value) => onChange("taxRate", value)}
-          />
+          <div className="purchase-items-editor editor-field-wide">
+            <div className="purchase-items-heading">
+              <span>Productos de la compra</span>
+              <button type="button" onClick={onAddItem}>
+                <Plus size={13} /> Agregar producto
+              </button>
+            </div>
+            <div className="purchase-items-list">
+              {editor.items.map((item, index) => (
+                <div className="purchase-item-row" key={`purchase-item-${index}`}>
+                  <EditorSelect
+                    label={`Producto ${index + 1}`}
+                    value={item.productId}
+                    options={availableProducts
+                      .filter(
+                        (product) =>
+                          Number(product.id) === Number(item.productId) ||
+                          !editor.items.some(
+                            (otherItem, otherIndex) =>
+                              otherIndex !== index &&
+                              Number(otherItem.productId) === Number(product.id),
+                          ),
+                      )
+                      .map((product) => ({
+                        value: String(product.id),
+                        label: `${product.code ?? product.id} · ${product.name}`,
+                      }))}
+                    onChange={(value) =>
+                      onItemChange(index, "productId", value)
+                    }
+                  />
+                  <EditorField
+                    label="Cantidad"
+                    value={item.quantity}
+                    type="number"
+                    onChange={(value) =>
+                      onItemChange(index, "quantity", value)
+                    }
+                  />
+                  <EditorField
+                    label="Costo unitario"
+                    value={item.unitCost}
+                    type="number"
+                    onChange={(value) =>
+                      onItemChange(index, "unitCost", value)
+                    }
+                  />
+                  <EditorField
+                    label="Impuesto %"
+                    value={item.taxRate}
+                    type="number"
+                    onChange={(value) =>
+                      onItemChange(index, "taxRate", value)
+                    }
+                  />
+                  <button
+                    type="button"
+                    className="purchase-item-remove"
+                    onClick={() => onRemoveItem(index)}
+                    disabled={editor.items.length === 1}
+                    aria-label={`Quitar producto ${index + 1}`}
+                    title="Quitar producto"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
           <EditorField
             label="Fecha emisión"
             value={editor.orderedAt}
@@ -874,8 +1160,10 @@ function PurchaseEditor({
           </label>
         </div>
         <div className="payable-editor-total">
-          <span>Total estimado</span>
-          <strong>{formatCurrency(total)}</strong>
+          <span>Subtotal · Total estimado</span>
+          <strong>
+            {formatCurrency(subtotal)} · {formatCurrency(total)}
+          </strong>
         </div>
         <div className="inline-editor-actions">
           <button type="button" onClick={onCancel}>
@@ -901,6 +1189,106 @@ function PurchaseEditor({
   );
 }
 
+function PurchasePaymentEditor({
+  editor,
+  orders,
+  bankAccounts,
+  saving,
+  onChange,
+  onSave,
+  onCancel,
+}) {
+  const payableOrders = orders.filter(
+    (order) => order.status === "RECIBIDA" && orderBalance(order) > 0,
+  );
+  const selectedOrder = payableOrders.find(
+    (order) => String(order.id) === String(editor.purchaseOrderId),
+  );
+  return (
+    <div className="payable-editor-backdrop">
+      <div
+        className="payable-editor"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Registrar pago a proveedor"
+      >
+        <header className="inline-editor-title">
+          <strong>Registrar pago a proveedor</strong>
+          <button type="button" onClick={onCancel} aria-label="Cerrar editor">
+            <X size={14} />
+          </button>
+        </header>
+        <div className="payable-editor-grid">
+          <EditorSelect
+            label="Compra recibida"
+            value={editor.purchaseOrderId}
+            options={payableOrders.map((order) => ({
+              value: String(order.id),
+              label:
+                String(order.consecutive ?? "OC-" + order.id) +
+                " · saldo " +
+                formatCurrency(orderBalance(order)),
+            }))}
+            onChange={(value) => onChange("purchaseOrderId", value)}
+            wide
+          />
+          <EditorField
+            label="Monto del pago"
+            value={editor.amount}
+            type="number"
+            onChange={(value) => onChange("amount", value)}
+          />
+          <EditorSelect
+            label="Cuenta bancaria"
+            value={editor.bankAccountId}
+            options={bankAccounts.map((account) => ({
+              value: String(account.id),
+              label:
+                account.name ??
+                account.accountNumber ??
+                "Cuenta #" + account.id,
+            }))}
+            emptyLabel="Selecciona una cuenta"
+            onChange={(value) => onChange("bankAccountId", value)}
+          />
+          <label className="payable-notes-field">
+            <span>Comentarios</span>
+            <textarea
+              value={editor.notes}
+              onChange={(event) => onChange("notes", event.target.value)}
+            />
+          </label>
+          {selectedOrder && (
+            <div className="receivable-payment-hint">
+              Saldo pendiente:{" "}
+              <strong>{formatCurrency(orderBalance(selectedOrder))}</strong>
+            </div>
+          )}
+        </div>
+        <div className="inline-editor-actions">
+          <button type="button" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button
+            type="button"
+            className="primary-action"
+            onClick={onSave}
+            disabled={saving}
+          >
+            {saving ? (
+              "Guardando…"
+            ) : (
+              <>
+                <Check size={13} /> Registrar pago
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EditorField({ label, value, onChange, type = "text", wide = false }) {
   return (
     <label className={`editor-field ${wide ? "editor-field-wide" : ""}`}>
@@ -914,7 +1302,14 @@ function EditorField({ label, value, onChange, type = "text", wide = false }) {
   );
 }
 
-function EditorSelect({ label, value, options, onChange, wide = false }) {
+function EditorSelect({
+  label,
+  value,
+  options,
+  onChange,
+  emptyLabel = "Selecciona…",
+  wide = false,
+}) {
   return (
     <label className={`editor-field ${wide ? "editor-field-wide" : ""}`}>
       <span>{label}</span>
@@ -922,7 +1317,7 @@ function EditorSelect({ label, value, options, onChange, wide = false }) {
         value={value ?? ""}
         onChange={(event) => onChange(event.target.value)}
       >
-        <option value="">Selecciona…</option>
+        <option value="">{emptyLabel}</option>
         {options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -983,6 +1378,26 @@ function productBelongsToProvider(product, providerId) {
   );
 }
 
+function toPurchaseEditor(order) {
+  return {
+    id: order.id,
+    providerId: String(order.providerId ?? ""),
+    warehouseId: String(order.warehouseId ?? ""),
+    items: order.items?.length
+      ? order.items.map((item) => ({
+          productId: String(item.productId ?? ""),
+          quantity: String(item.quantity ?? 1),
+          unitCost: String(item.unitCost ?? ""),
+          taxRate: String(item.taxRate ?? 0),
+        }))
+      : [emptyPurchaseItem()],
+    orderedAt: toDateInput(order.orderedAt),
+    expectedAt: toDateInput(order.expectedAt),
+    externalReference: order.externalReference ?? "",
+    notes: order.notes ?? "",
+  };
+}
+
 function buildOrderBody(editor) {
   return {
     providerId: Number(editor.providerId),
@@ -993,16 +1408,14 @@ function buildOrderBody(editor) {
     expectedAt: editor.expectedAt
       ? new Date(`${editor.expectedAt}T00:00:00`).toISOString()
       : undefined,
-    externalReference: editor.externalReference.trim() || undefined,
-    notes: editor.notes.trim() || undefined,
-    items: [
-      {
-        productId: Number(editor.productId),
-        quantity: Number(editor.quantity),
-        unitCost: Number(editor.unitCost),
-        taxRate: Number(editor.taxRate) || 0,
-      },
-    ],
+    externalReference: editor.externalReference?.trim() || undefined,
+    notes: editor.notes?.trim() || undefined,
+    items: editor.items.map((item) => ({
+      productId: Number(item.productId),
+      quantity: Number(item.quantity),
+      unitCost: Number(item.unitCost),
+      taxRate: Number(item.taxRate) || 0,
+    })),
   };
 }
 
@@ -1030,7 +1443,18 @@ function formatDate(value) {
 }
 
 function sumOrderTotals(orders) {
-  return orders.reduce((sum, order) => sum + Number(order.total ?? 0), 0);
+  return orders.reduce((sum, order) => sum + orderBalance(order), 0);
+}
+
+function orderPaidAmount(order) {
+  if (order.paidAmount !== undefined) return Number(order.paidAmount) || 0;
+  return order.status === "RECIBIDA" ? Number(order.total ?? 0) : 0;
+}
+
+function orderBalance(order) {
+  if (order.status === "ANULADA") return 0;
+  if (order.balance !== undefined) return Math.max(0, Number(order.balance));
+  return order.status === "RECIBIDA" ? 0 : Number(order.total ?? 0);
 }
 
 function getDueBucket(order) {

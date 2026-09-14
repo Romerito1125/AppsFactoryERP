@@ -372,6 +372,7 @@ model Provider {
   legalRepresentative String?
   className   String?
   withholdingType String?
+  hasIslrWithholding Boolean  @default(false)
   creditDays  Int?
   observations String?
   isActive    Boolean   @default(true)

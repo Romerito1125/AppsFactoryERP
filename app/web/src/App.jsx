@@ -7,6 +7,7 @@ import { SystemStatusbar } from "@/components/desktop/system-statusbar";
 import { WindowTitlebar } from "@/components/desktop/window-titlebar";
 import { getStoredSession, storeSession } from "@/lib/api-client";
 import { ClientsWindow } from "@/modules/clients/clients-window";
+import { CatalogWindow } from "@/modules/catalogs/catalog-window";
 import { ProductsWindow } from "@/modules/products/products-window";
 import { ProvidersWindow } from "@/modules/providers/providers-window";
 import { RetentionsWindow } from "@/modules/retentions/retentions-window";
@@ -22,6 +23,8 @@ const permissionsByWindow = {
   clients: "CLIENTS_VIEW",
   providers: "PROVIDERS_VIEW",
   products: "PRODUCTS_VIEW",
+  "product-types": "PRODUCTS_VIEW",
+  warehouses: "PRODUCTS_VIEW",
   retentions: "RETENTIONS_VIEW",
   users: "USERS_MANAGE",
   payables: "PAYABLES_VIEW",
@@ -152,6 +155,8 @@ function App() {
       <ClassicMenuBar
         onOpenClients={() => openWindow("clients")}
         onOpenProducts={() => openWindow("products")}
+        onOpenProductTypes={() => openWindow("product-types")}
+        onOpenWarehouses={() => openWindow("warehouses")}
         onOpenProviders={() => openWindow("providers")}
         onOpenRetentions={() => openWindow("retentions")}
         onOpenUsers={() => openWindow("users")}
@@ -205,6 +210,22 @@ function App() {
           )}
           {activeWindow === "products" && (
             <ProductsWindow
+              onClose={() => setActiveWindow(null)}
+              onRequestLogin={openLogin}
+              canAccess={canAccess}
+            />
+          )}
+          {activeWindow === "product-types" && (
+            <CatalogWindow
+              catalog="product-types"
+              onClose={() => setActiveWindow(null)}
+              onRequestLogin={openLogin}
+              canAccess={canAccess}
+            />
+          )}
+          {activeWindow === "warehouses" && (
+            <CatalogWindow
+              catalog="warehouses"
               onClose={() => setActiveWindow(null)}
               onRequestLogin={openLogin}
               canAccess={canAccess}

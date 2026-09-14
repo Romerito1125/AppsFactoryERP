@@ -17,6 +17,8 @@ import {
 export function ClassicMenuBar({
   onOpenClients,
   onOpenProducts,
+  onOpenProductTypes,
+  onOpenWarehouses,
   onOpenProviders,
   onOpenRetentions,
   onOpenUsers,
@@ -50,6 +52,8 @@ export function ClassicMenuBar({
       clients: onOpenClients,
       providers: onOpenProviders,
       products: onOpenProducts,
+      "product-types": onOpenProductTypes,
+      warehouses: onOpenWarehouses,
       retentions: onOpenRetentions,
       users: onOpenUsers,
       payables: () =>

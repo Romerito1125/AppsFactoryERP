@@ -4,7 +4,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ClientType, Role } from '@prisma/client';
+import { ClientType, Prisma, Role } from '@prisma/client';
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { effectivePermissionCodes } from '../../common/permissions/permission.constants';
@@ -36,6 +36,16 @@ export class AuthService {
           address: registerDto.address,
           clientType: ClientType.MINORISTA,
         },
+      });
+      const referralCode = await this.createUniqueReferralCode(
+        tx,
+        client.firstName,
+        client.id,
+      );
+
+      await tx.client.update({
+        where: { id: client.id },
+        data: { referralCode, referralLevel: 0 },
       });
 
       return tx.user.create({
@@ -191,5 +201,30 @@ export class AuthService {
       passwordHash.length === storedHash.length &&
       timingSafeEqual(passwordHash, storedHash)
     );
+  }
+
+  private async createUniqueReferralCode(
+    tx: Prisma.TransactionClient,
+    firstName: string,
+    id: number,
+  ) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const prefix = firstName
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9]/g, '')
+        .toUpperCase()
+        .slice(0, 4)
+        .padEnd(4, 'X');
+      const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+      const referralCode = `${prefix}${id}${suffix}`;
+      const existingClient = await tx.client.findUnique({
+        where: { referralCode },
+      });
+
+      if (!existingClient) return referralCode;
+    }
+
+    throw new ConflictException('No fue posible generar un código único');
   }
 }

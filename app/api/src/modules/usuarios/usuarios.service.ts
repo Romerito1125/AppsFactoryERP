@@ -7,10 +7,7 @@ import {
 import { Role } from '@prisma/client';
 import { randomBytes, scryptSync } from 'crypto';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
-import {
-  defaultPermissionCodesByRole,
-  effectivePermissionCodes,
-} from '../../common/permissions/permission.constants';
+import { effectivePermissionCodes } from '../../common/permissions/permission.constants';
 import {
   buildPaginatedResponse,
   resolvePagination,
@@ -106,16 +103,11 @@ export class UsuariosService {
       uniqueCodes.add(item.code);
       return true;
     });
-    const defaults = new Set(defaultPermissionCodesByRole[user.role] ?? []);
-    const explicitOverrides = permissions.filter(
-      (item) => item.isAllowed !== defaults.has(item.code),
-    );
-
     await this.prisma.$transaction(async (tx) => {
       await tx.userPermission.deleteMany({ where: { userId: id } });
-      if (explicitOverrides.length) {
+      if (permissions.length) {
         await tx.userPermission.createMany({
-          data: explicitOverrides.map((item) => ({
+          data: permissions.map((item) => ({
             userId: id,
             code: item.code,
             isAllowed: item.isAllowed,
@@ -132,7 +124,7 @@ export class UsuariosService {
       entityId: id,
       entityLabel: user.username,
       description: `Actualizo los accesos de ${user.username}`,
-      metadata: { role: user.role, overrideCount: explicitOverrides.length },
+      metadata: { role: user.role, permissionCount: permissions.length },
     });
 
     return this.getPermissions(id);
@@ -254,8 +246,20 @@ export class UsuariosService {
   async update(id: number, updateUserDto: UpdateUserDto, actor: AuthUser) {
     this.ensurePositiveId(id);
     const current = await this.findOne(id);
+    const nextId = updateUserDto.id ?? id;
     const nextRole = updateUserDto.role ?? current.role;
     const nextWarehouseId = updateUserDto.warehouseId ?? current.warehouseId;
+
+    this.ensurePositiveId(nextId);
+    if (nextId !== id) {
+      const existingUser = await this.prisma.user.findUnique({
+        where: { id: nextId },
+        select: { id: true },
+      });
+      if (existingUser) {
+        throw new ConflictException('El ID ya existe.');
+      }
+    }
 
     if (nextRole === Role.BODEGA && !nextWarehouseId) {
       throw new BadRequestException(
@@ -282,21 +286,41 @@ export class UsuariosService {
     }
 
     const data = {
-      ...updateUserDto,
+      ...(nextId !== id ? { id: nextId } : {}),
       ...(updateUserDto.email
         ? { username: updateUserDto.email.trim().toLowerCase() }
         : {}),
-      ...(updateUserDto.password && {
-        password: this.hashPassword(updateUserDto.password),
-      }),
+      ...(updateUserDto.password
+        ? { password: this.hashPassword(updateUserDto.password) }
+        : {}),
+      ...(updateUserDto.role !== undefined ? { role: updateUserDto.role } : {}),
+      ...(updateUserDto.clientId !== undefined
+        ? { clientId: updateUserDto.clientId }
+        : {}),
+      ...(updateUserDto.warehouseId !== undefined
+        ? { warehouseId: updateUserDto.warehouseId }
+        : {}),
+      ...(updateUserDto.isActive !== undefined
+        ? { isActive: updateUserDto.isActive }
+        : {}),
     };
 
-    delete data.email;
-
-    const user = await this.prisma.user.update({
-      where: { id },
-      data,
-      select: this.userSelect(),
+    const user = await this.prisma.$transaction(async (tx) => {
+      const updatedUser = await tx.user.update({
+        where: { id },
+        data,
+        select: this.userSelect(),
+      });
+      if (nextId !== id) {
+        await tx.$executeRaw`
+          SELECT setval(
+            pg_get_serial_sequence('"User"', 'id'),
+            COALESCE((SELECT MAX("id") FROM "User"), 1),
+            EXISTS (SELECT 1 FROM "User")
+          )
+        `;
+      }
+      return updatedUser;
     });
     await this.auditLogService.log({
       actor,
@@ -323,22 +347,21 @@ export class UsuariosService {
     this.ensurePositiveId(id);
     const current = await this.findOne(id);
 
-    const user = await this.prisma.user.update({
-      where: { id },
-      data: { isActive: false, deletedAt: new Date() },
-      select: this.userSelect(),
+    await this.prisma.$transaction(async (tx) => {
+      await tx.employee.deleteMany({ where: { userId: id } });
+      await tx.user.delete({ where: { id } });
     });
     await this.auditLogService.log({
       actor,
       module: 'USUARIOS',
-      action: 'DEACTIVATE',
+      action: 'DELETE',
       entityType: 'User',
-      entityId: user.id,
-      entityLabel: user.username,
-      description: `Desactivo el usuario ${user.username}`,
-      metadata: { userId: user.id, previousStatus: current.isActive },
+      entityId: current.id,
+      entityLabel: current.username,
+      description: `Elimino definitivamente el usuario ${current.username}`,
+      metadata: { userId: current.id, previousStatus: current.isActive },
     });
-    return user;
+    return current;
   }
 
   private hashPassword(password: string) {

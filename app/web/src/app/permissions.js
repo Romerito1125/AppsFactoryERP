@@ -143,3 +143,10 @@ export function permissionOverrides(role, draft) {
     .filter((item) => Boolean(draft[item.code]) !== defaults.has(item.code))
     .map((item) => ({ code: item.code, isAllowed: Boolean(draft[item.code]) }));
 }
+
+export function permissionSelections(draft) {
+  return permissionCatalog.map((item) => ({
+    code: item.code,
+    isAllowed: Boolean(draft[item.code]),
+  }));
+}

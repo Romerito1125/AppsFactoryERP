@@ -139,6 +139,17 @@ export class ProductosController {
     return this.productosService.remove(id, request.user);
   }
 
+  @Patch(':id/desactivar')
+  @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
+  @Roles(Role.ADMIN)
+  @Permissions('PRODUCTS_EDIT')
+  deactivate(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: AuthRequest,
+  ) {
+    return this.productosService.deactivate(id, request.user);
+  }
+
   @Patch(':id/reactivar')
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)
   @Roles(Role.ADMIN)

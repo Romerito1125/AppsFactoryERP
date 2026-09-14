@@ -8,7 +8,6 @@ import {
   Printer,
   RotateCcw,
   Search,
-  Truck,
   X,
 } from "lucide-react";
 
@@ -35,6 +34,11 @@ const statusLabels = {
 let purchasesDataPromise;
 let purchasesDataSnapshot;
 
+function invalidatePurchasesDataCache() {
+  purchasesDataPromise = undefined;
+  purchasesDataSnapshot = undefined;
+}
+
 function loadPurchasesData() {
   if (purchasesDataSnapshot) return Promise.resolve(purchasesDataSnapshot);
   if (!purchasesDataPromise) {
@@ -60,7 +64,6 @@ function loadPurchasesData() {
 
 export function PurchasesWindow({
   initialView = "purchases",
-  session,
   onClose,
   onOpenView,
   onRequestLogin,
@@ -74,7 +77,10 @@ export function PurchasesWindow({
   const [selectedWarehouseId, setSelectedWarehouseId] = useState("");
   const [cart, setCart] = useState([]);
   const [lookupType, setLookupType] = useState(null);
-  const [operationDialogOpen, setOperationDialogOpen] = useState(false);
+  const [editingPurchaseId, setEditingPurchaseId] = useState("");
+  const [externalReference, setExternalReference] = useState("");
+  const [expectedAt, setExpectedAt] = useState("");
+  const [lookupLoadingId, setLookupLoadingId] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -84,8 +90,6 @@ export function PurchasesWindow({
     isDragging,
     style: windowStyle,
   } = useDraggableWindow();
-
-  useEffect(() => setView(initialView), [initialView]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,15 +114,19 @@ export function PurchasesWindow({
         setOrders(
           ordersResult.status === "fulfilled" ? ordersResult.value : [],
         );
-        setSelectedProviderId(String(nextProviders[0]?.id ?? ""));
-        setSelectedWarehouseId(String(nextWarehouses[0]?.id ?? ""));
+        setSelectedProviderId((current) =>
+          current || String(nextProviders[0]?.id ?? ""),
+        );
+        setSelectedWarehouseId((current) =>
+          current || String(nextWarehouses[0]?.id ?? ""),
+        );
 
         const requiredFailure = [providersResult, warehousesResult].find(
           (result) => result.status === "rejected",
         );
         if (requiredFailure) {
           setError(
-            `No se pudo cargar Compras: ${requiredFailure.reason?.message ?? "verifica la conexión con el API"}`,
+            `No se pudo cargar Compras: ${requiredFailure.reason?.message ?? "verifica la conexión con el sistema"}`,
           );
           if (isAuthError(requiredFailure.reason)) onRequestLogin?.();
         }
@@ -134,7 +142,6 @@ export function PurchasesWindow({
     function handleShortcuts(event) {
       if (event.key === "Escape") {
         if (lookupType) setLookupType(null);
-        else if (operationDialogOpen) setOperationDialogOpen(false);
         return;
       }
       if (event.key === "F1" || event.key === "F2") {
@@ -150,7 +157,7 @@ export function PurchasesWindow({
     }
     window.addEventListener("keydown", handleShortcuts);
     return () => window.removeEventListener("keydown", handleShortcuts);
-  }, [lookupType, operationDialogOpen]);
+  }, [lookupType]);
 
   const selectedProvider = providers.find(
     (provider) => String(provider.id) === String(selectedProviderId),
@@ -159,7 +166,21 @@ export function PurchasesWindow({
     (warehouse) => String(warehouse.id) === String(selectedWarehouseId),
   );
   const cartTotals = useMemo(() => calculateCartTotals(cart), [cart]);
-  const isDocumentView = ["purchases", "returns", "deliveries"].includes(view);
+  const purchaseViews = [
+    "purchases",
+    "orders",
+    "deliveries",
+    "returns",
+    "quotes",
+    "reports",
+    "various",
+  ];
+  const viewIndex = purchaseViews.indexOf(view);
+
+  function moveView(offset) {
+    const nextView = purchaseViews[viewIndex + offset];
+    if (nextView) navigate(nextView);
+  }
 
   function navigate(nextView) {
     setError("");
@@ -176,13 +197,46 @@ export function PurchasesWindow({
     setLookupType(type);
   }
 
-  function selectLookupItem(item) {
+  async function selectLookupItem(item) {
     if (lookupType === "providers") setSelectedProviderId(String(item.id));
     if (lookupType === "warehouses") setSelectedWarehouseId(String(item.id));
     if (lookupType === "products") addProduct(item);
-    if (lookupType === "orders")
-      setNotice(`Compra ${orderNumber(item)} cargada para consulta.`);
+    if (lookupType === "orders") await loadOrderIntoEditor(item);
     setLookupType(null);
+  }
+
+  async function loadOrderIntoEditor(order) {
+    setLookupLoadingId(String(order.id));
+    setError("");
+    try {
+      const detail = await apiClient.get("/compras/" + order.id);
+      setEditingPurchaseId(String(detail.id));
+      setSelectedProviderId(
+        String(detail.providerId ?? detail.provider?.id ?? ""),
+      );
+      setSelectedWarehouseId(
+        String(detail.warehouseId ?? detail.warehouse?.id ?? ""),
+      );
+      setExternalReference(detail.externalReference ?? "");
+      setExpectedAt(toDateInputValue(detail.expectedAt));
+      setCart(
+        (detail.items ?? []).map((item) => ({
+          productId: item.productId,
+          product: item.product,
+          quantity: Number(item.quantity ?? 1),
+          unit: item.unit ?? item.product?.unit ?? "UND",
+          unitCost: Number(item.unitCost ?? 0),
+          taxRate: Number(item.taxRate ?? item.product?.taxRate ?? 0),
+        })),
+      );
+      setView("purchases");
+      setNotice("Compra " + orderNumber(detail) + " cargada para editar.");
+    } catch (requestError) {
+      setError(requestError.message);
+      if (isAuthError(requestError)) onRequestLogin?.();
+    } finally {
+      setLookupLoadingId("");
+    }
   }
 
   function addProduct(product) {
@@ -243,25 +297,54 @@ export function PurchasesWindow({
       setError("Cada producto debe tener cantidad y costo mayor que cero.");
       return;
     }
-    setSaving(true);
-    setError("");
-    try {
-      const saved = await apiClient.post("/compras", {
-        providerId: numberOrValue(selectedProviderId),
-        warehouseId: numberOrValue(selectedWarehouseId),
-        orderedAt: new Date().toISOString(),
-        items: cart.map((item) => ({
-          productId: numberOrValue(item.productId),
-          quantity: Number(item.quantity),
-          unit: item.unit,
-          unitCost: Number(item.unitCost),
-          taxRate: Number(item.taxRate ?? 0),
-        })),
-      });
-      setOrders((current) => [saved, ...current]);
-      setCart([]);
-      setNotice(`Compra ${orderNumber(saved)} guardada correctamente.`);
-    } catch (requestError) {
+   setSaving(true);
+   setError("");
+    setNotice("");
+   try {
+      const body = {
+       providerId: numberOrValue(selectedProviderId),
+       warehouseId: numberOrValue(selectedWarehouseId),
+        externalReference: editingPurchaseId
+          ? externalReference.trim() || null
+          : externalReference.trim() || undefined,
+        expectedAt: editingPurchaseId
+          ? expectedAt
+            ? new Date(expectedAt + "T00:00:00").toISOString()
+            : null
+          : expectedAt
+            ? new Date(expectedAt + "T00:00:00").toISOString()
+            : undefined,
+        ...(editingPurchaseId
+          ? {}
+          : { orderedAt: new Date().toISOString() }),
+       items: cart.map((item) => ({
+         productId: numberOrValue(item.productId),
+         quantity: Number(item.quantity),
+         unit: item.unit,
+         unitCost: Number(item.unitCost),
+         taxRate: Number(item.taxRate ?? 0),
+       })),
+      };
+      const saved = editingPurchaseId
+        ? await apiClient.patch("/compras/" + editingPurchaseId, body)
+        : await apiClient.post("/compras", body);
+      setOrders((current) =>
+        editingPurchaseId
+          ? current.map((item) => (item.id === saved.id ? saved : item))
+          : [saved, ...current],
+      );
+      invalidatePurchasesDataCache();
+     setCart([]);
+      setNotice(
+        "Compra " +
+          orderNumber(saved) +
+          (editingPurchaseId ? " actualizada" : " guardada") +
+          " correctamente.",
+      );
+      setEditingPurchaseId("");
+      setExternalReference("");
+      setExpectedAt("");
+   } catch (requestError) {
       setError(requestError.message);
       if (isAuthError(requestError)) onRequestLogin?.();
     } finally {
@@ -270,17 +353,20 @@ export function PurchasesWindow({
   }
 
   async function transitionOrder(order, action) {
-    if (action === "anular" && !window.confirm("¿Anular esta compra?")) return;
-    setSaving(true);
-    try {
+   if (action === "anular" && !window.confirm("¿Anular esta compra?")) return;
+   setSaving(true);
+    setError("");
+    setNotice("");
+   try {
       const saved =
         action === "anular"
           ? await apiClient.patch(`/compras/${order.id}/anular`, {})
           : await apiClient.post(`/compras/${order.id}/${action}`, {});
-      setOrders((current) =>
-        current.map((item) => (item.id === saved.id ? saved : item)),
-      );
-      setNotice(
+     setOrders((current) =>
+       current.map((item) => (item.id === saved.id ? saved : item)),
+     );
+      invalidatePurchasesDataCache();
+     setNotice(
         `La compra ${orderNumber(saved)} ahora está ${statusLabels[saved.status] ?? saved.status}.`,
       );
     } catch (requestError) {
@@ -304,6 +390,9 @@ export function PurchasesWindow({
         onPointerDown={handlePointerDown}
         title="Arrastre para mover la ventana"
       >
+        <div className="provider-title-mark">
+          <ClipboardList size={14} />
+        </div>
         <span>MÓDULO DE COMPRAS</span>
         <strong>{(viewLabels[view] ?? "Compras").toUpperCase()}</strong>
         <span className="purchase-mode-label">MODO: NORMAL</span>
@@ -320,12 +409,9 @@ export function PurchasesWindow({
       <div className="provider-content purchase-content">
         {loading ? (
           <div className="module-loading">Cargando información de compras…</div>
-        ) : isDocumentView ? (
+        ) : view === "purchases" ? (
           <PurchaseDocumentPanel
             view={view}
-            providers={providers}
-            warehouses={warehouses}
-            products={products}
             selectedProvider={selectedProvider}
             selectedWarehouse={selectedWarehouse}
             selectedProviderId={selectedProviderId}
@@ -333,18 +419,28 @@ export function PurchasesWindow({
             cart={cart}
             totals={cartTotals}
             saving={saving}
+            editingPurchaseId={editingPurchaseId}
+            externalReference={externalReference}
+            expectedAt={expectedAt}
             onProviderChange={setSelectedProviderId}
             onWarehouseChange={setSelectedWarehouseId}
             onOpenLookup={openLookup}
-            onOpenOperation={() => setOperationDialogOpen(true)}
+            onExternalReferenceChange={setExternalReference}
+            onExpectedAtChange={setExpectedAt}
             onOpenView={navigate}
-            onAddProduct={addProduct}
             onUpdateItem={updateCartItem}
             onRemoveItem={removeCartItem}
             onSave={savePurchase}
-            onNotice={setNotice}
           />
-        ) : view === "orders" ? (
+        ) : view === "deliveries" ? (
+          <PurchaseReceivingPanel
+            orders={orders}
+            onTransition={transitionOrder}
+            saving={saving}
+          />
+        ) : view === "returns" ? (
+          <PurchaseReturnsPanel orders={orders} onOpenView={navigate} />
+       ) : view === "orders" ? (
           <PurchaseOrdersPanel
             orders={orders}
             activeOrder={activeOrder}
@@ -377,31 +473,43 @@ export function PurchasesWindow({
           type={lookupType}
           providers={providers}
           warehouses={warehouses}
-          products={products}
-          orders={orders}
-          onSelect={selectLookupItem}
-          onClose={() => setLookupType(null)}
-        />
-      )}
-      {operationDialogOpen && (
-        <PurchaseOperationDialog
-          provider={selectedProvider}
-          onClose={() => setOperationDialogOpen(false)}
-          onAccept={() => {
-            setOperationDialogOpen(false);
-            setNotice("Tipo de operación seleccionado.");
-          }}
-        />
-      )}
+         products={products}
+         orders={orders}
+          loadingId={lookupLoadingId}
+         onSelect={selectLookupItem}
+         onClose={() => setLookupType(null)}
+       />
+     )}
+      <footer className="provider-window-footer purchase-window-footer">
+        <span className="purchase-footer-caption">
+          Módulo de Compras · {viewLabels[view]} · {orders.length} operación(es)
+        </span>
+        <div className="provider-navigation-actions">
+          <button
+            type="button"
+            disabled={viewIndex <= 0}
+            onClick={() => moveView(-1)}
+          >
+            Anterior
+          </button>
+          <button
+            type="button"
+            disabled={viewIndex < 0 || viewIndex >= purchaseViews.length - 1}
+            onClick={() => moveView(1)}
+          >
+            Próximo
+          </button>
+          <button type="button" className="exit-action" onClick={onClose}>
+            Salir
+          </button>
+        </div>
+      </footer>
     </section>
   );
 }
 
 function PurchaseDocumentPanel({
   view,
-  providers,
-  warehouses,
-  products,
   selectedProvider,
   selectedWarehouse,
   selectedProviderId,
@@ -409,16 +517,18 @@ function PurchaseDocumentPanel({
   cart,
   totals,
   saving,
+  editingPurchaseId,
+  externalReference,
+  expectedAt,
   onProviderChange,
   onWarehouseChange,
   onOpenLookup,
-  onOpenOperation,
+  onExternalReferenceChange,
+  onExpectedAtChange,
   onOpenView,
-  onAddProduct,
   onUpdateItem,
   onRemoveItem,
   onSave,
-  onNotice,
 }) {
   const isOrder = view === "orders";
   const rows = Math.max(15, cart.length + 5);
@@ -432,8 +542,6 @@ function PurchaseDocumentPanel({
               id="purchase-provider"
               value={selectedProviderId}
               onChange={(event) => onProviderChange(event.target.value)}
-              onClick={() => onOpenLookup("providers")}
-              onFocus={() => !selectedProviderId && onOpenLookup("providers")}
               onKeyDown={(event) => {
                 if (event.key === "F1" || event.key === "F2") {
                   event.preventDefault();
@@ -465,8 +573,6 @@ function PurchaseDocumentPanel({
               id="purchase-warehouse"
               value={selectedWarehouseId}
               onChange={(event) => onWarehouseChange(event.target.value)}
-              onClick={() => onOpenLookup("warehouses")}
-              onFocus={() => !selectedWarehouseId && onOpenLookup("warehouses")}
             />
             <button
               type="button"
@@ -476,7 +582,7 @@ function PurchaseDocumentPanel({
               F1
             </button>
             <output className="purchase-description">
-              {selectedWarehouse?.name || selectedWarehouse?.description || ""}
+              {warehouseName(selectedWarehouse)}
             </output>
           </div>
           {!isOrder && (
@@ -485,10 +591,21 @@ function PurchaseDocumentPanel({
               <input
                 id="purchase-document"
                 className="purchase-document-input"
+                value={externalReference}
+                onChange={(event) => onExternalReferenceChange(event.target.value)}
                 placeholder="Número del documento"
               />
             </div>
           )}
+          <div className="purchase-field-row">
+            <label htmlFor="purchase-expected-at">Entrega prevista</label>
+            <input
+              id="purchase-expected-at"
+              type="date"
+              value={expectedAt}
+              onChange={(event) => onExpectedAtChange(event.target.value)}
+            />
+          </div>
         </div>
         <div className="purchase-brand-mark" aria-label="Mundo Tienda">
           mundo <small>tienda</small>
@@ -497,9 +614,6 @@ function PurchaseDocumentPanel({
       </div>
 
       <div className="purchase-shortcuts">
-        <button type="button" onClick={() => onOpenOperation()}>
-          <ClipboardList size={13} /> Tipo de operación
-        </button>
         <button type="button" onClick={() => onOpenView("purchases")}>
           <ClipboardList size={13} /> F4 Compras
         </button>
@@ -508,11 +622,9 @@ function PurchaseDocumentPanel({
         </button>
         <button
           type="button"
-          onClick={() =>
-            onNotice("La reimpresión estará disponible al guardar una compra.")
-          }
+          onClick={() => onOpenLookup("orders")}
         >
-          <Printer size={13} /> F6 Reimprimir
+          <Printer size={13} /> F6 Consultar
         </button>
         <button type="button" onClick={() => onOpenLookup("orders")}>
           <FileText size={13} /> F7 Cargar
@@ -624,7 +736,11 @@ function PurchaseDocumentPanel({
           disabled={saving}
           onClick={onSave}
         >
-          {saving ? "Guardando…" : "Guardar compra"}
+          {saving
+            ? "Guardando…"
+            : editingPurchaseId
+              ? "Actualizar compra"
+              : "Guardar compra"}
         </button>
       </div>
     </div>
@@ -659,13 +775,117 @@ function PurchaseTotalsPanel({ title, totals }) {
   );
 }
 
+function PurchaseReceivingPanel({ orders, onTransition, saving }) {
+  const [search, setSearch] = useState("");
+  const pending = orders.filter((order) => {
+    if (order.status !== "ORDENADA") return false;
+    const query = search.trim().toLowerCase();
+    if (!query) return true;
+    return (
+      `${orderNumber(order)} ${order.provider?.name ?? ""} ${warehouseName(
+        order.warehouse,
+      )}`.toLowerCase().includes(query)
+    );
+  });
+  return (
+    <div className="purchase-list-shell">
+      <div className="purchase-list-heading">
+        <div>
+          <span className="purchase-section-kicker">MÓDULO DE COMPRAS</span>
+          <h2>RECEPCIÓN DE NOTA DE ENTREGA</h2>
+        </div>
+      </div>
+      <div className="purchase-orders-toolbar">
+        <label htmlFor="purchase-receiving-search">Buscar</label>
+        <div className="purchase-search">
+          <Search size={14} />
+          <input
+            id="purchase-receiving-search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Número, proveedor o depósito"
+          />
+        </div>
+        <span>{pending.length} pendientes</span>
+      </div>
+      <div className="purchase-table-wrap purchase-orders-table-wrap">
+        <table className="purchase-table purchase-orders-table">
+          <thead>
+            <tr>
+              <th>Número</th>
+              <th>Proveedor</th>
+              <th>Depósito</th>
+              <th>Entrega prevista</th>
+              <th>Total</th>
+              <th>Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pending.map((order) => (
+              <tr key={order.id}>
+                <td>{orderNumber(order)}</td>
+                <td>{order.provider?.name ?? "—"}</td>
+                <td>{warehouseName(order.warehouse)}</td>
+                <td>{formatDate(order.expectedAt)}</td>
+                <td className="number-cell">{formatCurrency(order.total)}</td>
+                <td className="purchase-row-actions">
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => onTransition(order, "recibir")}
+                  >
+                    {saving ? "Guardando…" : "Recibir"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {!pending.length && (
+              <tr className="empty-list-row">
+                <td colSpan="6">No hay órdenes listas para recibir.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="purchase-list-footnote">
+        Recibir una orden actualiza existencias, costos y el saldo pendiente del proveedor.
+      </div>
+    </div>
+  );
+}
+
+function PurchaseReturnsPanel({ orders, onOpenView }) {
+  const received = orders.filter((order) => order.status === "RECIBIDA");
+  return (
+    <div className="purchase-simple-shell">
+      <div className="purchase-list-heading">
+        <div>
+          <span className="purchase-section-kicker">MÓDULO DE COMPRAS</span>
+          <h2>DEVOLUCIONES</h2>
+        </div>
+      </div>
+      <div className="purchase-simple-content purchase-return-state">
+        <RotateCcw size={38} />
+        <strong>No hay devoluciones registradas</strong>
+        <p>
+          {received.length
+            ? "Las compras recibidas están disponibles para consulta en Cuentas por pagar."
+            : "Recibe una orden de compra para que aparezca en el control de obligaciones."}
+        </p>
+        <button type="button" onClick={() => onOpenView("orders")}>
+          Ver órdenes de compra
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PurchaseOrdersPanel({
   orders,
   activeOrder,
   onOpenLookup,
   onOpenView,
   onTransition,
-  onNotice,
   saving,
 }) {
   const [search, setSearch] = useState("");
@@ -729,7 +949,7 @@ function PurchaseOrdersPanel({
                 <td>{orderNumber(order)}</td>
                 <td>{order.provider?.name ?? order.providerName ?? "—"}</td>
                 <td>
-                  {order.warehouse?.name ?? order.warehouse?.description ?? "—"}
+                  {warehouseName(order.warehouse)}
                 </td>
                 <td>{formatDate(order.orderedAt ?? order.createdAt)}</td>
                 <td className="number-cell">{formatCurrency(order.total)}</td>
@@ -747,7 +967,7 @@ function PurchaseOrdersPanel({
                       disabled={saving}
                       onClick={() => onTransition(order, "ordenar")}
                     >
-                      Ordenar
+                      {saving ? "Guardando…" : "Ordenar"}
                     </button>
                   )}
                   {order.status === "ORDENADA" && (
@@ -756,7 +976,7 @@ function PurchaseOrdersPanel({
                       disabled={saving}
                       onClick={() => onTransition(order, "recibir")}
                     >
-                      Recibir
+                      {saving ? "Guardando…" : "Recibir"}
                     </button>
                   )}
                   {!["RECIBIDA", "ANULADA"].includes(order.status) && (
@@ -765,7 +985,7 @@ function PurchaseOrdersPanel({
                       disabled={saving}
                       onClick={() => onTransition(order, "anular")}
                     >
-                      Anular
+                      {saving ? "Guardando…" : "Anular"}
                     </button>
                   )}
                 </td>
@@ -792,10 +1012,10 @@ function PurchaseQuotesPanel({ onOpenView }) {
     <SimplePurchasePanel
       icon={FileText}
       title="COTIZACIONES"
-      description="Consulta las cotizaciones recibidas y conviértelas en una orden de compra cuando el proveedor sea aprobado."
+      description="Las cotizaciones de proveedor se gestionan como órdenes de compra. Abre una compra o consulta las órdenes existentes."
       buttons={[
-        { label: "Nueva cotización", action: "purchases" },
-        { label: "Productos", action: "products" },
+        { label: "Nueva compra", action: "purchases" },
+        { label: "Órdenes de compra", action: "orders" },
       ]}
       onOpenView={onOpenView}
     />
@@ -922,6 +1142,7 @@ function PurchaseLookupDialog({
   warehouses,
   products,
   orders,
+  loadingId,
   onSelect,
   onClose,
 }) {
@@ -999,6 +1220,7 @@ function PurchaseLookupDialog({
                     <th>Estado</th>
                   </>
                 )}
+                <th>Acción</th>
               </tr>
             </thead>
             <tbody>
@@ -1047,7 +1269,7 @@ function PurchaseLookupDialog({
                   )}
                   {type === "orders" && (
                     <>
-                      <td>{item.warehouse?.name ?? "—"}</td>
+                      <td>{warehouseName(item.warehouse)}</td>
                       <td>{formatDate(item.orderedAt ?? item.createdAt)}</td>
                       <td className="number-cell">
                         {formatCurrency(item.total)}
@@ -1057,11 +1279,26 @@ function PurchaseLookupDialog({
                       </td>
                     </>
                   )}
+                  <td>
+                    <button
+                      type="button"
+                      disabled={Boolean(loadingId)}
+                      onClick={() => onSelect(item)}
+                    >
+                      {loadingId === String(item.id)
+                        ? "Cargando…"
+                        : type === "products"
+                          ? "Agregar"
+                          : type === "orders"
+                            ? "Cargar"
+                            : "Seleccionar"}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {!filteredItems.length && (
                 <tr className="empty-list-row">
-                  <td colSpan="8">No se encontraron registros.</td>
+                  <td colSpan="9">No se encontraron registros.</td>
                 </tr>
               )}
             </tbody>
@@ -1088,7 +1325,7 @@ function PurchaseLookupDialog({
   );
 }
 
-function PurchaseOperationDialog({ provider, onClose, onAccept }) {
+export function PurchaseOperationDialog({ provider, onClose, onAccept }) {
   return (
     <div className="module-dialog-backdrop">
       <section
@@ -1188,8 +1425,17 @@ function productStock(item) {
   return Number(item?.stock ?? item?.existence ?? item?.inventory ?? 0);
 }
 
-function productNameOrProvider(item) {
-  return item?.name ?? item?.description ?? "";
+function warehouseName(warehouse) {
+  return (
+    warehouse?.name ??
+    warehouse?.location ??
+    warehouse?.description ??
+    (warehouse?.id ? "Bodega #" + warehouse.id : "—")
+  );
+}
+
+function toDateInputValue(value) {
+  return value ? new Date(value).toISOString().slice(0, 10) : "";
 }
 
 function orderNumber(order) {

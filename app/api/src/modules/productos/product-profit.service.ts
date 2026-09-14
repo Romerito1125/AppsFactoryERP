@@ -132,7 +132,9 @@ export class ProductProfitService {
       Number(currentCost.cost) / Number(currentCost.quantity);
     const comparableCost = costPerCostUnit * comparableQuantity;
     const profitAmount = Number(price.price) - comparableCost;
-    const profitPercentage = (profitAmount / comparableCost) * 100;
+    // El margen se calcula sobre el precio de venta; la ganancia sobre el costo
+    // es el markup y no debe mostrarse como margen comercial.
+    const profitPercentage = (profitAmount / Number(price.price)) * 100;
 
     return {
       priceId: price.id,

@@ -110,28 +110,30 @@ export class ProveedoresService {
 
   async remove(id: number, actor: AuthUser) {
     this.ensurePositiveId(id);
-    await this.findOne(id);
-    const activeProducts = await this.prisma.productProvider.count({
-      where: { providerId: id, product: { isActive: true } },
-    });
-    if (activeProducts > 0) {
+    const current = await this.findOne(id);
+    const [productLinks, primaryProducts, purchaseOrders] = await Promise.all([
+      this.prisma.productProvider.count({ where: { providerId: id } }),
+      this.prisma.product.count({ where: { providerId: id } }),
+      this.prisma.purchaseOrder.count({ where: { providerId: id } }),
+    ]);
+    if (productLinks > 0 || primaryProducts > 0 || purchaseOrders > 0) {
       throw new BadRequestException(
-        'No se puede desactivar un proveedor con productos activos asociados',
+        'No se puede eliminar definitivamente este proveedor porque tiene productos o compras relacionados',
       );
     }
-    const provider = await this.prisma.provider.update({
-      where: { id },
-      data: { isActive: false, deletedAt: new Date() },
-    });
+    const provider = await this.prisma.provider.delete({ where: { id } });
     await this.auditLogService.log({
       actor,
       module: 'PROVEEDORES',
-      action: 'DEACTIVATE',
+      action: 'DELETE',
       entityType: 'Provider',
       entityId: provider.id,
       entityLabel: provider.name,
-      description: `Desactivo el proveedor ${provider.name}`,
-      metadata: { providerId: provider.id },
+      description: `Elimino definitivamente el proveedor ${provider.name}`,
+      metadata: {
+        providerId: provider.id,
+        previousTaxId: current.taxId,
+      },
     });
     return provider;
   }
