@@ -169,27 +169,26 @@ export const salesToolbarItems = [
   },
 ];
 
-export const purchasesMenuItems = [
-  { label: "Compras", action: "purchases", permission: "PURCHASES_VIEW" },
-  { label: "Devoluciones", action: "returns", permission: "PURCHASES_VIEW" },
-  {
-    label: "Cotizaciones",
-    action: "quotes",
-    permission: "PURCHASES_VIEW",
-  },
-  {
-    label: "Ordenes de compra",
-    action: "orders",
-    permission: "PURCHASES_VIEW",
-  },
-  {
-    label: "Nota de entrega",
-    action: "deliveries",
-    permission: "PURCHASES_VIEW",
-  },
-  { label: "Reportes", action: "reports", permission: "PURCHASES_VIEW" },
-  { label: "Varios", action: "various", permission: "PURCHASES_VIEW" },
-];
+export const purchasesMenuItemsByMenu = {
+  Compras: [
+    { label: "Abrir compras", action: "purchases", permission: "PURCHASES_VIEW" },
+  ],
+  Cotizaciones: [
+    { label: "Cotizaciones", action: "quotes", permission: "PURCHASES_VIEW" },
+  ],
+  "Ordenes de compra": [
+    { label: "Ordenes de compra", action: "orders", permission: "PURCHASES_VIEW" },
+  ],
+  "Nota de entrega": [
+    { label: "Nota de entrega", action: "deliveries", permission: "PURCHASES_VIEW" },
+  ],
+  Reportes: [
+    { label: "Reportes", action: "reports", permission: "PURCHASES_VIEW" },
+  ],
+  Varios: [
+    { label: "Varios", action: "various", permission: "PURCHASES_VIEW" },
+  ],
+};
 
 export const purchasesToolbarItems = [
   {

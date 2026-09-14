@@ -6219,6 +6219,9 @@ button {
   flex-direction: column;
   padding: 14px;
 }
+.bank-report-shell {
+  overflow: auto;
+}
 .bank-section-heading {
   flex-basis: 54px;
 }
@@ -6232,6 +6235,62 @@ button {
   background: #f6fafb;
   border: 1px solid #bacbd4;
   font-size: 11px;
+}
+.bank-report-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  color: #536c7b;
+  font-size: 11px;
+}
+.bank-report-toolbar label {
+  font-weight: 700;
+}
+.bank-report-toolbar select {
+  min-width: 220px;
+  height: 28px;
+  padding: 3px 7px;
+  color: #31576f;
+  background: #fff;
+  border: 1px solid #a5bac6;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.bank-report-toolbar span {
+  margin-left: auto;
+  color: #718592;
+  font-size: 10px;
+}
+.bank-report-detail {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  margin-top: 14px;
+  background: #fff;
+  border: 1px solid #a9bac5;
+}
+.bank-report-detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  color: #2a526b;
+  background: #e4edf2;
+  border-bottom: 1px solid #bac9d2;
+  font-size: 11px;
+}
+.bank-report-detail-heading span {
+  color: #718693;
+  font-size: 10px;
+}
+.bank-report-table-scroll {
+  max-height: 250px;
+  overflow: auto;
+}
+.bank-report-table-scroll .bank-table {
+  min-width: 700px;
 }
 .bank-various-grid {
   display: grid;

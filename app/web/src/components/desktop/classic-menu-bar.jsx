@@ -6,7 +6,7 @@ import {
   banksMenuItemsByMenu,
   banksTopMenuItems,
   moduleMenuItems,
-  purchasesMenuItems,
+  purchasesMenuItemsByMenu,
   purchasesTopMenuItems,
   salesMenuItems,
   salesTopMenuItems,
@@ -136,7 +136,7 @@ export function ClassicMenuBar({
                 : activeModule === "sales"
                   ? salesMenuItems
                   : activeModule === "purchases"
-                    ? purchasesMenuItems
+                    ? (purchasesMenuItemsByMenu[item] ?? [])
                     : activeModule === "banks"
                       ? (banksMenuItemsByMenu[item] ?? [])
                       : item === "Archivos"

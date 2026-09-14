@@ -195,24 +195,6 @@ export function BanksWindow({
     }
   }
 
-  const bankViews = [
-    "home",
-    "accounts",
-    "transactions",
-    "beneficiaries",
-    "banks",
-    "receivables",
-    "payables",
-    "reports",
-    "various",
-  ];
-  const bankViewIndex = bankViews.indexOf(view);
-
-  function moveView(offset) {
-    const nextView = bankViews[bankViewIndex + offset];
-    if (nextView) navigate(nextView);
-  }
-
   const commonProps = {
     accounts,
     selectedAccountId,
@@ -296,20 +278,6 @@ export function BanksWindow({
           Módulo de Bancos · {viewLabels[view]} · {accounts.length} cuenta(s)
         </span>
         <div className="provider-navigation-actions">
-          <button
-            type="button"
-            disabled={bankViewIndex <= 0}
-            onClick={() => moveView(-1)}
-          >
-            Anterior
-          </button>
-          <button
-            type="button"
-            disabled={bankViewIndex < 0 || bankViewIndex >= bankViews.length - 1}
-            onClick={() => moveView(1)}
-          >
-            Próximo
-          </button>
           <button type="button" className="exit-action" onClick={onClose}>
             Salir
           </button>
@@ -1039,6 +1007,9 @@ function BankTransactionsPanel({
 }
 
 function BankReceivablesPanel({ credits }) {
+  const pendingCredits = credits.filter(
+    (credit) => Number(credit.balance ?? 0) > 0,
+  );
   return (
     <BankTablePanel
       title="CUENTAS POR COBRAR"
@@ -1055,7 +1026,7 @@ function BankReceivablesPanel({ credits }) {
           </tr>
         </thead>
         <tbody>
-          {credits.map((credit) => (
+          {pendingCredits.map((credit) => (
             <tr key={credit.id}>
               <td>{credit.invoice?.consecutive ?? credit.id}</td>
               <td>
@@ -1070,7 +1041,7 @@ function BankReceivablesPanel({ credits }) {
               <td className="number-cell">{formatCurrency(credit.balance)}</td>
             </tr>
           ))}
-          {!credits.length && (
+          {!pendingCredits.length && (
             <tr>
               <td colSpan="5">No hay cuentas por cobrar para mostrar.</td>
             </tr>
@@ -1126,18 +1097,39 @@ function BankPayablesPanel({ purchases }) {
 }
 
 function BankReportsPanel({ accounts, movements }) {
-  const balance = accounts.reduce(
+  const [accountFilter, setAccountFilter] = useState("TODOS");
+  const visibleMovements = useMemo(
+    () =>
+      movements
+        .filter(
+          (movement) =>
+            accountFilter === "TODOS" ||
+            String(movement.bankAccountId) === String(accountFilter),
+        )
+        .slice()
+        .sort(
+          (left, right) =>
+            new Date(right.createdAt ?? right.date ?? 0).getTime() -
+            new Date(left.createdAt ?? left.date ?? 0).getTime(),
+        ),
+    [accountFilter, movements],
+  );
+  const visibleAccounts =
+    accountFilter === "TODOS"
+      ? accounts
+      : accounts.filter((account) => String(account.id) === String(accountFilter));
+  const balance = visibleAccounts.reduce(
     (sum, account) => sum + Number(account.currentBalance ?? 0),
     0,
   );
-  const income = movements
+  const income = visibleMovements
     .filter(isIncomeMovement)
     .reduce(
       (sum, movement) =>
         sum + Number(movement.totalAmount ?? movement.amount ?? 0),
       0,
     );
-  const expenses = movements
+  const expenses = visibleMovements
     .filter(isExpenseMovement)
     .reduce(
       (sum, movement) =>
@@ -1167,12 +1159,80 @@ function BankReportsPanel({ accounts, movements }) {
           <strong>{formatCurrency(expenses)}</strong>
         </div>
       </div>
+      <div className="bank-report-toolbar">
+        <label htmlFor="bank-report-account-filter">Cuenta</label>
+        <select
+          id="bank-report-account-filter"
+          value={accountFilter}
+          onChange={(event) => setAccountFilter(event.target.value)}
+        >
+          <option value="TODOS">Todas las cuentas</option>
+          {accounts.map((account) => (
+            <option value={account.id} key={account.id}>
+              {account.name}
+            </option>
+          ))}
+        </select>
+        <span>{visibleMovements.length} movimiento(s) en el detalle</span>
+      </div>
       <div className="bank-report-note">
-        Seleccione una cuenta o consulte Transacciones para revisar el detalle
-        de cada movimiento.
+        Selecciona una cuenta para filtrar el resumen y revisar sus movimientos.
+      </div>
+      <div className="bank-report-detail">
+        <div className="bank-report-detail-heading">
+          <strong>Detalle de movimientos</strong>
+          <span>Ingresos, egresos, transferencias y ajustes registrados.</span>
+        </div>
+        <div className="bank-report-table-scroll">
+          <table className="bank-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Tipo</th>
+                <th>Descripción</th>
+                <th>Cuenta</th>
+                <th>Monto</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleMovements.map((movement) => (
+                <tr key={movement.id}>
+                  <td>{formatDate(movement.createdAt ?? movement.date)}</td>
+                  <td>{movementTypeLabel(movement)}</td>
+                  <td>{movement.description ?? "—"}</td>
+                  <td>
+                    {movement.bankAccount?.name ??
+                      accounts.find(
+                        (account) => account.id === movement.bankAccountId,
+                      )?.name ??
+                      "—"}
+                  </td>
+                  <td className="number-cell">
+                    {formatCurrency(movement.totalAmount ?? movement.amount)}
+                  </td>
+                </tr>
+              ))}
+              {!visibleMovements.length && (
+                <tr>
+                  <td colSpan="5">No hay movimientos para este filtro.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
+}
+
+function movementTypeLabel(movement) {
+  const type = String(movement?.movementType ?? "");
+  if (type.includes("AJUSTE")) return "Ajuste";
+  if (type.includes("TRANSFERENCIA_ENTRANTE")) return "Transferencia entrante";
+  if (type.includes("TRANSFERENCIA_SALIENTE")) return "Transferencia saliente";
+  if (type.includes("INGRESO")) return "Ingreso";
+  if (type.includes("EGRESO")) return "Egreso";
+  return type || "Movimiento";
 }
 
 function BankVariousPanel({ onOpenView }) {
