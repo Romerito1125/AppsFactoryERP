@@ -19,20 +19,8 @@ import {
 
 export const topMenuItems = ["Archivos", "Transacciones"];
 export const salesTopMenuItems = ["Facturación"];
-export const purchasesTopMenuItems = [
-  "Compras",
-  "Cotizaciones",
-  "Ordenes de compra",
-  "Nota de entrega",
-  "Reportes",
-  "Varios",
-];
-export const banksTopMenuItems = [
-  "Archivos",
-  "Transacciones",
-  "Reportes",
-  "Varios",
-];
+export const purchasesTopMenuItems = ["Compras"];
+export const banksTopMenuItems = ["Bancos"];
 
 export const defaultAdminCredentials = {
   email: "admin@mundotienda.com",
@@ -171,21 +159,11 @@ export const salesToolbarItems = [
 
 export const purchasesMenuItemsByMenu = {
   Compras: [
-    { label: "Abrir compras", action: "purchases", permission: "PURCHASES_VIEW" },
-  ],
-  Cotizaciones: [
+    { label: "Nueva compra", action: "purchases", permission: "PURCHASES_VIEW" },
     { label: "Cotizaciones", action: "quotes", permission: "PURCHASES_VIEW" },
-  ],
-  "Ordenes de compra": [
     { label: "Ordenes de compra", action: "orders", permission: "PURCHASES_VIEW" },
-  ],
-  "Nota de entrega": [
     { label: "Nota de entrega", action: "deliveries", permission: "PURCHASES_VIEW" },
-  ],
-  Reportes: [
     { label: "Reportes", action: "reports", permission: "PURCHASES_VIEW" },
-  ],
-  Varios: [
     { label: "Varios", action: "various", permission: "PURCHASES_VIEW" },
   ],
 };
@@ -229,16 +207,14 @@ export const purchasesToolbarItems = [
 ];
 
 export const banksMenuItemsByMenu = {
-  Archivos: [
-    { label: "Cuentas", action: "accounts", permission: "BANKS_VIEW" },
+  Bancos: [
+    { label: "Cuentas bancarias", action: "accounts", permission: "BANKS_VIEW" },
     {
       label: "Beneficiarios",
       action: "beneficiaries",
       permission: "BANKS_VIEW",
     },
-    { label: "Bancos", action: "banks", permission: "BANKS_VIEW" },
-  ],
-  Transacciones: [
+    { label: "Entidades bancarias", action: "banks", permission: "BANKS_VIEW" },
     {
       label: "Transacciones",
       action: "transactions",
@@ -254,11 +230,9 @@ export const banksMenuItemsByMenu = {
       action: "payables",
       permission: "BANKS_VIEW",
     },
-  ],
-  Reportes: [
     { label: "Reportes", action: "reports", permission: "BANKS_VIEW" },
+    { label: "Varios", action: "various", permission: "BANKS_VIEW" },
   ],
-  Varios: [{ label: "Varios", action: "various", permission: "BANKS_VIEW" }],
 };
 
 export const banksToolbarItems = [
