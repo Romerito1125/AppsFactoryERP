@@ -8,11 +8,20 @@ import {
   Patch,
   Post,
   Query,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
+import { Roles } from '../../common/decorators/roles.decorator';
+import { Role } from '../../common/enums/role.enum';
+import { RolesGuard } from '../../common/guards/roles.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { CotizacionesService } from './cotizaciones.service';
 import { ListQuotesQueryDto } from './dto/list-quotes-query.dto';
 import {
   CreateQuoteDto,
+  SendQuoteToWarehouseDto,
   UpdateQuoteDto,
   UpdateQuoteStatusDto,
 } from './dto/quote.dto';
@@ -48,5 +57,15 @@ export class CotizacionesController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.service.convertToInvoice(id);
+  }
+  @Post(':id/enviar-bodega')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.VENDEDOR, Role.CONTADOR)
+  sendToWarehouse(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SendQuoteToWarehouseDto,
+    @Req() request: Request & { user: AuthUser },
+  ) {
+    return this.service.sendToWarehouse(id, dto.userId, request.user);
   }
 }

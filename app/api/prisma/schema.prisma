@@ -29,6 +29,9 @@ model User {
   createdTransferTickets InventoryTransferTicket[] @relation("TransferTicketCreatedBy")
   approvedTransferTickets InventoryTransferTicket[] @relation("TransferTicketApprovedBy")
   permissions       UserPermission[]
+  notificationReads NotificationRead[]
+  receivedNotifications Notification[] @relation("NotificationRecipient")
+  assignedDeliveries Delivery[] @relation("DeliveryAssignedTo")
 
   @@index([isActive])
   @@index([warehouseId])
@@ -372,7 +375,10 @@ model Provider {
   legalRepresentative String?
   className   String?
   withholdingType String?
+  withholdingRate Decimal? @db.Decimal(5, 2)
+  withholdingMinimumBase Decimal? @db.Decimal(14, 2)
   hasIslrWithholding Boolean  @default(false)
+  isSelfWithholding Boolean @default(false)
   creditDays  Int?
   observations String?
   isActive    Boolean   @default(true)
@@ -496,20 +502,42 @@ model Invoice {
 }
 
 model Notification {
-  id        Int              @id @default(autoincrement())
-  type      NotificationType
-  title     String
-  message   String
-  source    InvoiceSource?
-  invoiceId Int?
-  createdAt DateTime         @default(now())
+  id            Int              @id @default(autoincrement())
+  type          NotificationType
+  title         String
+  message       String
+  source        InvoiceSource?
+  invoiceId     Int?
+  actionLabel   String?
+  actionModule  String?
+  actionView    String?
+  actionEntityId Int?
+  priority      NotificationPriority @default(NORMAL)
+  recipientUserId Int?
+  createdAt     DateTime         @default(now())
 
   invoice Invoice? @relation(fields: [invoiceId], references: [id])
+  recipientUser User? @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  reads   NotificationRead[]
 
   @@index([type])
   @@index([source])
   @@index([invoiceId])
+  @@index([recipientUserId])
   @@index([createdAt])
+}
+
+model NotificationRead {
+  id             Int          @id @default(autoincrement())
+  notificationId Int
+  userId         Int
+  readAt         DateTime     @default(now())
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId, readAt])
 }
 
 model InvoiceCredit {
@@ -552,18 +580,22 @@ model CreditPayment {
 model Delivery {
   id             Int            @id @default(autoincrement())
   invoiceId      Int            @unique
+  assignedUserId Int?
   address        String
   recipientName  String
   recipientPhone String
   notes          String?
+  deliveryFee    Decimal        @default(0) @db.Decimal(12, 2)
   status         DeliveryStatus @default(PENDIENTE)
   deliveredAt    DateTime?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @default(now()) @updatedAt
 
   invoice Invoice @relation(fields: [invoiceId], references: [id])
+  assignedUser User? @relation("DeliveryAssignedTo", fields: [assignedUserId], references: [id])
 
   @@index([status])
+  @@index([assignedUserId])
   @@index([createdAt])
 }
 
@@ -710,9 +742,15 @@ model PurchaseOrder {
   orderedAt         DateTime             @default(now())
   expectedAt        DateTime?
   receivedAt        DateTime?
+  documentName      String?
+  documentMimeType  String?
+  documentData      String?              @db.Text
   subtotal          Decimal              @db.Decimal(14, 2)
   taxes             Decimal              @db.Decimal(14, 2)
   total             Decimal              @db.Decimal(14, 2)
+  retentionRate     Decimal              @default(0) @db.Decimal(5, 2)
+  retentionAmount   Decimal              @default(0) @db.Decimal(14, 2)
+  payableTotal      Decimal              @default(0) @db.Decimal(14, 2)
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @default(now()) @updatedAt
 
@@ -828,6 +866,7 @@ model BankAccount {
   accountNumber  String?
   accountType    String?
   currentBalance Decimal   @default(0) @db.Decimal(14, 2)
+  gmfRate       Decimal   @default(0.4) @db.Decimal(8, 5)
   isActive       Boolean   @default(true)
   deletedAt      DateTime?
   createdAt      DateTime  @default(now())
@@ -919,13 +958,21 @@ enum Role {
   VENDEDOR
   BODEGA
   CONTADOR
+  DOMICILIARIO
 }
 
 enum NotificationType {
   FACTURA
   VENTA_POS
   PEDIDO_APP
+  BODEGA_TAREA
   OBRA_SOCIAL
+}
+
+enum NotificationPriority {
+  NORMAL
+  IMPORTANTE
+  URGENTE
 }
 
 enum ClientType {

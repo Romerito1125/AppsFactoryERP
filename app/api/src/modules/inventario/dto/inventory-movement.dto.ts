@@ -1,5 +1,7 @@
 import { Type } from 'class-transformer';
+import { UnitType } from '@prisma/client';
 import {
+  IsEnum,
   IsInt,
   IsOptional,
   IsPositive,
@@ -36,6 +38,10 @@ export class InventoryEntryDto {
   quantity: number;
 
   @IsOptional()
+  @IsEnum(UnitType)
+  unit?: UnitType;
+
+  @IsOptional()
   @IsString()
   reason?: string;
 }
@@ -64,6 +70,10 @@ export class InventoryExitDto {
   @IsInt()
   @IsPositive()
   quantity: number;
+
+  @IsOptional()
+  @IsEnum(UnitType)
+  unit?: UnitType;
 
   @IsOptional()
   @IsString()
@@ -106,6 +116,10 @@ export class InventoryAdjustmentDto {
   @IsInt()
   @Min(0)
   quantity: number;
+
+  @IsOptional()
+  @IsEnum(UnitType)
+  unit?: UnitType;
 
   @IsString()
   @MinLength(3)

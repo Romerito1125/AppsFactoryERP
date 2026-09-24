@@ -3,12 +3,14 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InvoiceStatus, QuoteStatus } from '@prisma/client';
+import { InvoiceStatus, QuoteStatus, Role } from '@prisma/client';
 import {
   buildPaginatedResponse,
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { ListQuotesQueryDto } from './dto/list-quotes-query.dto';
 import {
   CreateQuoteDto,
@@ -18,7 +20,10 @@ import {
 
 @Injectable()
 export class CotizacionesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificacionesService: NotificacionesService,
+  ) {}
   async findAll(query: ListQuotesQueryDto) {
     const where = {
       ...this.getStatusWhere(query.status),
@@ -128,6 +133,44 @@ export class CotizacionesService {
       });
       return invoice;
     });
+  }
+
+  async sendToWarehouse(id: number, userId: number, _actor: AuthUser) {
+    const quote = await this.findOne(id);
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        role: Role.BODEGA,
+        isActive: true,
+        deletedAt: null,
+        warehouseId: { not: null },
+      },
+      include: { warehouse: true },
+    });
+    if (!user?.warehouse) {
+      throw new BadRequestException(
+        'Selecciona un usuario Bodega activo y con una bodega asignada.',
+      );
+    }
+    if (quote.status === QuoteStatus.RECHAZADA || quote.status === QuoteStatus.EXPIRADA) {
+      throw new BadRequestException('No se puede enviar una cotización rechazada o expirada.');
+    }
+    await this.notificacionesService.createWarehouseTaskNotification({
+      recipientUserId: user.id,
+      quoteId: quote.id,
+      quoteConsecutive: quote.consecutive,
+      warehouseName: user.warehouse.location,
+    });
+    return {
+      sent: true,
+      quoteId: quote.id,
+      recipient: {
+        id: user.id,
+        username: user.username,
+        warehouseId: user.warehouseId,
+        warehouse: user.warehouse.location,
+      },
+    };
   }
   private readonly include = {
     client: true,

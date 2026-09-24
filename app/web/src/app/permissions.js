@@ -74,6 +74,14 @@ export const permissionCatalog = [
     group: "Transacciones",
   },
   { code: "SALES_CREATE", label: "Registrar ventas", group: "Transacciones" },
+  { code: "OFFERS_VIEW", label: "Consultar ofertas", group: "Ventas" },
+  { code: "OFFERS_EDIT", label: "Gestionar ofertas", group: "Ventas" },
+  { code: "REFERRALS_VIEW", label: "Consultar referidos", group: "Ventas" },
+  { code: "REFERRALS_EDIT", label: "Configurar referidos", group: "Ventas" },
+  { code: "REPORTS_VIEW", label: "Consultar reportes", group: "Reportes" },
+  { code: "DELIVERIES_VIEW", label: "Consultar domicilios", group: "Domicilios" },
+  { code: "DELIVERIES_EDIT", label: "Gestionar domicilios", group: "Domicilios" },
+  { code: "DELIVERIES_DISPATCH", label: "Actualizar entregas asignadas", group: "Domicilios" },
 ];
 
 export const defaultPermissionCodesByRole = {
@@ -103,6 +111,8 @@ export const defaultPermissionCodesByRole = {
     "PAYABLES_EDIT",
     "PURCHASES_VIEW",
     "PURCHASES_EDIT",
+    "DELIVERIES_VIEW",
+    "DELIVERIES_DISPATCH",
   ],
   CONTADOR: [
     "CLIENTS_VIEW",
@@ -117,7 +127,11 @@ export const defaultPermissionCodesByRole = {
     "PURCHASES_EDIT",
     "BANKS_VIEW",
     "BANKS_EDIT",
+    "OFFERS_VIEW",
+    "REFERRALS_VIEW",
+    "REPORTS_VIEW",
   ],
+  DOMICILIARIO: ["DELIVERIES_VIEW", "DELIVERIES_DISPATCH"],
   CLIENTE: [],
 };
 

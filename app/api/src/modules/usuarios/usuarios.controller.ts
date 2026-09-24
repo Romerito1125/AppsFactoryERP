@@ -38,6 +38,13 @@ export class UsuariosController {
     return this.usuariosService.findAll(query);
   }
 
+  @Get('vendedores')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.CAJERO, Role.VENDEDOR)
+  findSalesUsers() {
+    return this.usuariosService.findSalesUsers();
+  }
+
   @Get(':id/permisos')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)

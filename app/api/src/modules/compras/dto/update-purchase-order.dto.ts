@@ -44,6 +44,20 @@ export class UpdatePurchaseOrderDto {
   expectedAt?: string | null;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(180)
+  documentName?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  documentMimeType?: string | null;
+
+  @IsOptional()
+  @IsString()
+  documentData?: string | null;
+
+  @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })

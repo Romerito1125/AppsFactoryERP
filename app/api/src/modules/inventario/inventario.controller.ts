@@ -46,8 +46,11 @@ export class InventarioController {
   }
 
   @Get('bodegas/:warehouseId')
-  findByWarehouse(@Param('warehouseId', ParseIntPipe) warehouseId: number) {
-    return this.inventarioService.findByWarehouse(warehouseId);
+  findByWarehouse(
+    @Param('warehouseId', ParseIntPipe) warehouseId: number,
+    @Req() request: AuthRequest,
+  ) {
+    return this.inventarioService.findByWarehouse(warehouseId, request.user);
   }
 
   @Post('entrada')
@@ -75,22 +78,22 @@ export class InventarioController {
   }
 
   @Get('movimientos')
-  findMovements(@Query() query: ListInventoryQueryDto) {
-    return this.inventarioService.findMovements(query);
+  findMovements(@Query() query: ListInventoryQueryDto, @Req() request: AuthRequest) {
+    return this.inventarioService.findMovements(query, request.user);
   }
 
   @Get('movimientos/:id')
-  findMovement(@Param('id', ParseIntPipe) id: number) {
-    return this.inventarioService.findMovement(id);
+  findMovement(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
+    return this.inventarioService.findMovement(id, request.user);
   }
 
   @Get('traslados/tickets')
-  findTransferTickets(@Query() query: ListInventoryQueryDto) {
-    return this.inventarioService.findTransferTickets(query);
+  findTransferTickets(@Query() query: ListInventoryQueryDto, @Req() request: AuthRequest) {
+    return this.inventarioService.findTransferTickets(query, request.user);
   }
 
   @Get('traslados/tickets/:id')
-  findTransferTicket(@Param('id', ParseIntPipe) id: number) {
-    return this.inventarioService.findTransferTicket(id);
+  findTransferTicket(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
+    return this.inventarioService.findTransferTicket(id, request.user);
   }
 }

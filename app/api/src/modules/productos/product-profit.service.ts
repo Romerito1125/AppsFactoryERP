@@ -4,12 +4,17 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { UnitType } from '@prisma/client';
-import { convertQuantity } from '../../common/utils/unit-conversion.util';
+import {
+  convertProductQuantityToBase,
+  convertProductUnitCost,
+} from '../../common/utils/product-quantity.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { ProfitProductsQueryDto } from './dto/profit-products-query.dto';
 
 @Injectable()
 export class ProductProfitService {
+  private readonly minimumRecommendedMargin = 20;
+
   constructor(private readonly prisma: PrismaService) {}
 
   async findProductProfit(productId: number) {
@@ -27,6 +32,7 @@ export class ProductProfitService {
           where: { isActive: true },
           orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
         },
+        packagingProfile: true,
       },
     });
 
@@ -54,6 +60,7 @@ export class ProductProfitService {
           where: { isActive: true },
           orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
         },
+        packagingProfile: true,
       },
       orderBy: { id: 'asc' },
       skip: (page - 1) * limit,
@@ -101,16 +108,29 @@ export class ProductProfitService {
         quantity: this.formatAmount(Number(currentCost.quantity)),
       },
       prices: product.prices.map((price) =>
-        this.formatPriceProfit(price, currentCost),
+        this.formatPriceProfit(
+          price,
+          currentCost,
+          product.unit,
+          product.packagingProfile,
+          Number(product.taxRate ?? 0),
+        ),
       ),
     };
   }
 
-  private formatPriceProfit(price, currentCost) {
-    const comparableQuantity = convertQuantity(
+  private formatPriceProfit(
+    price,
+    currentCost,
+    productUnit,
+    packagingProfile,
+    taxRate,
+  ) {
+    const comparableQuantity = convertProductQuantityToBase(
       Number(price.quantity),
       price.unit as UnitType,
-      currentCost.unit as UnitType,
+      productUnit,
+      packagingProfile,
     );
 
     if (comparableQuantity === null) {
@@ -123,18 +143,45 @@ export class ProductProfitService {
         profitAmount: null,
         profitPercentage: null,
         warning:
-          `No se puede calcular utilidad: ${price.unit} y ` +
-          `${currentCost.unit} no son unidades compatibles`,
+          `No se puede calcular utilidad: ${price.unit} no se puede convertir ` +
+          `a la unidad base del producto`,
       };
     }
 
-    const costPerCostUnit =
-      Number(currentCost.cost) / Number(currentCost.quantity);
-    const comparableCost = costPerCostUnit * comparableQuantity;
-    const profitAmount = Number(price.price) - comparableCost;
+    const costPerProductUnit = convertProductUnitCost(
+      Number(currentCost.cost) / Number(currentCost.quantity),
+      currentCost.unit as UnitType,
+      productUnit,
+      packagingProfile,
+    );
+    if (costPerProductUnit === null) {
+      return {
+        priceId: price.id,
+        name: price.name,
+        price: this.formatAmount(Number(price.price)),
+        unit: price.unit,
+        quantity: this.formatAmount(Number(price.quantity)),
+        profitAmount: null,
+        profitPercentage: null,
+        warning: 'No se puede convertir el costo a la unidad base del producto',
+      };
+    }
+
+    const comparableCost = costPerProductUnit * comparableQuantity;
+    const priceBeforeTax = Number(price.price);
+    const profitAmount = priceBeforeTax - comparableCost;
     // El margen se calcula sobre el precio de venta; la ganancia sobre el costo
     // es el markup y no debe mostrarse como margen comercial.
-    const profitPercentage = (profitAmount / Number(price.price)) * 100;
+    const profitPercentage = (profitAmount / priceBeforeTax) * 100;
+    const priceAfterTax = priceBeforeTax * (1 + taxRate / 100);
+    const profitAfterTax = priceAfterTax - comparableCost;
+    const marginAfterTax = (profitAfterTax / priceAfterTax) * 100;
+    const suggestedPriceBeforeTax =
+      comparableCost / (1 - this.minimumRecommendedMargin / 100);
+    const warning =
+      profitPercentage < this.minimumRecommendedMargin
+        ? `Margen bajo (${profitPercentage.toFixed(2)}%). Precio sugerido antes de IVA para conservar ${this.minimumRecommendedMargin}%: ${this.formatAmount(suggestedPriceBeforeTax)}`
+        : undefined;
 
     return {
       priceId: price.id,
@@ -144,6 +191,12 @@ export class ProductProfitService {
       quantity: this.formatAmount(Number(price.quantity)),
       profitAmount: this.formatAmount(profitAmount),
       profitPercentage: profitPercentage.toFixed(2),
+      priceBeforeTax: this.formatAmount(priceBeforeTax),
+      priceAfterTax: this.formatAmount(priceAfterTax),
+      profitAfterTax: this.formatAmount(profitAfterTax),
+      marginAfterTax: marginAfterTax.toFixed(2),
+      suggestedPriceBeforeTax: this.formatAmount(suggestedPriceBeforeTax),
+      warning,
     };
   }
 

@@ -3,6 +3,7 @@ import { CircleX, KeyRound, LogIn, X } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
 import { defaultAdminCredentials } from "@/app/desktop-config";
+import { TransientMessage } from "./transient-message";
 
 export function LoginDialog({ onClose, onLoggedIn, required = false }) {
   const [email, setEmail] = useState(defaultAdminCredentials.email);
@@ -75,9 +76,13 @@ export function LoginDialog({ onClose, onLoggedIn, required = false }) {
             />
           </label>
           {error && (
-            <div className="login-error" role="alert">
+            <TransientMessage
+              className="login-error"
+              role="alert"
+              onDismiss={() => setError("")}
+            >
               {error}
-            </div>
+            </TransientMessage>
           )}
           <footer className="login-actions">
             {!required && (

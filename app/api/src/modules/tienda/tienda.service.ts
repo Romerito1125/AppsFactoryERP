@@ -9,6 +9,7 @@ import {
   buildPaginatedResponse,
   resolvePagination,
 } from '../../common/utils/pagination.util';
+import { Role } from '../../common/enums/role.enum';
 import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { FacturasService } from '../facturas/facturas.service';
 import { PrismaService } from '../../shared/prisma/prisma.service';
@@ -23,11 +24,25 @@ export class TiendaService {
     private readonly facturasService: FacturasService,
   ) {}
 
-  async findOrders(query: ListStoreOrdersQueryDto) {
+  async findOrders(query: ListStoreOrdersQueryDto, authUser?: AuthUser) {
     const where = {
       source: InvoiceSource.APP_MOVIL,
       ...this.getOrderStatusWhere(query.status),
       ...this.getOrderSearchWhere(query.q),
+      ...(authUser?.role === Role.BODEGA && authUser.warehouseId
+        ? {
+            OR: [
+              { warehouseId: authUser.warehouseId },
+              { items: { some: { warehouseId: authUser.warehouseId } } },
+              {
+                AND: [
+                  { warehouseId: null },
+                  { items: { every: { warehouseId: null } } },
+                ],
+              },
+            ],
+          }
+        : {}),
     };
     const { page, limit, skip, take } = resolvePagination(query);
     const [total, data] = await Promise.all([
@@ -315,9 +330,10 @@ export class TiendaService {
         );
       }
 
-      const productPrice = item.productPriceId
-        ? product.prices.find((price) => price.id === item.productPriceId)
-        : product.prices.find((price) => price.isDefault);
+      const productPrice = this.findSaleablePrice(
+        product,
+        item.productPriceId,
+      );
 
       if (!productPrice) {
         throw new BadRequestException(
@@ -381,6 +397,29 @@ export class TiendaService {
 
   private generateConsecutive() {
     return `APP-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  }
+
+  private findSaleablePrice(product: any, productPriceId?: number, clientType?: string) {
+    const now = new Date();
+    const active = (price: any) =>
+      price.isActive !== false &&
+      (!price.startsAt || new Date(price.startsAt) <= now) &&
+      (!price.endsAt || new Date(price.endsAt) >= now);
+    if (productPriceId) {
+      return product.prices.find(
+        (price: any) => price.id === productPriceId && active(price),
+      );
+    }
+    const byClient = clientType
+      ? product.prices.find((price: any) => {
+          if (!active(price)) return false;
+          const name = String(price.name ?? '').toLowerCase();
+          return clientType === 'MAYORISTA'
+            ? /mayor|mayoreo|wholesale/.test(name)
+            : /minorista|detal|retail/.test(name);
+        })
+      : undefined;
+    return byClient ?? product.prices.find((price: any) => price.isDefault && active(price));
   }
 
   private activeOfferWhere(): Prisma.OfferWhereInput {

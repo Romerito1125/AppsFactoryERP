@@ -1,4 +1,12 @@
-export function SystemStatusbar({ session, onLogin, onLogout }) {
+import { ShoppingCart } from "lucide-react";
+
+export function SystemStatusbar({
+  session,
+  onLogin,
+  onLogout,
+  onOpenPos,
+  canOpenPos = true,
+}) {
   return (
     <footer className="system-statusbar">
       <div className="footer-brand">
@@ -16,6 +24,17 @@ export function SystemStatusbar({ session, onLogin, onLogout }) {
       <div className="session-block">
         <span className={session ? 'session-dot is-online' : 'session-dot'} />
         <span>{session ? session.user?.username ?? 'Sesión activa' : 'Sin sesión'}</span>
+        {canOpenPos && (
+          <button
+            type="button"
+            className="status-pos-button"
+            onClick={onOpenPos}
+            aria-label="Abrir Caja POS"
+          >
+            <ShoppingCart size={12} strokeWidth={2} />
+            Caja POS
+          </button>
+        )}
         {session ? <button type="button" onClick={onLogout}>Cerrar sesión</button> : <button type="button" onClick={onLogin}>Ingresar</button>}
       </div>
     </footer>

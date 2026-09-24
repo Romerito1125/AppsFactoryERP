@@ -1,26 +1,23 @@
 import {
   BarChart3,
   Building2,
-  Banknote,
   CreditCard,
   FileText,
   Package,
   ReceiptText,
-  RotateCcw,
   ShoppingCart,
   ClipboardList,
   Landmark,
   Receipt,
   ArrowLeftRight,
-  Truck,
   UsersRound,
   WalletCards,
 } from "lucide-react";
 
-export const topMenuItems = ["Archivos", "Transacciones"];
+export const topMenuItems = ["Archivos"];
 export const salesTopMenuItems = ["Facturación"];
 export const purchasesTopMenuItems = ["Compras"];
-export const banksTopMenuItems = ["Bancos"];
+export const banksTopMenuItems = ["Finanzas"];
 
 export const defaultAdminCredentials = {
   email: "admin@mundotienda.com",
@@ -33,45 +30,31 @@ export const filesMenuItems = [
   { label: "Productos", action: "products", permission: "PRODUCTS_VIEW" },
   { label: "Tipos de producto", action: "product-types", permission: "PRODUCTS_VIEW" },
   { label: "Bodegas", action: "warehouses", permission: "PRODUCTS_VIEW" },
+  { label: "Traslados de inventario", action: "inventory-transfers", permission: "INVENTORY_EDIT" },
   { label: "Retenciones", action: "retentions", permission: "RETENTIONS_VIEW" },
   { label: "Usuarios", action: "users", permission: "USERS_MANAGE" },
-];
-
-export const transactionsMenuItems = [
-  {
-    label: "Cuentas por cobrar",
-    action: "receivables",
-    permission: "RECEIVABLES_VIEW",
-  },
-  {
-    label: "Cuentas por pagar",
-    action: "payables",
-    permission: "PAYABLES_VIEW",
-  },
+  { label: "Acciones del sistema", action: "audit-log", permission: "USERS_MANAGE" },
+  { label: "Ofertas y precios especiales", action: "offers", permission: "OFFERS_VIEW" },
+  { label: "Referidos y utilidades", action: "referrals", permission: "REFERRALS_VIEW" },
+  { label: "Biblioteca de reportes", action: "reports-library", permission: "REPORTS_VIEW" },
 ];
 
 export const moduleMenuItems = [
-  { label: "Administrativo", action: "switch-administrative" },
   { label: "Ventas", action: "switch-sales", permission: "SALES_CREATE" },
+  { label: "Administrativo", action: "switch-administrative" },
   {
     label: "Compras",
     action: "switch-purchases",
     permission: "PURCHASES_VIEW",
   },
-  { label: "Bancos", action: "switch-banks", permission: "BANKS_VIEW" },
+  { label: "Finanzas", action: "switch-banks", permission: "BANKS_VIEW" },
 ];
 
 export const salesMenuItems = [
   { label: "Facturación", action: "billing", permission: "SALES_CREATE" },
-  { label: "Presupuesto", action: "quotes", permission: "SALES_CREATE" },
-  {
-    label: "Nota de entrega",
-    action: "deliveries",
-    permission: "SALES_CREATE",
-  },
-  { label: "Pedidos", action: "orders", permission: "SALES_CREATE" },
+  { label: "Cotizaciones", action: "quotes", permission: "SALES_CREATE" },
+  { label: "Pedidos y domicilios", action: "orders", permission: "SALES_CREATE" },
   { label: "Reportes", action: "reports", permission: "SALES_CREATE" },
-  { label: "Varios", action: "various", permission: "SALES_CREATE" },
 ];
 
 export const toolbarItems = [
@@ -95,6 +78,13 @@ export const toolbarItems = [
     tone: "green",
     action: "products",
     permission: "PRODUCTS_VIEW",
+  },
+  {
+    label: "Traslados",
+    icon: ArrowLeftRight,
+    tone: "orange",
+    action: "inventory-transfers",
+    permission: "INVENTORY_EDIT",
   },
   {
     label: "Cobrar",
@@ -121,14 +111,7 @@ export const salesToolbarItems = [
     permission: "SALES_CREATE",
   },
   {
-    label: "Devolución",
-    icon: RotateCcw,
-    tone: "violet",
-    action: "returns",
-    permission: "SALES_CREATE",
-  },
-  {
-    label: "Presupuesto",
+    label: "Cotizaciones",
     icon: FileText,
     tone: "green",
     action: "quotes",
@@ -139,13 +122,6 @@ export const salesToolbarItems = [
     icon: ShoppingCart,
     tone: "orange",
     action: "orders",
-    permission: "SALES_CREATE",
-  },
-  {
-    label: "N. Entrega",
-    icon: Truck,
-    tone: "purple",
-    action: "deliveries",
     permission: "SALES_CREATE",
   },
   {
@@ -160,11 +136,8 @@ export const salesToolbarItems = [
 export const purchasesMenuItemsByMenu = {
   Compras: [
     { label: "Nueva compra", action: "purchases", permission: "PURCHASES_VIEW" },
-    { label: "Cotizaciones", action: "quotes", permission: "PURCHASES_VIEW" },
-    { label: "Ordenes de compra", action: "orders", permission: "PURCHASES_VIEW" },
-    { label: "Nota de entrega", action: "deliveries", permission: "PURCHASES_VIEW" },
+    { label: "Órdenes y recepción", action: "orders", permission: "PURCHASES_VIEW" },
     { label: "Reportes", action: "reports", permission: "PURCHASES_VIEW" },
-    { label: "Varios", action: "various", permission: "PURCHASES_VIEW" },
   ],
 };
 
@@ -177,46 +150,19 @@ export const purchasesToolbarItems = [
     permission: "PURCHASES_VIEW",
   },
   {
-    label: "Devolución",
-    icon: RotateCcw,
-    tone: "violet",
-    action: "returns",
-    permission: "PURCHASES_VIEW",
-  },
-  {
-    label: "N. Entrega",
-    icon: Truck,
-    tone: "green",
-    action: "deliveries",
-    permission: "PURCHASES_VIEW",
-  },
-  {
-    label: "Ord. Compra",
+    label: "Órdenes",
     icon: ShoppingCart,
     tone: "orange",
     action: "orders",
     permission: "PURCHASES_VIEW",
   },
-  {
-    label: "Cotización",
-    icon: FileText,
-    tone: "purple",
-    action: "quotes",
-    permission: "PURCHASES_VIEW",
-  },
 ];
 
 export const banksMenuItemsByMenu = {
-  Bancos: [
+  Finanzas: [
     { label: "Cuentas bancarias", action: "accounts", permission: "BANKS_VIEW" },
     {
-      label: "Beneficiarios",
-      action: "beneficiaries",
-      permission: "BANKS_VIEW",
-    },
-    { label: "Entidades bancarias", action: "banks", permission: "BANKS_VIEW" },
-    {
-      label: "Transacciones",
+      label: "Movimientos bancarios",
       action: "transactions",
       permission: "BANKS_VIEW",
     },
@@ -231,7 +177,6 @@ export const banksMenuItemsByMenu = {
       permission: "BANKS_VIEW",
     },
     { label: "Reportes", action: "reports", permission: "BANKS_VIEW" },
-    { label: "Varios", action: "various", permission: "BANKS_VIEW" },
   ],
 };
 
@@ -244,23 +189,9 @@ export const banksToolbarItems = [
     permission: "BANKS_VIEW",
   },
   {
-    label: "Benef.",
-    icon: UsersRound,
-    tone: "violet",
-    action: "beneficiaries",
-    permission: "BANKS_VIEW",
-  },
-  {
-    label: "Bancos",
-    icon: Banknote,
-    tone: "green",
-    action: "banks",
-    permission: "BANKS_VIEW",
-  },
-  {
-    label: "Transacc.",
+    label: "Movimientos",
     icon: ArrowLeftRight,
-    tone: "orange",
+    tone: "green",
     action: "transactions",
     permission: "BANKS_VIEW",
   },

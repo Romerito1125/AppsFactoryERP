@@ -16,6 +16,7 @@ export class CreateBankAccountDto {
   @IsOptional() @IsString() accountNumber?: string;
   @IsOptional() @IsString() accountType?: string;
   @IsOptional() @Type(() => Number) @IsNumber() currentBalance?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) gmfRate?: number;
 }
 
 export class UpdateBankAccountDto {
@@ -23,6 +24,7 @@ export class UpdateBankAccountDto {
   @IsOptional() @IsString() @MinLength(2) bankName?: string;
   @IsOptional() @IsString() accountNumber?: string;
   @IsOptional() @IsString() accountType?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) gmfRate?: number;
 }
 
 export class BankAmountDto {

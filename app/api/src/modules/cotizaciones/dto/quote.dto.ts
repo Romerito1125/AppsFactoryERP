@@ -38,3 +38,10 @@ export class UpdateQuoteDto {
 export class UpdateQuoteStatusDto {
   @IsEnum(QuoteStatus) status: QuoteStatus;
 }
+
+export class SendQuoteToWarehouseDto {
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  userId: number;
+}

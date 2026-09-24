@@ -3,8 +3,10 @@ import {
   IsBoolean,
   IsEmail,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
+  Max,
   Min,
   MinLength,
 } from 'class-validator';
@@ -85,8 +87,25 @@ export class UpdateProviderDto {
   withholdingType?: string;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  withholdingRate?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  withholdingMinimumBase?: number;
+
+  @IsOptional()
   @IsBoolean()
   hasIslrWithholding?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  isSelfWithholding?: boolean;
 
   @IsOptional()
   @Type(() => Number)

@@ -17,6 +17,7 @@ import {
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { SearchOptionsMenu } from "@/components/desktop/search-options-menu";
+import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
 import { ProductsWindow } from "@/modules/products/products-window";
 
@@ -49,7 +50,10 @@ const emptyProvider = {
   email: "",
   active: true,
   withholdingType: "",
+  withholdingRate: "",
+  withholdingMinimumBase: "",
   hasIslrWithholding: false,
+  isSelfWithholding: false,
   creditDays: "",
   observations: "",
   pendingBalance: "0",
@@ -88,6 +92,16 @@ function mapProvider(provider) {
     email: provider.email || "",
     active: provider.isActive !== false,
     withholdingType: provider.withholdingType || "",
+    withholdingRate:
+      provider.withholdingRate === null || provider.withholdingRate === undefined
+        ? ""
+        : String(provider.withholdingRate),
+    withholdingMinimumBase:
+      provider.withholdingMinimumBase === null ||
+      provider.withholdingMinimumBase === undefined
+        ? ""
+        : String(provider.withholdingMinimumBase),
+    isSelfWithholding: Boolean(provider.isSelfWithholding),
     creditDays:
       provider.creditDays === null || provider.creditDays === undefined
         ? ""
@@ -234,11 +248,18 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
       email: draft.email.trim() || undefined,
       legalRepresentative: draft.representative.trim() || undefined,
       withholdingType: draft.withholdingType.trim() || undefined,
+      withholdingRate:
+        draft.withholdingRate === "" ? undefined : Number(draft.withholdingRate),
+      withholdingMinimumBase:
+        draft.withholdingMinimumBase === ""
+          ? undefined
+          : Number(draft.withholdingMinimumBase),
       creditDays:
         draft.creditDays === "" ? undefined : Number(draft.creditDays),
       observations: draft.observations.trim() || undefined,
       isActive: Boolean(draft.active),
       hasIslrWithholding: Boolean(draft.hasIslrWithholding),
+      isSelfWithholding: Boolean(draft.isSelfWithholding),
     };
     try {
       const saved = selectedId
@@ -554,9 +575,13 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
         </div>
 
         {error && (
-          <div className="window-error" role="alert">
+          <TransientMessage
+            className="window-error"
+            role="alert"
+            onDismiss={() => setError("")}
+          >
             {error}
-          </div>
+          </TransientMessage>
         )}
         <footer className="provider-window-footer">
           <div className="provider-crud-actions">
@@ -690,6 +715,20 @@ function ProviderDetails({
             onChange={(value) => onChange("withholdingType", value)}
             error={fieldErrors?.withholdingType}
           />
+          <DetailField
+            label="Porcentaje retención"
+            value={provider.withholdingRate}
+            editing={editing}
+            onChange={(value) => onChange("withholdingRate", value)}
+            error={fieldErrors?.withholdingRate}
+          />
+          <DetailField
+            label="Base mínima retención"
+            value={provider.withholdingMinimumBase}
+            editing={editing}
+            onChange={(value) => onChange("withholdingMinimumBase", value)}
+            error={fieldErrors?.withholdingMinimumBase}
+          />
           <div className="detail-field">
             <label>Tiene retención ISLR</label>
             {editing ? (
@@ -713,6 +752,32 @@ function ProviderDetails({
                   {provider.hasIslrWithholding && <Check size={12} />}
                 </span>
                 {provider.hasIslrWithholding ? "Sí" : "No"}
+              </span>
+            )}
+          </div>
+          <div className="detail-field">
+            <label>Proveedor autorretenedor</label>
+            {editing ? (
+              <input
+                className="detail-checkbox-input"
+                type="checkbox"
+                checked={Boolean(provider.isSelfWithholding)}
+                onChange={(event) =>
+                  onChange("isSelfWithholding", event.target.checked)
+                }
+              />
+            ) : (
+              <span className="checkbox-value">
+                <span
+                  className={
+                    provider.isSelfWithholding
+                      ? "fake-checkbox"
+                      : "fake-checkbox is-empty"
+                  }
+                >
+                  {provider.isSelfWithholding && <Check size={12} />}
+                </span>
+                {provider.isSelfWithholding ? "Sí" : "No"}
               </span>
             )}
           </div>
@@ -1064,10 +1129,13 @@ function hasProviderDraftChanges(draft, provider) {
     "mobile",
     "email",
     "withholdingType",
+    "withholdingRate",
+    "withholdingMinimumBase",
     "creditDays",
     "observations",
     "active",
     "hasIslrWithholding",
+    "isSelfWithholding",
   ];
   return fields.some(
     (field) => String(draft[field] ?? "") !== String(provider[field] ?? ""),
@@ -1089,5 +1157,18 @@ function validateProviderDraft(provider) {
       Number(provider.creditDays) < 0)
   )
     errors.creditDays = "Los días de crédito deben ser un entero mayor o igual a cero.";
+  if (
+    provider.withholdingRate !== "" &&
+    (!Number.isFinite(Number(provider.withholdingRate)) ||
+      Number(provider.withholdingRate) < 0 ||
+      Number(provider.withholdingRate) > 100)
+  )
+    errors.withholdingRate = "El porcentaje debe estar entre 0 y 100.";
+  if (
+    provider.withholdingMinimumBase !== "" &&
+    (!Number.isFinite(Number(provider.withholdingMinimumBase)) ||
+      Number(provider.withholdingMinimumBase) < 0)
+  )
+    errors.withholdingMinimumBase = "La base mínima no puede ser negativa.";
   return errors;
 }

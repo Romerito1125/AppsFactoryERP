@@ -11,6 +11,7 @@ export function ShortcutToolbar({
   onOpenClients,
   onOpenProducts,
   onOpenProviders,
+  onOpenInventoryTransfers,
   onOpenPayables,
   onOpenReceivables,
   onOpenSalesView,
@@ -40,6 +41,7 @@ export function ShortcutToolbar({
         onOpenClients={onOpenClients}
         onOpenProducts={onOpenProducts}
         onOpenProviders={onOpenProviders}
+        onOpenInventoryTransfers={onOpenInventoryTransfers}
         onOpenPayables={onOpenPayables}
         onOpenReceivables={onOpenReceivables}
         onOpenSalesView={onOpenSalesView}
@@ -53,6 +55,7 @@ export function ShortcutToolbar({
         onOpenClients={onOpenClients}
         onOpenProducts={onOpenProducts}
         onOpenProviders={onOpenProviders}
+        onOpenInventoryTransfers={onOpenInventoryTransfers}
         onOpenPayables={onOpenPayables}
         onOpenReceivables={onOpenReceivables}
         onOpenSalesView={onOpenSalesView}
@@ -71,6 +74,7 @@ function ToolbarGroup({
   onOpenClients,
   onOpenProducts,
   onOpenProviders,
+  onOpenInventoryTransfers,
   onOpenPayables,
   onOpenReceivables,
   onOpenSalesView,
@@ -89,6 +93,8 @@ function ToolbarGroup({
               ? onOpenProviders
               : item.action === "products"
                 ? onOpenProducts
+                : item.action === "inventory-transfers"
+                  ? onOpenInventoryTransfers
                 : item.action === "payables"
                   ? activeModule === "banks"
                     ? () => onOpenBanksView?.("payables")

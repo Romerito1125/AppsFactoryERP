@@ -27,6 +27,7 @@ import {
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { SearchOptionsMenu } from "@/components/desktop/search-options-menu";
+import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
 
 const units = ["UND", "KG", "G", "LB", "L", "ML", "CAJA", "PAQUETE"];
@@ -50,6 +51,8 @@ const emptyProduct = {
   productTypeId: "",
   providerId: "",
   provider: "",
+  providerIds: [],
+  tagIds: [],
   brand: "",
   unit: "UND",
   taxRate: 0,
@@ -78,6 +81,7 @@ function createEmptyProductDraft(productTypes = [], providers = [], warehouses =
     providerId: defaultProvider?.id ?? "",
     type: defaultProductType?.name ?? "",
     provider: defaultProvider?.name ?? "",
+    providerIds: [],
     warehouseId: defaultWarehouse?.id ?? "",
     warehouse: defaultWarehouse?.location ?? "",
   };
@@ -109,9 +113,11 @@ export function ProductsWindow({
   const [productTypes, setProductTypes] = useState([]);
   const [providers, setProviders] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
+  const [tags, setTags] = useState([]);
   const [productProfit, setProductProfit] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [actionLoading, setActionLoading] = useState("");
@@ -162,6 +168,7 @@ export function ProductsWindow({
       apiClient.getAllPages("/tipos-producto", { estado: "activos" }),
       apiClient.getAllPages("/proveedores", { estado: "activos" }),
       apiClient.getAllPages("/bodegas", { estado: "activos" }),
+      apiClient.getAllPages("/etiquetas", { estado: "activos" }),
       apiClient.get("/productos/favoritos/mios"),
     ])
       .then(
@@ -170,6 +177,7 @@ export function ProductsWindow({
           typeResult,
           providerResult,
           warehouseResult,
+          tagResult,
           favoriteResult,
         ]) => {
         if (cancelled) return;
@@ -212,6 +220,7 @@ export function ProductsWindow({
             ? warehouseResult.value
             : [],
         );
+        setTags(tagResult.status === "fulfilled" ? tagResult.value : []);
         setFavoriteIds(
           favoriteItems
             .map((product) => String(product.id))
@@ -221,6 +230,7 @@ export function ProductsWindow({
           typeResult.status === "rejected" ? "tipos de producto" : null,
           providerResult.status === "rejected" ? "proveedores" : null,
           warehouseResult.status === "rejected" ? "bodegas" : null,
+          tagResult.status === "rejected" ? "categorías" : null,
           favoriteResult.status === "rejected" ? "favoritos" : null,
         ].filter(Boolean);
         if (unavailable.length)
@@ -291,6 +301,7 @@ export function ProductsWindow({
     setInventoryEditor(null);
     setFieldErrors({});
     setError("");
+    setNotice("");
     const product = products.find((item) => item.recordId === recordId);
     if (product) {
       setDraft({ ...product });
@@ -352,6 +363,7 @@ export function ProductsWindow({
     setActiveTab("main");
     setFieldErrors({});
     setError("");
+    setNotice("");
   }
 
   async function handleCreateProductType(name) {
@@ -417,9 +429,23 @@ export function ProductsWindow({
       return;
     }
     setSaving(true);
+    const wasCreating = selectedId === null;
+    const draftCode = draft.code.trim();
+    const currentCode = selectedProduct?.code ?? "";
+    const costValue = Number(draft.cost);
+    const currentCost = Number(selectedProduct?.cost ?? 0);
+    const activeCost = selectedProduct?.costs?.find(
+      (cost) => cost.isActive !== false,
+    );
     const body = {
       productTypeId: Number(draft.productTypeId),
       providerId: Number(draft.providerId),
+      providerIds: (draft.providerIds ?? [])
+        .map((providerId) => Number(providerId))
+        .filter((providerId) => Number.isInteger(providerId) && providerId > 0),
+      tagIds: (draft.tagIds ?? [])
+        .map((tagId) => Number(tagId))
+        .filter((tagId) => Number.isInteger(tagId) && tagId > 0),
       name: draft.name.trim(),
       description: draft.description.trim() || undefined,
       taxRate: Number(draft.taxRate) || 0,
@@ -442,42 +468,45 @@ export function ProductsWindow({
       ...(selectedId !== null && draft.warehouseId
         ? { warehouseId: Number(draft.warehouseId) }
         : {}),
+      ...(wasCreating && draftCode
+        ? {
+            barcodes: [
+              {
+                code: draftCode,
+                type: inferBarcodeType(draftCode),
+                isPrimary: true,
+              },
+            ],
+          }
+        : {}),
     };
     try {
-      const wasCreating = selectedId === null;
-      const draftCode = draft.code.trim();
-      const currentCode = selectedProduct?.code ?? "";
       const saved = selectedId
         ? await apiClient.patch(`/productos/${selectedId}`, body)
         : await apiClient.post("/productos", body);
       let normalized = mapProduct(saved);
-      if (draftCode && draftCode !== currentCode) {
+
+      // Estas operaciones solo dependen del id creado y pueden ejecutarse
+      // simultáneamente. Al final se hace una única lectura consolidada.
+      const followUpRequests = [];
+      if (!wasCreating && draftCode && draftCode !== currentCode) {
         const currentPrimaryBarcode = selectedProduct?.barcodes?.find(
           (barcode) => barcode.isPrimary,
         );
-        if (currentPrimaryBarcode) {
-          await apiClient.patch(
-            `/codigos-barras/${currentPrimaryBarcode.id}`,
-            {
-              code: draftCode,
-              type: inferBarcodeType(draftCode),
-              isPrimary: true,
-            },
-          );
-        } else {
-          await apiClient.post(`/productos/${saved.id}/codigos-barras`, {
-            code: draftCode,
-            type: inferBarcodeType(draftCode),
-            isPrimary: true,
-          });
-        }
-        normalized = mapProduct(await apiClient.get(`/productos/${saved.id}`));
+        followUpRequests.push(
+          currentPrimaryBarcode
+            ? apiClient.patch(`/codigos-barras/${currentPrimaryBarcode.id}`, {
+                code: draftCode,
+                type: inferBarcodeType(draftCode),
+                isPrimary: true,
+              })
+            : apiClient.post(`/productos/${saved.id}/codigos-barras`, {
+                code: draftCode,
+                type: inferBarcodeType(draftCode),
+                isPrimary: true,
+              }),
+        );
       }
-      const costValue = Number(draft.cost);
-      const currentCost = Number(selectedProduct?.cost ?? 0);
-      const activeCost = selectedProduct?.costs?.find(
-        (cost) => cost.isActive !== false,
-      );
       if (
         Number.isFinite(costValue) &&
         costValue > 0 &&
@@ -485,35 +514,35 @@ export function ProductsWindow({
           costValue !== currentCost ||
           draft.unit !== selectedProduct?.unit)
       ) {
-        await apiClient.post(`/productos/${saved.id}/costos`, {
-          cost: costValue,
-          unit: draft.unit,
-          quantity: 1,
-          isActive: true,
-        });
-        normalized = mapProduct(await apiClient.get(`/productos/${saved.id}`));
+        followUpRequests.push(
+          apiClient.post(`/productos/${saved.id}/costos`, {
+            cost: costValue,
+            unit: draft.unit,
+            quantity: 1,
+            isActive: true,
+          }),
+        );
       } else if (
         !wasCreating &&
         costValue === 0 &&
         currentCost > 0 &&
         activeCost
       ) {
-        await apiClient.delete(`/costos-producto/${activeCost.id}`);
-        normalized = mapProduct(await apiClient.get(`/productos/${saved.id}`));
+        followUpRequests.push(
+          apiClient.delete(`/costos-producto/${activeCost.id}`),
+        );
       }
       if (wasCreating && pendingImage) {
         const formData = new FormData();
         formData.append("image", pendingImage.file);
-        const uploaded = await apiClient.upload(
-          `/productos/${saved.id}/imagen`,
-          formData,
+        followUpRequests.push(
+          apiClient.upload(`/productos/${saved.id}/imagen`, formData),
         );
-        normalized = {
-          ...normalized,
-          imageUrl: uploaded.imageUrl ?? uploaded.image?.url ?? "",
-        };
       }
-      await loadProductProfit(saved.id);
+      if (followUpRequests.length) {
+        await Promise.all(followUpRequests);
+        normalized = mapProduct(await apiClient.get(`/productos/${saved.id}`));
+      }
       setProducts((current) =>
         selectedId
           ? current.map((item) =>
@@ -521,10 +550,22 @@ export function ProductsWindow({
             )
           : [...current, normalized],
       );
-      setSelectedId(normalized.recordId);
-      setDraft({ ...normalized });
       setPendingImage(null);
-      setEditing(true);
+      setActiveTab("main");
+      if (wasCreating) {
+        setSelectedId(null);
+        setDraft(createEmptyProductDraft(productTypes, providers, warehouses));
+        setEditing(true);
+        setNotice("Producto guardado. Listo para registrar el siguiente.");
+      } else {
+        setSelectedId(normalized.recordId);
+        setDraft({ ...normalized });
+        setEditing(false);
+        setNotice("Cambios guardados. Puedes continuar con el siguiente producto.");
+        // Las utilidades no deben bloquear la confirmación ni el siguiente
+        // producto; se actualizan cuando el panel ya está disponible.
+        void loadProductProfit(normalized.recordId);
+      }
     } catch (requestError) {
       handleRequestError(requestError);
     } finally {
@@ -753,9 +794,26 @@ export function ProductsWindow({
     setError("");
     try {
       const body = buildPriceBody(priceEditor);
-      if (priceEditor.id)
+      if (priceEditor.id) {
+        const original = shownProduct?.prices?.find(
+          (price) => Number(price.id) === Number(priceEditor.id),
+        );
+        const priceChanged =
+          original && Number(original.price) !== Number(priceEditor.price);
+        if (priceChanged) {
+          const reason = window.prompt(
+            "Escribe la razón del cambio de precio para guardarlo en el historial:",
+            "",
+          );
+          if (!reason?.trim()) {
+            setActionLoading("");
+            setError("El cambio de precio requiere una razón.");
+            return;
+          }
+          body.reason = reason.trim();
+        }
         await apiClient.patch(`/precios-producto/${priceEditor.id}`, body);
-      else await apiClient.post(`/productos/${selectedId}/precios`, body);
+      } else await apiClient.post(`/productos/${selectedId}/precios`, body);
       await refreshProduct(selectedId);
       setPriceEditor(null);
     } catch (requestError) {
@@ -1158,6 +1216,7 @@ export function ProductsWindow({
               productTypes={productTypes}
               providers={providers}
               warehouses={warehouses}
+              tags={tags}
               productProfit={productProfit}
               onUpload={handleImageUpload}
               onRemoveImage={handleRemoveImage}
@@ -1230,6 +1289,7 @@ export function ProductsWindow({
                   }
                   setPendingImage(null);
                   setError("");
+                  setNotice("");
                 }}
                 disabled={saving || deleting || Boolean(actionLoading)}
               >
@@ -1239,10 +1299,23 @@ export function ProductsWindow({
           )}
         </div>
       </div>
+      {notice && (
+        <TransientMessage
+          className="window-success"
+          icon={<Check size={14} />}
+          onDismiss={() => setNotice("")}
+        >
+          {notice}
+        </TransientMessage>
+      )}
       {error && (
-        <div className="window-error" role="alert">
+        <TransientMessage
+          className="window-error"
+          role="alert"
+          onDismiss={() => setError("")}
+        >
           {error}
-        </div>
+        </TransientMessage>
       )}
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">
@@ -1318,6 +1391,7 @@ function ProductDetails({
   productTypes,
   providers,
   warehouses,
+  tags,
   onUpload,
   onRemoveImage,
   ...actions
@@ -1431,6 +1505,23 @@ function ProductDetails({
           label: item.name,
         }))}
         select
+      />
+      <ProviderMultiSelectField
+        label="Proveedores secundarios"
+        value={product.providerIds ?? []}
+        editing={editing}
+        providers={providers.filter(
+          (provider) => String(provider.id) !== String(product.providerId),
+        )}
+        onChange={(value) => onChange("providerIds", value)}
+      />
+      <ProviderMultiSelectField
+        label="Categorías / subcategorías"
+        value={product.tagIds ?? []}
+        editing={editing}
+        providers={tags ?? []}
+        onChange={(value) => onChange("tagIds", value)}
+        optionLabelKey="name"
       />
       <ProductField
         label="Unidad"
@@ -1740,6 +1831,8 @@ function PricesPanel({
   actionLoading = "",
 }) {
   const canManagePrices = canEdit && Boolean(product.recordId);
+  const allPrices = product.prices ?? [];
+  const activePriceCount = allPrices.filter(isCurrentPrice).length;
   return (
     <div className="provider-tab-panel data-panel">
       <PanelHeading
@@ -1770,10 +1863,11 @@ function PricesPanel({
         />
       </div>
       <ProductDataTable
-        caption={`Precios de ${product.name}`}
+        caption={`Precios de ${product.name} · ${activePriceCount} activos de ${allPrices.length}`}
         columns={[
           "Nombre",
-          "Precio",
+          "Antes IVA",
+          "Después IVA",
           "Unidad",
           "Cantidad",
           "Ganancia",
@@ -1781,13 +1875,19 @@ function PricesPanel({
           "Principal",
           "Estado",
         ]}
-        rows={(product.prices ?? []).map((price) => {
+        rows={allPrices.map((price) => {
           const profit = productProfit?.prices?.find(
             (item) => Number(item.priceId) === Number(price.id),
           );
           return [
             price.name,
-            formatCurrency(Number(price.price)),
+            formatCurrency(Number(profit?.priceBeforeTax ?? price.price)),
+            formatCurrency(
+              Number(
+                profit?.priceAfterTax ??
+                  Number(price.price) * (1 + Number(product.taxRate ?? 0) / 100),
+              ),
+            ),
             price.unit,
             String(price.quantity ?? 1),
             profit?.profitAmount == null
@@ -1797,20 +1897,20 @@ function PricesPanel({
               ? "—"
               : `${profit.profitPercentage}%`,
             price.isDefault ? "Sí" : "No",
-            price.isActive === false ? "Inactivo" : "Activo",
+            isCurrentPrice(price) ? "Activo" : "Inactivo",
           ];
         })}
-        rowKeys={(product.prices ?? []).map((price) => price.id)}
-        onRowDoubleClick={(index) => onEditPrice(product.prices[index])}
+        rowKeys={allPrices.map((price) => price.id)}
+        onRowDoubleClick={(index) => onEditPrice(allPrices[index])}
         empty="No hay precios registrados."
-      />
-      {productProfit?.warning && (
-        <p className="table-hint">{productProfit.warning}</p>
-      )}
+        />
       {productProfit?.prices?.some((price) => price.warning) && (
-        <p className="table-hint">
+        <p className="table-hint product-margin-warning">
           {productProfit.prices.find((price) => price.warning)?.warning}
         </p>
+      )}
+      {productProfit?.warning && (
+        <p className="table-hint">{productProfit.warning}</p>
       )}
       <p className="table-hint">Doble clic sobre una fila para editarla.</p>
       {priceEditor && (
@@ -2795,6 +2895,58 @@ function ProductField({
   );
 }
 
+function ProviderMultiSelectField({
+  label,
+  value = [],
+  editing,
+  providers = [],
+  onChange,
+  optionLabelKey = "name",
+}) {
+  const selectedIds = value.map((providerId) => String(providerId));
+  const selectedNames = providers
+    .filter((provider) => selectedIds.includes(String(provider.id)))
+    .map((provider) => provider[optionLabelKey]);
+
+  return (
+    <div className="detail-field provider-secondary-field">
+      <label>{label}</label>
+      {editing ? (
+        <select
+          multiple
+          className="detail-input provider-multi-select"
+          value={selectedIds}
+          aria-label={label}
+          onChange={(event) =>
+            onChange?.(
+              Array.from(event.target.selectedOptions, (option) => option.value),
+            )
+          }
+        >
+          {providers.length ? (
+            providers.map((provider) => (
+              <option key={provider.id} value={provider.id}>
+                {provider[optionLabelKey]}
+              </option>
+            ))
+          ) : (
+            <option disabled value="">
+              No hay opciones activas
+            </option>
+          )}
+        </select>
+      ) : (
+        <div className="detail-control provider-secondary-value">
+          <span>{selectedNames.length ? selectedNames.join(", ") : "Ninguno"}</span>
+        </div>
+      )}
+      {editing && providers.length > 1 && (
+        <small className="field-help">Mantén Ctrl/Cmd para seleccionar varios.</small>
+      )}
+    </div>
+  );
+}
+
 function BooleanField({ label, checked, editing, onChange }) {
   return (
     <div className="detail-field active-field">
@@ -2884,6 +3036,13 @@ function mapProduct(product) {
     productTypeId: product.productTypeId,
     providerId: product.providerId,
     provider: product.provider?.name ?? product.primaryProvider?.name ?? "",
+    providerIds: (product.providers ?? [])
+      .filter(
+        (provider) =>
+          !provider.isPrimary &&
+          String(provider.id) !== String(product.providerId),
+      )
+      .map((provider) => provider.id),
     brand: product.brand ?? "",
     unit: product.unit ?? "UND",
     taxRate: Number(product.taxRate ?? 0),
@@ -2896,6 +3055,7 @@ function mapProduct(product) {
     warehouse: warehouses[0]?.warehouse?.location ?? "",
     warehouses,
     barcodes: product.barcodes ?? [],
+    tagIds: (product.tags ?? []).map((tag) => tag.id),
     prices: product.prices ?? [],
     packagingProfile: product.packagingProfile ?? null,
     imageUrl: product.imageUrl ?? "",
@@ -2911,6 +3071,13 @@ function toPriceDraft(price) {
     isDefault: Boolean(price.isDefault),
     isActive: price.isActive !== false,
   };
+}
+function isCurrentPrice(price, now = new Date()) {
+  return (
+    price?.isActive !== false &&
+    (!price?.startsAt || new Date(price.startsAt) <= now) &&
+    (!price?.endsAt || new Date(price.endsAt) >= now)
+  );
 }
 function createPriceDraft(product) {
   return {
@@ -2963,9 +3130,15 @@ function hasProductDraftChanges(draft, product) {
     "cost",
     "active",
   ];
-  return fields.some(
+  const scalarChanged = fields.some(
     (field) => String(draft[field] ?? "") !== String(product[field] ?? ""),
   );
+  if (scalarChanged) return true;
+  const draftProviders = (draft.providerIds ?? []).map(String).sort();
+  const productProviders = (product.providerIds ?? []).map(String).sort();
+  if (draftProviders.join(",") !== productProviders.join(",")) return true;
+  return (draft.tagIds ?? []).map(String).sort().join(",") !==
+    (product.tagIds ?? []).map(String).sort().join(",");
 }
 function validateProductDraft(product) {
   const errors = {};

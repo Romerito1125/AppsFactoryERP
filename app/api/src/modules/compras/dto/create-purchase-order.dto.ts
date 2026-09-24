@@ -41,6 +41,20 @@ export class CreatePurchaseOrderDto {
   @IsDateString()
   expectedAt?: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(180)
+  documentName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  documentMimeType?: string;
+
+  @IsOptional()
+  @IsString()
+  documentData?: string;
+
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })

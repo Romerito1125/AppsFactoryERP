@@ -61,9 +61,12 @@ export class TiendaController {
 
   @Get('pedidos')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN)
-  findOrders(@Query() query: ListStoreOrdersQueryDto) {
-    return this.tiendaService.findOrders(query);
+  @Roles(Role.ADMIN, Role.BODEGA)
+  findOrders(
+    @Query() query: ListStoreOrdersQueryDto,
+    @Req() request: Request & { user: AuthUser },
+  ) {
+    return this.tiendaService.findOrders(query, request.user);
   }
 
   @Get('mis-pedidos')

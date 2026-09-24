@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
+import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
 
 const tabs = [
@@ -196,9 +197,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
 
   function startNewOrder() {
     if (!canEdit) return;
-    const firstProduct = products.find((product) =>
-      productBelongsToProvider(product, selectedProviderId),
-    );
+    const firstProduct = products[0];
     setOrderEditor(
       emptyOrder(
         selectedProviderId ?? "",
@@ -300,14 +299,6 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
     setOrderEditor((current) => ({
       ...current,
       providerId: value,
-      items: current.items.map((item) => {
-        const product = products.find(
-          (candidate) => Number(candidate.id) === Number(item.productId),
-        );
-        return productBelongsToProvider(product, Number(value))
-          ? item
-          : { ...item, productId: "" };
-      }),
     }));
   }
 
@@ -591,9 +582,13 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
         </div>
       </div>
       {error && (
-        <div className="window-error" role="alert">
+        <TransientMessage
+          className="window-error"
+          role="alert"
+          onDismiss={() => setError("")}
+        >
           {error}
-        </div>
+        </TransientMessage>
       )}
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">
@@ -1018,9 +1013,7 @@ function PurchaseEditor({
   onSave,
   onCancel,
 }) {
-  const availableProducts = products.filter((product) =>
-    productBelongsToProvider(product, Number(editor.providerId)),
-  );
+  const availableProducts = products;
   const subtotal = editor.items.reduce(
     (sum, item) =>
       sum + Number(item.quantity || 0) * Number(item.unitCost || 0),
@@ -1363,19 +1356,6 @@ function mapProvider(provider) {
     taxId: provider.taxId ?? "",
     phone: provider.phonePrimary ?? "",
   };
-}
-
-function productBelongsToProvider(product, providerId) {
-  if (!providerId) return true;
-  const providers = product.providers?.length
-    ? product.providers
-    : product.provider
-      ? [product.provider]
-      : [];
-  return providers.some(
-    (provider) =>
-      Number(provider.id ?? provider.providerId) === Number(providerId),
-  );
 }
 
 function toPurchaseEditor(order) {

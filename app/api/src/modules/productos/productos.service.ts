@@ -5,6 +5,10 @@ import {
 } from '@nestjs/common';
 import { InventoryMovementType, Prisma, UnitType } from '@prisma/client';
 import { buildPackagingBreakdown } from '../../common/utils/packaging.util';
+import {
+  convertProductUnitCost,
+  getProductStockStatus,
+} from '../../common/utils/product-quantity.util';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
 import {
   buildPaginatedResponse,
@@ -139,7 +143,6 @@ export class ProductosService {
               ? { create: normalizedBarcodes }
               : undefined,
           },
-          include: this.productInclude,
         });
 
         for (const warehouse of warehouses ?? []) {
@@ -613,17 +616,42 @@ export class ProductosService {
       totalStock,
       product.packagingProfile,
     );
+    const currentCost = product.costs?.find((cost) => cost.isActive) ??
+      product.costs?.[0];
+    const cost = currentCost
+      ? convertProductUnitCost(
+          Number(currentCost.cost) / Number(currentCost.quantity || 1),
+          currentCost.unit,
+          product.unit,
+          product.packagingProfile,
+        ) ?? 0
+      : 0;
 
     return {
       ...product,
       provider: product.primaryProvider,
       providers,
+      stock: totalStock,
+      totalStock,
+      cost,
+      inventoryValue: totalStock * cost,
+      stockStatus: getProductStockStatus(
+        totalStock,
+        product.minimumStock,
+        product.maximumStock,
+      ),
       packagingSummary,
       tags: product.tags.map((productTag) => productTag.tag),
       warehouses: product.warehouses.map((item) => ({
         warehouseId: item.warehouseId,
         quantity: item.quantity,
         warehouse: item.warehouse,
+        stockStatus: getProductStockStatus(
+          Number(item.quantity ?? 0),
+          product.minimumStock,
+          product.maximumStock,
+        ),
+        inventoryValue: Number(item.quantity ?? 0) * cost,
       })),
     };
   }

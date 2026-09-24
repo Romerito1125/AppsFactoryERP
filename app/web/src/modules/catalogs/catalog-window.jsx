@@ -15,6 +15,7 @@ import {
 
 import { SearchOptionsMenu } from "@/components/desktop/search-options-menu";
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
+import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
 
 const catalogConfigs = {
@@ -335,9 +336,13 @@ export function CatalogWindow({
         </div>
 
         {error && (
-          <div className="window-error" role="alert">
+          <TransientMessage
+            className="window-error"
+            role="alert"
+            onDismiss={() => setError("")}
+          >
             {error}
-          </div>
+          </TransientMessage>
         )}
         <footer className="provider-window-footer">
           <div className="provider-crud-actions">

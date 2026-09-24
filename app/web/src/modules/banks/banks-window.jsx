@@ -12,24 +12,21 @@ import {
   ReceiptText,
   Search,
   Trash2,
-  UsersRound,
   WalletCards,
   X,
 } from "lucide-react";
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
+import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
 
 const viewLabels = {
-  home: "Bancos",
+  home: "Finanzas",
   accounts: "Cuentas",
-  beneficiaries: "Beneficiarios",
-  banks: "Bancos",
-  transactions: "Transacciones",
+  transactions: "Movimientos bancarios",
   receivables: "Cuentas por cobrar",
   payables: "Cuentas por pagar",
   reports: "Reportes",
-  various: "Varios",
 };
 
 const emptyAccount = {
@@ -39,10 +36,16 @@ const emptyAccount = {
   accountNumber: "",
   accountType: "CORRIENTE",
   currentBalance: "0",
+  gmfRate: "0.4",
 };
 
 let bankDataPromise;
 let bankDataSnapshot;
+
+function participantName(item) {
+  const fullName = [item?.firstName, item?.lastName].filter(Boolean).join(" ");
+  return item?.name || fullName || item?.description || "—";
+}
 
 function loadBankData() {
   if (bankDataSnapshot) return Promise.resolve(bankDataSnapshot);
@@ -50,24 +53,13 @@ function loadBankData() {
     bankDataPromise = Promise.allSettled([
       apiClient.getAllPages("/cuentas-bancarias", { estado: "todos" }),
       apiClient.getAllPages("/movimientos-bancarios"),
-      apiClient.getAllPages("/clientes", { estado: "activos" }),
-      apiClient.getAllPages("/proveedores", { estado: "activos" }),
       apiClient.getAllPages("/creditos"),
       apiClient.getAllPages("/compras"),
     ]).then(
-      ([
-        accountsResult,
-        movementsResult,
-        clientsResult,
-        providersResult,
-        creditsResult,
-        purchasesResult,
-      ]) => {
+      ([accountsResult, movementsResult, creditsResult, purchasesResult]) => {
         bankDataSnapshot = {
           accountsResult,
           movementsResult,
-          clientsResult,
-          providersResult,
           creditsResult,
           purchasesResult,
         };
@@ -85,11 +77,15 @@ export function BanksWindow({
   onOpenView,
   onRequestLogin,
 }) {
-  const [view, setView] = useState(initialView);
+  const [view, setView] = useState(
+    ["home", "accounts", "transactions", "receivables", "payables", "reports"].includes(
+      initialView,
+    )
+      ? initialView
+      : "home",
+  );
   const [accounts, setAccounts] = useState([]);
   const [movements, setMovements] = useState([]);
-  const [clients, setClients] = useState([]);
-  const [providers, setProviders] = useState([]);
   const [credits, setCredits] = useState([]);
   const [purchases, setPurchases] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState("");
@@ -116,16 +112,6 @@ export function BanksWindow({
           ? data.movementsResult.value
           : [],
       );
-      setClients(
-        data.clientsResult.status === "fulfilled"
-          ? data.clientsResult.value
-          : [],
-      );
-      setProviders(
-        data.providersResult.status === "fulfilled"
-          ? data.providersResult.value
-          : [],
-      );
       setCredits(
         data.creditsResult.status === "fulfilled"
           ? data.creditsResult.value
@@ -139,7 +125,7 @@ export function BanksWindow({
       setSelectedAccountId(String(nextAccounts[0]?.id ?? ""));
       if (data.accountsResult.status === "rejected") {
         setError(
-          `No se pudo cargar Bancos: ${data.accountsResult.reason?.message ?? "verifica la conexión con el sistema"}`,
+          `No se pudo cargar Finanzas: ${data.accountsResult.reason?.message ?? "verifica la conexión con el sistema"}`,
         );
         if (isAuthError(data.accountsResult.reason)) onRequestLogin?.();
       }
@@ -207,7 +193,7 @@ export function BanksWindow({
   return (
     <section
       className={`provider-window banks-window banks-window-${view} ${isDragging ? "is-dragging" : ""}`}
-      aria-label={`Ventana de ${viewLabels[view] ?? "Bancos"}`}
+      aria-label={`Ventana de ${viewLabels[view] ?? "Finanzas"}`}
       style={windowStyle}
     >
       <header
@@ -218,13 +204,13 @@ export function BanksWindow({
         <div className="provider-title-mark">
           <Landmark size={14} />
         </div>
-        <span>MÓDULO DE BANCOS</span>
-        <strong>{(viewLabels[view] ?? "Bancos").toUpperCase()}</strong>
+        <span>MÓDULO DE FINANZAS</span>
+        <strong>{(viewLabels[view] ?? "Finanzas").toUpperCase()}</strong>
         <span className="bank-mode-label">MODO: NORMAL</span>
         <button
           type="button"
           className="provider-close"
-          aria-label="Cerrar Bancos"
+          aria-label="Cerrar Finanzas"
           onClick={onClose}
         >
           <X size={17} />
@@ -242,10 +228,6 @@ export function BanksWindow({
             onError={setError}
             session={session}
           />
-        ) : view === "beneficiaries" ? (
-          <BankBeneficiariesPanel clients={clients} providers={providers} />
-        ) : view === "banks" ? (
-          <BankBanksPanel accounts={accounts} />
         ) : view === "transactions" ? (
           <BankTransactionsPanel
             {...commonProps}
@@ -262,20 +244,21 @@ export function BanksWindow({
         ) : view === "reports" ? (
           <BankReportsPanel accounts={accounts} movements={movements} />
         ) : (
-          <BankVariousPanel onOpenView={navigate} />
+          <BankHomePanel onOpenView={navigate} />
         )}
       </div>
       {(error || notice) && (
-        <div
+        <TransientMessage
           className={`module-message ${error ? "is-error" : ""}`}
           role={error ? "alert" : "status"}
+          onDismiss={() => (error ? setError("") : setNotice(""))}
         >
           {error || notice}
-        </div>
+        </TransientMessage>
       )}
       <footer className="provider-window-footer bank-window-footer">
         <span className="bank-footer-caption">
-          Módulo de Bancos · {viewLabels[view]} · {accounts.length} cuenta(s)
+          Módulo de Finanzas · {viewLabels[view]} · {accounts.length} cuenta(s)
         </span>
         <div className="provider-navigation-actions">
           <button type="button" className="exit-action" onClick={onClose}>
@@ -366,6 +349,7 @@ function BankAccountsPanel({
         accountNumber: draft.accountNumber,
         accountType: draft.accountType,
         currentBalance: Number(draft.currentBalance || 0),
+        gmfRate: Number(draft.gmfRate || 0),
       };
       const saved = draft.id
         ? await apiClient.patch(`/cuentas-bancarias/${draft.id}`, body)
@@ -510,6 +494,16 @@ function BankAccountsPanel({
               </select>
             </label>
             <label>
+              GMF / 4×1000 (%)
+              <input
+                type="number"
+                min="0"
+                step="0.001"
+                value={draft.gmfRate}
+                onChange={(event) => updateDraft("gmfRate", event.target.value)}
+              />
+            </label>
+            <label>
               Saldo actual
               <input
                 type="number"
@@ -558,113 +552,6 @@ function BankAccountsPanel({
         </section>
       </div>
     </div>
-  );
-}
-
-function BankBeneficiariesPanel({ clients, providers }) {
-  const [search, setSearch] = useState("");
-  const items = useMemo(
-    () =>
-      [
-        ...clients.map((item) => ({ ...item, kind: "Cliente" })),
-        ...providers.map((item) => ({ ...item, kind: "Proveedor" })),
-      ].filter((item) =>
-        `${participantName(item)} ${item.taxId ?? item.identification ?? item.id}`
-          .toLowerCase()
-          .includes(search.trim().toLowerCase()),
-      ),
-    [clients, providers, search],
-  );
-  return (
-    <BankTablePanel
-      title="BENEFICIARIOS"
-      subtitle="Clientes y proveedores disponibles para las transacciones bancarias."
-      search={search}
-      onSearch={setSearch}
-      searchPlaceholder="Nombre o identificación"
-    >
-      <table className="bank-table">
-        <thead>
-          <tr>
-            <th>Código</th>
-            <th>Descripción</th>
-            <th>Tipo</th>
-            <th>Id. Fiscal</th>
-            <th>Saldo</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => (
-            <tr key={`${item.kind}-${item.id}`}>
-              <td>{item.code ?? item.id}</td>
-              <td>{participantName(item)}</td>
-              <td>{item.kind}</td>
-              <td>{item.taxId ?? item.identification ?? "—"}</td>
-              <td className="number-cell">
-                {formatCurrency(item.pendingBalance ?? 0)}
-              </td>
-            </tr>
-          ))}
-          {!items.length && (
-            <tr>
-              <td colSpan="5">No hay beneficiarios para mostrar.</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </BankTablePanel>
-  );
-}
-
-function participantName(item) {
-  const fullName = [item?.firstName, item?.lastName].filter(Boolean).join(" ");
-  return item?.name || fullName || item?.description || "—";
-}
-
-function BankBanksPanel({ accounts }) {
-  const grouped = useMemo(
-    () =>
-      Object.values(
-        accounts.reduce((result, account) => {
-          const key = account.bankName || "Sin banco";
-          if (!result[key])
-            result[key] = { bankName: key, accounts: 0, balance: 0 };
-          result[key].accounts += 1;
-          result[key].balance += Number(account.currentBalance ?? 0);
-          return result;
-        }, {}),
-      ),
-    [accounts],
-  );
-  return (
-    <BankTablePanel
-      title="BANCOS"
-      subtitle="Resumen de cuentas agrupadas por entidad bancaria."
-    >
-      <table className="bank-table">
-        <thead>
-          <tr>
-            <th>Banco</th>
-            <th>Cuentas</th>
-            <th>Saldo disponible</th>
-          </tr>
-        </thead>
-        <tbody>
-          {grouped.map((item) => (
-            <tr key={item.bankName}>
-              <td>{item.bankName}</td>
-              <td>{item.accounts}</td>
-              <td className="number-cell">{formatCurrency(item.balance)}</td>
-            </tr>
-          ))}
-          {!grouped.length && (
-            <tr>
-              <td colSpan="3">No hay cuentas para resumir.</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </BankTablePanel>
   );
 }
 
@@ -1235,30 +1122,6 @@ function movementTypeLabel(movement) {
   return type || "Movimiento";
 }
 
-function BankVariousPanel({ onOpenView }) {
-  return (
-    <div className="bank-various-shell">
-      <div className="bank-section-heading">
-        <div>
-          <span>MÓDULO DE BANCOS</span>
-          <h2>VARIOS</h2>
-        </div>
-      </div>
-      <div className="bank-various-grid">
-        <button type="button" onClick={() => onOpenView("beneficiaries")}>
-          <UsersRound size={22} /> Beneficiarios
-        </button>
-        <button type="button" onClick={() => onOpenView("banks")}>
-          <Banknote size={22} /> Bancos
-        </button>
-        <button type="button" onClick={() => onOpenView("reports")}>
-          <BarChart3 size={22} /> Reportes
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function BankTablePanel({
   title,
   subtitle,
@@ -1299,6 +1162,7 @@ function toAccountDraft(account) {
     accountNumber: account.accountNumber ?? "",
     accountType: account.accountType ?? "CORRIENTE",
     currentBalance: String(account.currentBalance ?? 0),
+    gmfRate: String(account.gmfRate ?? 0.4),
   };
 }
 

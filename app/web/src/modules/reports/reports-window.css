@@ -1,0 +1,4 @@
+.p1-signal-button { min-width: 58px; padding: 3px 8px; border: 1px solid; border-radius: 12px; font-size: 10px; cursor: pointer; }
+.p1-signal-button.rojo { color: #8d3f3f; background: #fde7e7; border-color: #edc4c4; }
+.p1-signal-button.verde { color: #2f6d45; background: #e2f3e5; border-color: #b9dcbc; }
+.p1-signal-button.amarillo { color: #805c0a; background: #fff5cf; border-color: #ead58b; }

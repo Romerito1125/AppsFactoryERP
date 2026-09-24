@@ -90,8 +90,11 @@ export class ComprasController {
   @Post(':id/recibir')
   @Roles(Role.ADMIN, Role.CONTADOR, Role.BODEGA)
   @Permissions('PURCHASES_EDIT')
-  receive(@Param('id', ParseIntPipe) id: number) {
-    return this.comprasService.receive(id);
+  receive(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() request: Request & { user: AuthUser },
+  ) {
+    return this.comprasService.receive(id, request.user);
   }
 
   @Post(':id/pagos')

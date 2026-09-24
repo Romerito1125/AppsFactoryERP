@@ -14,7 +14,7 @@ import {
   Role as PrismaRole,
 } from '@prisma/client';
 import { InvoiceStatus } from '../../common/enums/invoice-status.enum';
-import { convertQuantity } from '../../common/utils/unit-conversion.util';
+import { convertProductQuantityToBase } from '../../common/utils/product-quantity.util';
 import {
   buildPaginatedResponse,
   resolvePagination,
@@ -44,6 +44,7 @@ export type InvoiceDeliveryInput = {
   recipientName: string;
   recipientPhone: string;
   notes?: string;
+  deliveryFee?: number;
 };
 
 @Injectable()
@@ -55,11 +56,22 @@ export class FacturasService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
-  async findAll(query: ListInvoicesQueryDto) {
-    const where = {
-      ...this.getStatusWhere(query.status),
-      ...(query.source ? { source: query.source } : {}),
-      ...this.getSearchWhere(query.q),
+  async findAll(query: ListInvoicesQueryDto, authUser?: AuthUser) {
+    const warehouseId = this.resolveActorWarehouse(authUser);
+    const where: Prisma.InvoiceWhereInput = {
+      AND: [
+        this.getStatusWhere(query.status),
+        query.source ? { source: query.source } : undefined,
+        this.getSearchWhere(query.q),
+        warehouseId
+          ? {
+              OR: [
+                { warehouseId },
+                { items: { some: { warehouseId } } },
+              ],
+            }
+          : undefined,
+      ].filter(Boolean) as Prisma.InvoiceWhereInput[],
     };
     const { page, limit, skip, take } = resolvePagination(query);
     const [total, data] = await Promise.all([
@@ -76,7 +88,7 @@ export class FacturasService {
     return buildPaginatedResponse(data, total, page, limit);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, authUser?: AuthUser) {
     this.ensurePositiveId(id);
 
     const invoice = await this.prisma.invoice.findUnique({
@@ -85,6 +97,15 @@ export class FacturasService {
     });
 
     if (!invoice) {
+      throw new NotFoundException('Factura no encontrada');
+    }
+
+    const warehouseId = this.resolveActorWarehouse(authUser);
+    if (
+      warehouseId &&
+      invoice.warehouseId !== warehouseId &&
+      !invoice.items.some((item) => item.warehouseId === warehouseId)
+    ) {
       throw new NotFoundException('Factura no encontrada');
     }
 
@@ -97,6 +118,10 @@ export class FacturasService {
     delivery?: InvoiceDeliveryInput,
   ) {
     const invoice = await this.prisma.$transaction(async (tx) => {
+      const source = createInvoiceDto.source ?? InvoiceSource.ADMIN;
+      const actorWarehouseId = this.resolveActorWarehouse(authUser);
+      const requestedWarehouseId =
+        createInvoiceDto.warehouseId ?? actorWarehouseId;
       const client = createInvoiceDto.clientId
         ? await tx.client.findUnique({
             where: { id: createInvoiceDto.clientId },
@@ -117,9 +142,19 @@ export class FacturasService {
         throw new NotFoundException('Cliente no encontrado');
       }
 
-      if (createInvoiceDto.warehouseId) {
+      if (
+        createInvoiceDto.warehouseId &&
+        actorWarehouseId !== undefined &&
+        createInvoiceDto.warehouseId !== actorWarehouseId
+      ) {
+        throw new BadRequestException(
+          'El usuario operativo solo puede facturar desde su bodega asignada',
+        );
+      }
+
+      if (requestedWarehouseId) {
         const warehouse = await tx.warehouse.findUnique({
-          where: { id: createInvoiceDto.warehouseId },
+          where: { id: requestedWarehouseId },
         });
 
         if (!warehouse || !warehouse.isActive) {
@@ -154,7 +189,7 @@ export class FacturasService {
           productId: product.id,
           productPriceId: item.productPriceId,
           quantity: item.quantity,
-          warehouseId: item.warehouseId ?? createInvoiceDto.warehouseId,
+          warehouseId: item.warehouseId ?? requestedWarehouseId,
           unitPrice: item.unitPrice,
           product,
         });
@@ -163,12 +198,45 @@ export class FacturasService {
       if (authUser.role === PrismaRole.BODEGA) {
         const invalidWarehouse = resolvedItems.some(
           (item) =>
-            (item.warehouseId ?? createInvoiceDto.warehouseId) !==
-            authUser.warehouseId,
+            (item.warehouseId ?? requestedWarehouseId) !== authUser.warehouseId,
         );
         if (invalidWarehouse || !authUser.warehouseId) {
           throw new BadRequestException(
             'El usuario de bodega solo puede facturar desde su bodega asignada',
+          );
+        }
+      }
+
+      if (source !== InvoiceSource.APP_MOVIL) {
+        const missingWarehouse = resolvedItems.some(
+          (item) => !item.warehouseId && !requestedWarehouseId,
+        );
+        if (missingWarehouse) {
+          throw new BadRequestException(
+            'Selecciona la bodega desde la que se realizará la venta',
+          );
+        }
+      }
+
+      for (const item of resolvedItems) {
+        item.warehouseId ??= requestedWarehouseId;
+        if (!item.warehouseId) continue;
+
+        const warehouse = await tx.warehouse.findUnique({
+          where: { id: item.warehouseId },
+          select: { id: true, isActive: true },
+        });
+        if (!warehouse || !warehouse.isActive) {
+          throw new BadRequestException(
+            'La bodega seleccionada no existe o está inactiva',
+          );
+        }
+        if (
+          actorWarehouseId !== undefined &&
+          item.warehouseId !== actorWarehouseId
+        ) {
+          throw new BadRequestException(
+            'El usuario operativo solo puede facturar desde su bodega asignada',
           );
         }
       }
@@ -247,6 +315,7 @@ export class FacturasService {
         const productPrice = this.findSaleablePrice(
           product,
           item.productPriceId,
+          client.clientType,
         );
 
         if (!productPrice) {
@@ -317,8 +386,7 @@ export class FacturasService {
       });
 
       if (
-        (createInvoiceDto.source ?? InvoiceSource.ADMIN) ===
-        InvoiceSource.APP_MOVIL
+        source === InvoiceSource.APP_MOVIL
       ) {
         await this.assignStoreWarehouses(tx, grossInvoiceItems);
       }
@@ -441,7 +509,7 @@ export class FacturasService {
           createdByUserId: creatorId,
           createdByRole: creatorRole,
           createdByUsername: creatorUsername,
-          source: createInvoiceDto.source ?? InvoiceSource.ADMIN,
+          source,
           saleMode: createInvoiceDto.saleMode ?? 'CONTADO',
           zone: createInvoiceDto.zone?.trim() || null,
           city: createInvoiceDto.city?.trim() || null,
@@ -460,6 +528,7 @@ export class FacturasService {
                     recipientName: delivery.recipientName,
                     recipientPhone: delivery.recipientPhone,
                     notes: delivery.notes,
+                    deliveryFee: delivery.deliveryFee ?? 0,
                   },
                 },
               }
@@ -479,7 +548,7 @@ export class FacturasService {
       await this.notificacionesService.createInvoiceNotification(tx, invoice);
 
       return invoice;
-    });
+    }, { timeout: 15000 });
 
     await this.auditLogService.log({
       actor: authUser,
@@ -962,23 +1031,23 @@ export class FacturasService {
     quantity: number,
     fromUnit: ProductPrice['unit'],
     product: Pick<ResolvedInvoiceProduct, 'unit' | 'packagingProfile'>,
-    toUnit: ProductPrice['unit'],
+    _toUnit: ProductPrice['unit'],
   ) {
-    const packaging = product.packagingProfile;
-    let productUnits = quantity;
-    if (fromUnit === 'PAQUETE') {
-      if (!packaging?.unitsPerPackage) return null;
-      productUnits *= packaging.unitsPerPackage;
-    } else if (fromUnit === 'CAJA') {
-      if (!packaging?.unitsPerPackage || !packaging.packagesPerBox) return null;
-      productUnits *= packaging.unitsPerPackage * packaging.packagesPerBox;
-    }
-    if (fromUnit === 'PAQUETE' || fromUnit === 'CAJA') {
-      return toUnit === product.unit
-        ? productUnits
-        : convertQuantity(productUnits, product.unit, toUnit);
-    }
-    return convertQuantity(quantity, fromUnit, toUnit);
+    return convertProductQuantityToBase(
+      quantity,
+      fromUnit,
+      product.unit,
+      product.packagingProfile,
+    );
+  }
+
+  private resolveActorWarehouse(authUser?: AuthUser) {
+    if (!authUser || this.hasGlobalWarehouseAccess(authUser)) return undefined;
+    return authUser.warehouseId ?? undefined;
+  }
+
+  private hasGlobalWarehouseAccess(authUser: AuthUser) {
+    return authUser.role === PrismaRole.ADMIN || authUser.role === PrismaRole.CONTADOR;
   }
 
   private allocateDiscount(discount: number, subtotals: number[]) {
@@ -1034,6 +1103,7 @@ export class FacturasService {
   private findSaleablePrice(
     product: ResolvedInvoiceProduct,
     productPriceId?: number,
+    clientType?: 'MAYORISTA' | 'MINORISTA',
   ) {
     const now = new Date();
     const isInSaleWindow = (price: ProductPrice) =>
@@ -1041,13 +1111,25 @@ export class FacturasService {
       (!price.startsAt || price.startsAt <= now) &&
       (!price.endsAt || price.endsAt >= now);
 
-    return productPriceId
-      ? product.prices.find(
-          (price) => price.id === productPriceId && isInSaleWindow(price),
-        )
-      : product.prices.find(
-          (price) => price.isDefault && isInSaleWindow(price),
-        );
+    if (productPriceId) {
+      return product.prices.find(
+        (price) => price.id === productPriceId && isInSaleWindow(price),
+      );
+    }
+
+    const clientPrice = clientType
+      ? product.prices.find((price) => {
+          if (!isInSaleWindow(price)) return false;
+          const name = price.name.toLowerCase();
+          return clientType === 'MAYORISTA'
+            ? /mayor|mayoreo|wholesale/.test(name)
+            : /minorista|detal|retail/.test(name);
+        })
+      : undefined;
+
+    return (
+      clientPrice ?? product.prices.find((price) => price.isDefault && isInSaleWindow(price))
+    );
   }
 
   private ensurePositiveId(id: number) {

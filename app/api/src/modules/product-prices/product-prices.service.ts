@@ -22,9 +22,15 @@ export class ProductPricesService {
   ) {}
 
   async findAll(query: FilterProductPricesDto) {
+    const now = new Date();
+    const searchWhere = this.getSearchWhere(query.q);
     const where = {
-      ...this.getStatusWhere(query.estado),
-      ...this.getSearchWhere(query.q),
+      ...this.getStatusWhere(query.estado, now),
+      ...searchWhere,
+    };
+    const activeWhere = {
+      ...searchWhere,
+      ...this.getActiveWindowWhere(now),
     };
     const { page, limit, skip, take } = resolvePagination(query);
     const [total, data, activeTotal, defaultTotal] = await Promise.all([
@@ -36,8 +42,14 @@ export class ProductPricesService {
         skip,
         take,
       }),
-      this.prisma.productPrice.count({ where: { ...where, isActive: true } }),
-      this.prisma.productPrice.count({ where: { ...where, isDefault: true } }),
+      this.prisma.productPrice.count({ where: activeWhere }),
+      this.prisma.productPrice.count({
+        where: {
+          ...searchWhere,
+          isDefault: true,
+          ...this.getActiveWindowWhere(now),
+        },
+      }),
     ]);
 
     return {
@@ -151,6 +163,14 @@ export class ProductPricesService {
       data.isDefault = false;
     }
 
+    const priceChanged =
+      data.price !== undefined && Number(data.price) !== Number(current.price);
+    if (priceChanged && !reason?.trim()) {
+      throw new BadRequestException(
+        'Indica la razón del cambio de precio para dejar trazabilidad',
+      );
+    }
+
     const price = await this.prisma.$transaction(async (tx) => {
       if (data.isDefault) {
         await tx.productPrice.updateMany({
@@ -159,15 +179,12 @@ export class ProductPricesService {
         });
       }
 
-      if (
-        data.price !== undefined &&
-        Number(data.price) !== Number(current.price)
-      ) {
+      if (priceChanged) {
         await tx.productPriceHistory.create({
           data: {
             productPriceId: id,
             oldPrice: current.price,
-            newPrice: data.price,
+            newPrice: Number(data.price),
             reason,
           },
         });
@@ -323,11 +340,24 @@ export class ProductPricesService {
     }
   }
 
-  private getStatusWhere(status?: FilterProductPricesDto['estado']) {
+  private getStatusWhere(
+    status: FilterProductPricesDto['estado'],
+    now = new Date(),
+  ) {
     if (!status || status === 'TODOS') return undefined;
-    if (status === 'ACTIVOS') return { isActive: true };
+    if (status === 'ACTIVOS') return this.getActiveWindowWhere(now);
     if (status === 'INACTIVOS') return { isActive: false };
     return { isDefault: true };
+  }
+
+  private getActiveWindowWhere(now: Date) {
+    return {
+      isActive: true,
+      AND: [
+        { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
+        { OR: [{ endsAt: null }, { endsAt: { gte: now } }] },
+      ],
+    };
   }
 
   private getSearchWhere(search?: string) {

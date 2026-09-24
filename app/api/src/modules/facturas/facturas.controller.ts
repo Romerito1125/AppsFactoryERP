@@ -29,13 +29,17 @@ export class FacturasController {
   constructor(private readonly facturasService: FacturasService) {}
 
   @Get()
-  findAll(@Query() query: ListInvoicesQueryDto) {
-    return this.facturasService.findAll(query);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.CAJERO, Role.VENDEDOR, Role.CONTADOR, Role.BODEGA)
+  findAll(@Query() query: ListInvoicesQueryDto, @Req() request: AuthRequest) {
+    return this.facturasService.findAll(query, request.user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.facturasService.findOne(id);
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.CAJERO, Role.VENDEDOR, Role.CONTADOR, Role.BODEGA)
+  findOne(@Param('id', ParseIntPipe) id: number, @Req() request: AuthRequest) {
+    return this.facturasService.findOne(id, request.user);
   }
 
   @Post()

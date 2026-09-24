@@ -295,7 +295,7 @@ async function upsertClient(data) {
   })
 }
 
-async function upsertQuickAccessUser(profile) {
+async function upsertQuickAccessUser(profile, warehouseId = null) {
   const client = await upsertClient(profile)
   const existingByUsername = await prisma.user.findUnique({
     where: { username: profile.username },
@@ -306,6 +306,7 @@ async function upsertQuickAccessUser(profile) {
     username: profile.username,
     password: hashPassword(profile.password),
     role: profile.role,
+    warehouseId: profile.role === 'BODEGA' ? warehouseId : null,
     isActive: true,
     deletedAt: null,
   }
@@ -422,11 +423,20 @@ async function createMobileOrders(clientMap) {
 
 async function main() {
   const clientMap = new Map()
+  const bodegaWarehouses = await prisma.warehouse.findMany({
+    where: { isActive: true, deletedAt: null },
+    orderBy: { id: 'asc' },
+    take: 2,
+  })
+  let bodegaIndex = 0
 
   for (const profile of quickAccessProfiles) {
     const client = await upsertClient(profile)
     clientMap.set(profile.username, client)
-    await upsertQuickAccessUser(profile)
+    const warehouseId = profile.role === 'BODEGA'
+      ? bodegaWarehouses[bodegaIndex++ % Math.max(1, bodegaWarehouses.length)]?.id ?? null
+      : null
+    await upsertQuickAccessUser(profile, warehouseId)
   }
 
   for (const clientData of mobileClients) {

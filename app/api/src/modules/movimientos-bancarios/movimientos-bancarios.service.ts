@@ -18,8 +18,6 @@ import { ListBankMovementsQueryDto } from './dto/list-bank-movements-query.dto';
 
 @Injectable()
 export class MovimientosBancariosService {
-  private readonly gmfRate = new Prisma.Decimal('0.004');
-
   constructor(private readonly prisma: PrismaService) {}
   async findAll(query: ListBankMovementsQueryDto) {
     const where = {
@@ -67,10 +65,12 @@ export class MovimientosBancariosService {
   }
   expense(bankAccountId: number, dto: BankAmountDto) {
     return this.prisma.$transaction(async (tx) => {
+      const account = await this.ensureActiveAccount(tx, bankAccountId);
       const amounts = this.buildMovementAmounts(
         BankMovementType.EGRESO,
         dto.amount,
         dto.appliesGmf,
+        account.gmfRate,
       );
       await this.ensureBalance(tx, bankAccountId, Number(amounts.totalAmount));
       return this.createMovement(
@@ -88,10 +88,12 @@ export class MovimientosBancariosService {
     if (dto.fromBankAccountId === dto.toBankAccountId)
       throw new BadRequestException('Las cuentas deben ser diferentes');
     return this.prisma.$transaction(async (tx) => {
+      const originAccount = await this.ensureActiveAccount(tx, dto.fromBankAccountId);
       const outgoing = this.buildMovementAmounts(
         BankMovementType.TRANSFERENCIA_SALIENTE,
         dto.amount,
         dto.appliesGmf,
+        originAccount.gmfRate,
       );
       await this.ensureBalance(
         tx,
@@ -106,6 +108,7 @@ export class MovimientosBancariosService {
         dto.description,
         undefined,
         dto.appliesGmf,
+        originAccount.gmfRate,
       );
       return this.createMovement(
         tx,
@@ -147,12 +150,14 @@ export class MovimientosBancariosService {
     description?: string,
     invoiceId?: number,
     appliesGmf?: boolean,
+    accountGmfRate?: Prisma.Decimal | number,
   ) {
-    await this.ensureActiveAccount(tx, bankAccountId);
+    const account = await this.ensureActiveAccount(tx, bankAccountId);
     const normalized = this.buildMovementAmounts(
       movementType,
       amount,
       appliesGmf,
+      accountGmfRate ?? account.gmfRate,
     );
     const increment =
       movementType === BankMovementType.INGRESO ||
@@ -223,21 +228,25 @@ export class MovimientosBancariosService {
     movementType: BankMovementType,
     amount: number,
     appliesGmf?: boolean,
+    accountGmfRate?: Prisma.Decimal | number,
   ) {
     const baseAmount = new Prisma.Decimal(amount);
     const supportsGmf =
       movementType === BankMovementType.EGRESO ||
       movementType === BankMovementType.TRANSFERENCIA_SALIENTE;
     const shouldApplyGmf = Boolean(appliesGmf && supportsGmf);
+    const gmfRate = accountGmfRate == null
+      ? new Prisma.Decimal('0.4').div(100)
+      : new Prisma.Decimal(accountGmfRate).div(100);
     const gmfAmount = shouldApplyGmf
-      ? baseAmount.mul(this.gmfRate).toDecimalPlaces(2)
+      ? baseAmount.mul(gmfRate).toDecimalPlaces(2)
       : new Prisma.Decimal(0);
     const totalAmount = baseAmount.plus(gmfAmount).toDecimalPlaces(2);
 
     return {
       appliesGmf: shouldApplyGmf,
       baseAmount,
-      gmfRate: shouldApplyGmf ? this.gmfRate : new Prisma.Decimal(0),
+      gmfRate: shouldApplyGmf ? gmfRate : new Prisma.Decimal(0),
       gmfAmount,
       totalAmount,
     };

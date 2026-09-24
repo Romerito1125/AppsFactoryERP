@@ -47,6 +47,8 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+/.codex-temp/
+/tmp/
 
 # Runtime data
 pids

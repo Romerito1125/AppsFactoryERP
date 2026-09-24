@@ -11,7 +11,6 @@ import {
   salesMenuItems,
   salesTopMenuItems,
   topMenuItems,
-  transactionsMenuItems,
 } from "@/app/desktop-config";
 
 export function ClassicMenuBar({
@@ -22,6 +21,11 @@ export function ClassicMenuBar({
   onOpenProviders,
   onOpenRetentions,
   onOpenUsers,
+  onOpenAuditLog,
+  onOpenOffers,
+  onOpenReferrals,
+  onOpenReportsLibrary,
+  onOpenInventoryTransfers,
   onOpenPayables,
   onOpenReceivables,
   onOpenSalesView,
@@ -56,6 +60,11 @@ export function ClassicMenuBar({
       warehouses: onOpenWarehouses,
       retentions: onOpenRetentions,
       users: onOpenUsers,
+      "audit-log": onOpenAuditLog,
+      offers: onOpenOffers,
+      referrals: onOpenReferrals,
+      "reports-library": onOpenReportsLibrary,
+      "inventory-transfers": onOpenInventoryTransfers,
       payables: () =>
         activeModule === "banks"
           ? onOpenBanksView?.("payables")
@@ -65,18 +74,10 @@ export function ClassicMenuBar({
           ? onOpenBanksView?.("receivables")
           : onOpenReceivables?.(),
       billing: () => onOpenSalesView?.("billing"),
-      returns: () =>
-        activeModule === "purchases"
-          ? onOpenPurchasesView?.("returns")
-          : onOpenSalesView?.("returns"),
       quotes: () =>
         activeModule === "purchases"
           ? onOpenPurchasesView?.("quotes")
           : onOpenSalesView?.("quotes"),
-      deliveries: () =>
-        activeModule === "purchases"
-          ? onOpenPurchasesView?.("deliveries")
-          : onOpenSalesView?.("deliveries"),
       orders: () =>
         activeModule === "purchases"
           ? onOpenPurchasesView?.("orders")
@@ -87,16 +88,8 @@ export function ClassicMenuBar({
           : activeModule === "banks"
             ? onOpenBanksView?.("reports")
             : onOpenSalesView?.("reports"),
-      various: () =>
-        activeModule === "purchases"
-          ? onOpenPurchasesView?.("various")
-          : activeModule === "banks"
-            ? onOpenBanksView?.("various")
-            : onOpenSalesView?.("various"),
       purchases: () => onOpenPurchasesView?.("purchases"),
       accounts: () => onOpenBanksView?.("accounts"),
-      beneficiaries: () => onOpenBanksView?.("beneficiaries"),
-      banks: () => onOpenBanksView?.("banks"),
       transactions: () => onOpenBanksView?.("transactions"),
       "switch-purchases": () => onSwitchModule?.("purchases"),
       "switch-banks": () => onSwitchModule?.("banks"),
@@ -141,9 +134,7 @@ export function ClassicMenuBar({
                       ? (banksMenuItemsByMenu[item] ?? [])
                       : item === "Archivos"
                         ? filesMenuItems
-                        : item === "Transacciones"
-                          ? transactionsMenuItems
-                          : moduleMenuItems
+                      : moduleMenuItems
               )
                 .filter(
                   (fileItem) =>

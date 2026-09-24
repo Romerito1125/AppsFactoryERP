@@ -5,4 +5,5 @@ export enum Role {
   VENDEDOR = 'VENDEDOR',
   BODEGA = 'BODEGA',
   CONTADOR = 'CONTADOR',
+  DOMICILIARIO = 'DOMICILIARIO',
 }

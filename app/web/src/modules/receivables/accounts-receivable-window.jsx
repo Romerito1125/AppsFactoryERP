@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
+import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
 
 const tabs = [
@@ -530,9 +531,13 @@ export function AccountsReceivableWindow({
         </div>
       </div>
       {error && (
-        <div className="window-error" role="alert">
+        <TransientMessage
+          className="window-error"
+          role="alert"
+          onDismiss={() => setError("")}
+        >
           {error}
-        </div>
+        </TransientMessage>
       )}
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">

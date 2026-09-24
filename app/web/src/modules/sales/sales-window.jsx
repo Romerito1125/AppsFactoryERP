@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  BarChart3,
   Check,
-  ChevronRight,
   CircleX,
   FileText,
   LoaderCircle,
@@ -13,28 +11,34 @@ import {
   ReceiptText,
   RotateCcw,
   Search,
+  Send,
   ShoppingCart,
   Trash2,
   Truck,
+  Warehouse,
   X,
 } from "lucide-react";
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
+import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
 
 const viewLabels = {
   billing: "Facturación",
-  returns: "Devolución",
-  quotes: "Presupuesto",
-  deliveries: "Nota de entrega",
-  orders: "Pedidos",
+  invoices: "Facturas",
+  quotes: "Cotizaciones",
+  orders: "Pedidos y domicilios",
   reports: "Reportes",
-  various: "Varios",
 };
 
 const invoiceStatusLabels = {
   ACTIVA: "Activa",
   ANULADA: "Anulada",
+};
+
+const invoiceValidationLabels = {
+  PENDIENTE: "Pendiente de validar",
+  VALIDADA: "Validada",
 };
 
 const quoteStatusLabels = {
@@ -76,13 +80,15 @@ function loadCriticalSalesData() {
       apiClient.getAllPages("/productos", { estado: "activos" }),
       apiClient.getAllPages("/bodegas", { estado: "activos" }),
       apiClient.getAllPages("/cuentas-bancarias", { estado: "activos" }),
+      apiClient.getAllPages("/usuarios", { estado: "activos" }),
     ]).then(
-      ([clientsResult, productsResult, warehousesResult, accountsResult]) => {
+      ([clientsResult, productsResult, warehousesResult, accountsResult, usersResult]) => {
         criticalSalesDataSnapshot = {
           clientsResult,
           productsResult,
           warehousesResult,
           accountsResult,
+          usersResult,
         };
         return criticalSalesDataSnapshot;
       },
@@ -124,22 +130,30 @@ function invalidateSalesDataCache() {
 
 export function SalesWindow({
   initialView = "billing",
+  initialDocumentId = null,
   session,
   onClose,
   onOpenView,
   onRequestLogin,
 }) {
-  const [view, setView] = useState(initialView);
+  const [view, setView] = useState(
+    ["billing", "quotes", "orders", "reports"].includes(initialView)
+      ? initialView
+      : "billing",
+  );
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
+  const [warehouseUsers, setWarehouseUsers] = useState([]);
+  const [salesUsers, setSalesUsers] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [quotes, setQuotes] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
   const [orders, setOrders] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState("");
   const [selectedWarehouseId, setSelectedWarehouseId] = useState("");
+  const [selectedSellerId, setSelectedSellerId] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [saleMode, setSaleMode] = useState("CONTADO");
   const [creditDueDate, setCreditDueDate] = useState(defaultDueDate());
@@ -151,6 +165,7 @@ export function SalesWindow({
   const [notice, setNotice] = useState("");
   const [lastDocument, setLastDocument] = useState(null);
   const [selectedDocument, setSelectedDocument] = useState(null);
+  const [quoteDispatch, setQuoteDispatch] = useState(null);
   const [deliveryEditor, setDeliveryEditor] = useState(null);
   const [lookupType, setLookupType] = useState(null);
   const {
@@ -162,7 +177,7 @@ export function SalesWindow({
   useEffect(() => {
     let cancelled = false;
     loadCriticalSalesData().then(
-      ({ clientsResult, productsResult, warehousesResult, accountsResult }) => {
+      ({ clientsResult, productsResult, warehousesResult, accountsResult, usersResult }) => {
         if (cancelled) return;
         if (clientsResult.status === "fulfilled") {
           const nextClients = clientsResult.value;
@@ -185,6 +200,26 @@ export function SalesWindow({
           setBankAccounts(nextAccounts);
           setSelectedAccountId(String(nextAccounts[0]?.id ?? ""));
         }
+        if (usersResult?.status === "fulfilled") {
+          const activeSalesUsers = usersResult.value.filter(
+            (user) =>
+              user.isActive &&
+              ["ADMIN", "CAJERO", "VENDEDOR", "CONTADOR"].includes(user.role),
+          );
+          setSalesUsers(activeSalesUsers);
+          setSelectedSellerId(
+            String(
+              activeSalesUsers.find(
+                (user) => String(user.id) === String(session?.sub),
+              )?.id ?? activeSalesUsers[0]?.id ?? "",
+            ),
+          );
+          setWarehouseUsers(
+            usersResult.value.filter(
+              (user) => user.role === "BODEGA" && user.isActive,
+            ),
+          );
+        }
         const requiredFailure = [clientsResult, productsResult].find(
           (result) => result.status === "rejected",
         );
@@ -200,8 +235,25 @@ export function SalesWindow({
     loadSecondarySalesData().then(
       ({ invoicesResult, quotesResult, deliveriesResult, ordersResult }) => {
         if (cancelled) return;
-        if (invoicesResult.status === "fulfilled")
-          setInvoices(invoicesResult.value);
+        if (invoicesResult.status === "fulfilled") {
+          const nextInvoices = invoicesResult.value;
+          setInvoices(nextInvoices);
+          if (initialDocumentId) {
+            const targetInvoice = nextInvoices.find(
+              (invoice) => Number(invoice.id) === Number(initialDocumentId),
+            );
+            if (targetInvoice) {
+              setSelectedDocument({
+                ...targetInvoice,
+                __salesType: "invoice",
+              });
+            } else {
+              setError(
+                "La factura de la notificación ya no está disponible para consultar.",
+              );
+            }
+          }
+        }
         if (quotesResult.status === "fulfilled") setQuotes(quotesResult.value);
         if (deliveriesResult.status === "fulfilled")
           setDeliveries(deliveriesResult.value);
@@ -212,7 +264,7 @@ export function SalesWindow({
     return () => {
       cancelled = true;
     };
-  }, [onRequestLogin]);
+  }, [initialDocumentId, onRequestLogin]);
 
   const activeProducts = useMemo(
     () =>
@@ -226,6 +278,9 @@ export function SalesWindow({
   const selectedWarehouse = warehouses.find(
     (warehouse) => String(warehouse.id) === String(selectedWarehouseId),
   );
+  const selectedSeller = salesUsers.find(
+    (user) => String(user.id) === String(selectedSellerId),
+  );
   const canManageDocuments = [
     "ADMIN",
     "CAJERO",
@@ -233,14 +288,25 @@ export function SalesWindow({
     "CONTADOR",
   ].includes(session?.role);
   const canManageDeliveries = session?.role === "ADMIN";
+
+  useEffect(() => {
+    if (!selectedClient) return;
+    setCart((current) => {
+      let changed = false;
+      const next = current.map((item) => {
+        const price = getPriceForClient(item.product, selectedClient);
+        if (!price || Number(price.id) === Number(item.productPriceId)) return item;
+        changed = true;
+        return { ...item, productPriceId: price.id };
+      });
+      return changed ? next : current;
+    });
+  }, [selectedClient?.id, selectedClient?.clientType]);
   const salesViews = [
     "billing",
     "quotes",
-    "returns",
-    "deliveries",
     "orders",
     "reports",
-    "various",
   ];
   const salesViewIndex = salesViews.indexOf(view);
 
@@ -307,7 +373,7 @@ export function SalesWindow({
       })
       .filter(Boolean);
     if (!loadedItems.length) {
-      setError("No se pudieron cargar los productos de este presupuesto.");
+      setError("No se pudieron cargar los productos de esta cotización.");
       return;
     }
     setCart(loadedItems);
@@ -318,7 +384,34 @@ export function SalesWindow({
     setLookupType(null);
     setLastDocument(null);
     setError("");
-    setNotice(`Presupuesto ${quote.consecutive} cargado en facturación.`);
+      setNotice(`Cotización ${quote.consecutive} cargada en facturación.`);
+  }
+
+  function openQuoteDispatch(quote) {
+    setQuoteDispatch(quote);
+    setError("");
+  }
+
+  async function sendQuoteToWarehouse(userId) {
+    if (!quoteDispatch || !userId) return;
+    const actionKey = `quote-send-${quoteDispatch.id}`;
+    setActionLoading(actionKey);
+    setError("");
+    try {
+      const result = await apiClient.post(
+        `/cotizaciones/${quoteDispatch.id}/enviar-bodega`,
+        { userId: Number(userId) },
+      );
+      setQuoteDispatch(null);
+      setNotice(
+        `Cotización ${quoteDispatch.consecutive} enviada a ${result.recipient.username} · ${result.recipient.warehouse}.`,
+      );
+    } catch (requestError) {
+      setError(requestError.message);
+      if (isAuthError(requestError)) onRequestLogin?.();
+    } finally {
+      setActionLoading("");
+    }
   }
 
   function handleSalesShortcut(event) {
@@ -334,17 +427,33 @@ export function SalesWindow({
     )
       return;
     if (lookupType) return;
+    if (event.key === "F4") return;
     event.preventDefault();
     if (event.key === "F1") openLookup("clients");
     if (event.key === "F2") openLookup("clients");
-    if (event.key === "F4") navigate("billing");
     if (event.key === "F5") openLookup("products");
     if (event.key === "F6") openLookup("invoices");
     if (event.key === "F7") openLookup("quotes");
   }
 
+  useEffect(() => {
+    function handleGlobalSalesShortcut(event) {
+      if (event.key !== "F4") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setLookupType(null);
+      setError("");
+      setNotice("");
+      setLastDocument(null);
+      setView("billing");
+    }
+
+    window.addEventListener("keydown", handleGlobalSalesShortcut);
+    return () => window.removeEventListener("keydown", handleGlobalSalesShortcut);
+  }, []);
+
   function addProduct(product) {
-    const price = getDefaultPrice(product);
+    const price = getPriceForClient(product, selectedClient);
     if (!price) {
       setError(`El producto ${product.name} no tiene un precio activo.`);
       return;
@@ -447,11 +556,14 @@ export function SalesWindow({
         items: cart.map((item) => ({
           productId: item.productId,
           productPriceId: item.productPriceId,
-          warehouseId: selectedWarehouseId
+        warehouseId: selectedWarehouseId
             ? Number(selectedWarehouseId)
             : undefined,
           quantity: item.quantity,
         })),
+        createdByUserId: selectedSellerId
+          ? Number(selectedSellerId)
+          : undefined,
       });
 
       if (saleMode === "CONTADO") {
@@ -482,11 +594,11 @@ export function SalesWindow({
 
   async function saveQuote() {
     if (!selectedClientId) {
-      setError("Selecciona un cliente para crear el presupuesto.");
+      setError("Selecciona un cliente para crear la cotización.");
       return;
     }
     if (!cart.length) {
-      setError("Agrega al menos un producto para crear el presupuesto.");
+      setError("Agrega al menos un producto para crear la cotización.");
       return;
     }
     setSaving(true);
@@ -505,7 +617,7 @@ export function SalesWindow({
       setQuotes((current) => [quote, ...current]);
       invalidateSalesDataCache();
       setLastDocument(quote);
-      setNotice(`Presupuesto ${quote.consecutive} creado correctamente.`);
+      setNotice(`Cotización ${quote.consecutive} creada correctamente.`);
       setCart(emptyCart);
     } catch (requestError) {
       setError(requestError.message);
@@ -529,7 +641,29 @@ export function SalesWindow({
         current.map((item) => (item.id === saved.id ? saved : item)),
       );
       invalidateSalesDataCache();
-      setNotice(`Factura ${invoice.consecutive} anulada.`);
+      setSelectedDocument(null);
+      setNotice(`Factura ${invoice.consecutive} anulada y existencias devueltas.`);
+    } catch (requestError) {
+      setError(requestError.message);
+      if (isAuthError(requestError)) onRequestLogin?.();
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function validateInvoice(invoice) {
+    if (invoice.validationStatus !== "PENDIENTE") return;
+    const actionKey = `invoice-validate-${invoice.id}`;
+    setActionLoading(actionKey);
+    setError("");
+    setNotice("");
+    try {
+      const saved = await apiClient.patch(`/facturas/${invoice.id}/validar`);
+      setInvoices((current) =>
+        current.map((item) => (item.id === saved.id ? saved : item)),
+      );
+      invalidateSalesDataCache();
+      setNotice(`Factura ${invoice.consecutive} validada correctamente.`);
     } catch (requestError) {
       setError(requestError.message);
       if (isAuthError(requestError)) onRequestLogin?.();
@@ -551,7 +685,7 @@ export function SalesWindow({
         current.map((item) => (item.id === saved.id ? saved : item)),
       );
       invalidateSalesDataCache();
-      setNotice(`Presupuesto ${quote.consecutive} actualizado.`);
+      setNotice(`Cotización ${quote.consecutive} actualizada.`);
     } catch (requestError) {
       setError(requestError.message);
       if (isAuthError(requestError)) onRequestLogin?.();
@@ -563,7 +697,7 @@ export function SalesWindow({
   async function convertQuote(quote) {
     if (
       !window.confirm(
-        `¿Convertir el presupuesto ${quote.consecutive} en una factura?`,
+        `¿Convertir la cotización ${quote.consecutive} en una factura?`,
       )
     )
       return;
@@ -582,7 +716,7 @@ export function SalesWindow({
       );
       setInvoices((current) => [invoice, ...current]);
       invalidateSalesDataCache();
-      setNotice(`Presupuesto ${quote.consecutive} convertido en factura.`);
+      setNotice(`Cotización ${quote.consecutive} convertida en factura.`);
     } catch (requestError) {
       setError(requestError.message);
       if (isAuthError(requestError)) onRequestLogin?.();
@@ -702,8 +836,10 @@ export function SalesWindow({
             bankAccounts={bankAccounts}
             selectedClient={selectedClient}
             selectedWarehouse={selectedWarehouse}
+            selectedSeller={selectedSeller}
+            selectedSellerId={selectedSellerId}
+            salesUsers={salesUsers}
             selectedAccountId={selectedAccountId}
-            session={session}
             saleMode={saleMode}
             creditDueDate={creditDueDate}
             cart={cart}
@@ -711,9 +847,23 @@ export function SalesWindow({
             documentNumber={lastDocument?.consecutive ?? "000000"}
             saving={saving}
             notice={notice}
+            onDismissNotice={() => setNotice("")}
             lastDocument={lastDocument}
+            invoices={invoices}
+            onSelectInvoice={setSelectedDocument}
+            onAnnulInvoice={
+              canManageDocuments && session?.role === "ADMIN"
+                ? updateInvoiceStatus
+                : undefined
+            }
+            onValidateInvoice={
+              ["ADMIN", "CONTADOR"].includes(session?.role)
+                ? validateInvoice
+                : undefined
+            }
             actionLoading={actionLoading}
             onAccountChange={setSelectedAccountId}
+            onSellerChange={setSelectedSellerId}
             onSaleModeChange={setSaleMode}
             onDueDateChange={setCreditDueDate}
             onUpdateQuantity={updateCartQuantity}
@@ -751,47 +901,35 @@ export function SalesWindow({
             onUpdateStatus={updateQuoteStatus}
             onConvert={convertQuote}
             onSelect={setSelectedDocument}
+            onSendToWarehouse={openQuoteDispatch}
             onGoToBilling={() => navigate("billing")}
             onReprint={() => openLookup("invoices")}
-          />
-        ) : view === "returns" ? (
-          <ReturnsPanel
-            invoices={invoices}
-            actionLoading={actionLoading}
-            onAnnul={
-              canManageDocuments && session?.role === "ADMIN"
-                ? updateInvoiceStatus
-                : undefined
-            }
-            onSelect={setSelectedDocument}
-            onGoToBilling={() => navigate("billing")}
-          />
-        ) : view === "deliveries" ? (
-          <DeliveryPanel
-            deliveries={deliveries}
-            actionLoading={actionLoading}
-            canManage={canManageDeliveries}
-            onUpdateStatus={updateDeliveryStatus}
-            onSelect={setSelectedDocument}
-            onCreate={() => startDelivery()}
           />
         ) : view === "orders" ? (
           <OrdersPanel
             orders={orders}
+            deliveries={deliveries}
+            actionLoading={actionLoading}
+            canManage={canManageDeliveries}
             onSelect={setSelectedDocument}
             onPrepareDelivery={startDelivery}
-            onGoToDeliveries={() => navigate("deliveries")}
+            onUpdateStatus={updateDeliveryStatus}
+            onCreateDelivery={() => startDelivery()}
           />
         ) : view === "reports" ? (
           <ReportsPanel invoices={invoices} quotes={quotes} orders={orders} />
         ) : (
-          <VariousPanel onNavigate={navigate} />
+          <div className="module-loading">Selecciona una operación de ventas.</div>
         )}
       </div>
       {error && (
-        <div className="window-error" role="alert">
+        <TransientMessage
+          className="window-error"
+          role="alert"
+          onDismiss={() => setError("")}
+        >
           {error}
-        </div>
+        </TransientMessage>
       )}
       <footer className="provider-window-footer sales-window-footer">
         <span className="sales-window-footer-caption">
@@ -849,7 +987,25 @@ export function SalesWindow({
           document={selectedDocument}
           type={selectedDocument.__salesType}
           onPrint={() => window.print()}
+          onAnnul={
+            selectedDocument.__salesType === "invoice" &&
+            canManageDocuments &&
+            session?.role === "ADMIN"
+              ? updateInvoiceStatus
+              : undefined
+          }
+          actionLoading={actionLoading}
           onClose={() => setSelectedDocument(null)}
+        />
+      )}
+      {quoteDispatch && (
+        <WarehouseDispatchDialog
+          quote={quoteDispatch}
+          users={warehouseUsers}
+          warehouses={warehouses}
+          busy={actionLoading === `quote-send-${quoteDispatch.id}`}
+          onSend={sendQuoteToWarehouse}
+          onClose={() => setQuoteDispatch(null)}
         />
       )}
     </section>
@@ -860,8 +1016,10 @@ function BillingPanel({
   bankAccounts,
   selectedClient,
   selectedWarehouse,
+  selectedSeller,
+  selectedSellerId,
+  salesUsers,
   selectedAccountId,
-  session,
   saleMode,
   creditDueDate,
   cart,
@@ -869,8 +1027,15 @@ function BillingPanel({
   documentNumber,
   saving,
   notice,
+  onDismissNotice,
   lastDocument,
+  invoices,
+  onSelectInvoice,
+  onAnnulInvoice,
+  onValidateInvoice,
+  actionLoading,
   onAccountChange,
+  onSellerChange,
   onSaleModeChange,
   onDueDateChange,
   onUpdateQuantity,
@@ -884,37 +1049,77 @@ function BillingPanel({
   onLoadQuote,
   onGoToBilling,
 }) {
+  const [billingTab, setBillingTab] = useState("new");
+
   return (
     <div className="sales-billing-panel sales-billing-single">
-      <TicketPanel
-        bankAccounts={bankAccounts}
-        selectedClient={selectedClient}
-        selectedWarehouse={selectedWarehouse}
-        selectedAccountId={selectedAccountId}
-        saleMode={saleMode}
-        creditDueDate={creditDueDate}
-        cart={cart}
-        totals={totals}
-        saving={saving}
-        notice={notice}
-        lastDocument={lastDocument}
-        documentNumber={documentNumber}
-        session={session}
-        onAccountChange={onAccountChange}
-        onSaleModeChange={onSaleModeChange}
-        onDueDateChange={onDueDateChange}
-        onUpdateQuantity={onUpdateQuantity}
-        onUpdatePrice={onUpdatePrice}
-        onClearCart={onClearCart}
-        onSubmit={onSubmit}
-        submitLabel="Emitir factura"
-        onOpenClientLookup={onOpenClientLookup}
-        onOpenWarehouseLookup={onOpenWarehouseLookup}
-        onOpenProductLookup={onOpenProductLookup}
-        onReprint={onReprint}
-        onLoadQuote={onLoadQuote}
-        onGoToBilling={onGoToBilling}
-      />
+      <div className="sales-billing-tabs" role="tablist" aria-label="Facturación">
+        <button
+          type="button"
+          className={billingTab === "new" ? "is-active" : ""}
+          role="tab"
+          aria-selected={billingTab === "new"}
+          onClick={() => setBillingTab("new")}
+        >
+          Emitir factura
+        </button>
+        <button
+          type="button"
+          className={billingTab === "history" ? "is-active" : ""}
+          role="tab"
+          aria-selected={billingTab === "history"}
+          onClick={() => setBillingTab("history")}
+        >
+          Facturas registradas <span>{invoices.length}</span>
+        </button>
+      </div>
+      {billingTab === "new" ? (
+        <TicketPanel
+          bankAccounts={bankAccounts}
+          selectedClient={selectedClient}
+          selectedWarehouse={selectedWarehouse}
+          selectedSeller={selectedSeller}
+          selectedSellerId={selectedSellerId}
+          salesUsers={salesUsers}
+          selectedAccountId={selectedAccountId}
+          saleMode={saleMode}
+          creditDueDate={creditDueDate}
+          cart={cart}
+          totals={totals}
+          saving={saving}
+          onDismissNotice={onDismissNotice}
+          notice={notice}
+          lastDocument={lastDocument}
+          documentNumber={documentNumber}
+          onAccountChange={onAccountChange}
+          onSellerChange={onSellerChange}
+          onSaleModeChange={onSaleModeChange}
+          onDueDateChange={onDueDateChange}
+          onUpdateQuantity={onUpdateQuantity}
+          onUpdatePrice={onUpdatePrice}
+          onClearCart={onClearCart}
+          onSubmit={onSubmit}
+          submitLabel="Emitir factura"
+          onOpenClientLookup={onOpenClientLookup}
+          onOpenWarehouseLookup={onOpenWarehouseLookup}
+          onOpenProductLookup={onOpenProductLookup}
+          onReprint={onReprint}
+          onLoadQuote={onLoadQuote}
+          onGoToBilling={onGoToBilling}
+        />
+      ) : (
+        <InvoicePanel
+          title="Facturas registradas"
+          description="Consulta las facturas creadas desde POS, Administrativo y App móvil."
+          invoices={invoices}
+          actionLabel="Emitir factura"
+          onAction={() => setBillingTab("new")}
+          onAnnul={onAnnulInvoice}
+          onValidateInvoice={onValidateInvoice}
+          actionLoading={actionLoading}
+          onSelect={onSelectInvoice}
+        />
+      )}
     </div>
   );
 }
@@ -940,6 +1145,7 @@ function QuotePanel({
   onUpdateStatus,
   onConvert,
   onSelect,
+  onSendToWarehouse,
   onGoToBilling,
   onReprint,
 }) {
@@ -947,9 +1153,9 @@ function QuotePanel({
     <div className="sales-quote-layout sales-quote-single">
       <div className="sales-quote-builder">
         <SalesPanelHeading
-          title="Emisión de presupuesto"
+          title="Emisión de cotización"
           description="Guarda la cotización para cargarla después en facturación."
-          actionLabel="F7 Cargar presupuesto"
+          actionLabel="F7 Cargar cotización"
           onAction={onOpenLoadLookup}
         />
         <div className="sales-inline-form">
@@ -998,16 +1204,16 @@ function QuotePanel({
             onClick={onSubmit}
             disabled={saving}
           >
-            <Check size={14} /> {saving ? "Guardando…" : "Guardar presupuesto"}
+            <Check size={14} /> {saving ? "Guardando…" : "Guardar cotización"}
           </button>
         </div>
       </div>
       <div className="sales-quote-register-note">
         <FileText size={17} />
         <div>
-          <strong>{quotes.length} presupuestos guardados</strong>
+          <strong>{quotes.length} cotizaciones guardadas</strong>
           <span>
-            Usa “F7 Cargar presupuesto” para buscarlos y pasarlos a facturación.
+            Usa “F7 Cargar cotización” para buscarlas y pasarlas a facturación.
           </span>
         </div>
       </div>
@@ -1018,6 +1224,8 @@ function QuotePanel({
         onConvert={onConvert}
         onSelect={onSelect}
         onLoad={onLoadQuote}
+        onExport={onSelect}
+        onSendToWarehouse={onSendToWarehouse}
       />
     </div>
   );
@@ -1029,6 +1237,7 @@ function SalesContextField({
   description,
   shortcuts = [],
   onShortcut,
+  children,
 }) {
   function openLookupFromInput() {
     onShortcut?.();
@@ -1063,14 +1272,14 @@ function SalesContextField({
           </button>
         ))}
       </div>
-      <strong title={description}>{description}</strong>
+      {children ?? <strong title={description}>{description}</strong>}
     </div>
   );
 }
 
 function SalesShortcutBar({ onSales, onProducts, onReprint, onLoad }) {
   const shortcuts = [
-    ["F4", "Ventas", onSales, ReceiptText],
+    ["F4", "Facturación", onSales, ReceiptText],
     ["F5", "Productos", onProducts, Package],
     ["F6", "Reimprime", onReprint, FileText],
     ["F7", "Cargar", onLoad, ShoppingCart],
@@ -1092,8 +1301,10 @@ function TicketPanel({
   bankAccounts,
   selectedClient,
   selectedWarehouse,
+  selectedSeller,
+  selectedSellerId,
+  salesUsers,
   selectedAccountId,
-  session,
   saleMode,
   creditDueDate,
   cart,
@@ -1101,8 +1312,10 @@ function TicketPanel({
   documentNumber,
   saving,
   notice,
+  onDismissNotice,
   lastDocument,
   onAccountChange,
+  onSellerChange,
   onSaleModeChange,
   onDueDateChange,
   onUpdateQuantity,
@@ -1131,9 +1344,23 @@ function TicketPanel({
             />
             <SalesContextField
               label="Vendedor"
-              code={session?.sub ? `U${session.sub}` : "—"}
-              description={session?.username ?? "Usuario activo"}
-            />
+              code={selectedSeller?.id ? `U${selectedSeller.id}` : "—"}
+              description={selectedSeller?.username ?? "Seleccionar vendedor"}
+            >
+              <select
+                className="sales-seller-select"
+                value={selectedSellerId}
+                onChange={(event) => onSellerChange?.(event.target.value)}
+                aria-label="Vendedor"
+              >
+                <option value="">Seleccionar vendedor</option>
+                {salesUsers.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.username} · {user.role}
+                  </option>
+                ))}
+              </select>
+            </SalesContextField>
             <SalesContextField
               label="Depósito"
               code={
@@ -1160,12 +1387,9 @@ function TicketPanel({
             saleMode={saleMode}
             creditDueDate={creditDueDate}
             total={totals.total}
-            saving={saving}
-            submitLabel={submitLabel}
             onAccountChange={onAccountChange}
             onSaleModeChange={onSaleModeChange}
             onDueDateChange={onDueDateChange}
-            onSubmit={onSubmit}
           />
         </div>
         <BillingTotalsPanel
@@ -1182,10 +1406,24 @@ function TicketPanel({
         onClearCart={onClearCart}
         onOpenProductLookup={onOpenProductLookup}
       />
+      <div className="sales-document-footer">
+        <button
+          type="button"
+          className="sales-submit-button sales-submit-footer-button"
+          onClick={onSubmit}
+          disabled={saving}
+        >
+          <Check size={13} /> {saving ? "Procesando…" : submitLabel}
+        </button>
+      </div>
       {notice && (
-        <div className="sales-success-message">
-          <Check size={14} /> {notice}
-        </div>
+        <TransientMessage
+          className="sales-success-message"
+          icon={<Check size={14} />}
+          onDismiss={onDismissNotice}
+        >
+          {notice}
+        </TransientMessage>
       )}
       {lastDocument && (
         <div className="sales-last-document">
@@ -1204,12 +1442,9 @@ function SalesPaymentBox({
   saleMode,
   creditDueDate,
   total,
-  saving,
-  submitLabel,
   onAccountChange,
   onSaleModeChange,
   onDueDateChange,
-  onSubmit,
 }) {
   return (
     <div className="sales-payment-box">
@@ -1260,14 +1495,6 @@ function SalesPaymentBox({
           />
         </label>
       )}
-      <button
-        type="button"
-        className="sales-submit-button"
-        onClick={onSubmit}
-        disabled={saving}
-      >
-        <Check size={13} /> {saving ? "Procesando…" : submitLabel}
-      </button>
     </div>
   );
 }
@@ -1440,203 +1667,6 @@ function CartTable({
   );
 }
 
-function ReturnsPanel({
-  invoices,
-  actionLoading,
-  onAnnul,
-  onSelect,
-  onGoToBilling,
-}) {
-  const [search, setSearch] = useState("");
-  const [selectedId, setSelectedId] = useState(null);
-  const visibleInvoices = filterDocuments(invoices, search);
-  const selectedInvoice = invoices.find((invoice) => invoice.id === selectedId);
-  return (
-    <div className="sales-returns-layout">
-      <div className="sales-returns-list sales-list-panel">
-        <SalesPanelHeading
-          title="Devoluciones de venta"
-          description="Selecciona una factura activa para reintegrar sus existencias."
-          actionLabel="Abrir facturación"
-          onAction={onGoToBilling}
-        />
-        <SearchRow
-          value={search}
-          onChange={setSearch}
-          placeholder="Buscar factura o cliente…"
-        />
-        {!onAnnul && (
-          <div className="sales-info-message">
-            <RotateCcw size={14} /> Solo el administrador puede confirmar
-            devoluciones.
-          </div>
-        )}
-        <div className="sales-table-wrap">
-          <table className="provider-data-table sales-data-table">
-            <thead>
-              <tr>
-                <th>Factura</th>
-                <th>Cliente</th>
-                <th>Fecha</th>
-                <th>Total</th>
-                <th>Estado</th>
-                <th>Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleInvoices.length ? (
-                visibleInvoices.map((invoice) => (
-                  <tr
-                    className={selectedId === invoice.id ? "is-selected" : ""}
-                    key={invoice.id}
-                    onClick={() => setSelectedId(invoice.id)}
-                    onDoubleClick={() =>
-                      onSelect({ ...invoice, __salesType: "invoice" })
-                    }
-                  >
-                    <td>
-                      <strong>{invoice.consecutive}</strong>
-                    </td>
-                    <td>{clientName(invoice.client)}</td>
-                    <td>{formatDate(invoice.createdAt)}</td>
-                    <td>{formatCurrency(invoice.total)}</td>
-                    <td>
-                      <StatusPill
-                        value={
-                          invoiceStatusLabels[invoice.status] ?? invoice.status
-                        }
-                        tone={invoice.status === "ACTIVA" ? "success" : "muted"}
-                      />
-                    </td>
-                    <td>
-                      <div className="sales-table-actions">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onSelect({ ...invoice, __salesType: "invoice" })
-                          }
-                        >
-                          Ver
-                        </button>
-                        {invoice.status === "ACTIVA" && onAnnul && (
-                          <button
-                            type="button"
-                            className="danger-text-button"
-                            disabled={Boolean(actionLoading)}
-                            onClick={() => onAnnul(invoice)}
-                          >
-                            {actionLoading === "invoice-annul-" + invoice.id ? (
-                              <LoaderCircle size={12} className="is-spinning" />
-                            ) : (
-                              <RotateCcw size={12} />
-                            )}
-                            {actionLoading === "invoice-annul-" + invoice.id
-                              ? "Guardando…"
-                              : "Devolver"}
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan="6">
-                    <div className="table-empty">
-                      No hay facturas disponibles para devolver.
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div className="sales-return-detail">
-        {selectedInvoice ? (
-          <>
-            <div className="sales-section-heading">
-              <div>
-                <strong>Detalle de devolución</strong>
-                <span>
-                  {selectedInvoice.consecutive} ·{" "}
-                  {clientName(selectedInvoice.client)}
-                </span>
-              </div>
-              <StatusPill
-                value={
-                  invoiceStatusLabels[selectedInvoice.status] ??
-                  selectedInvoice.status
-                }
-                tone={selectedInvoice.status === "ACTIVA" ? "success" : "muted"}
-              />
-            </div>
-            <div className="sales-return-warning">
-              <RotateCcw size={15} />
-              <span>
-                Al confirmar, la factura se anula y el sistema devuelve las
-                cantidades al inventario.
-              </span>
-            </div>
-            <div className="sales-detail-items">
-              {selectedInvoice.items?.length ? (
-                selectedInvoice.items.map((item) => (
-                  <div key={item.id ?? `${item.productId}-${item.quantity}`}>
-                    <span>
-                      {item.product?.name ?? `Producto #${item.productId}`}
-                    </span>
-                    <span>{item.quantity} unidad(es)</span>
-                    <strong>{formatCurrency(item.total)}</strong>
-                  </div>
-                ))
-              ) : (
-                <div className="table-empty">
-                  Esta factura no tiene detalle cargado.
-                </div>
-              )}
-            </div>
-            <div className="sales-return-actions">
-              <button
-                type="button"
-                onClick={() =>
-                  onSelect({ ...selectedInvoice, __salesType: "invoice" })
-                }
-              >
-                Ver factura
-              </button>
-              {selectedInvoice.status === "ACTIVA" && (
-                <button
-                  type="button"
-                  className="primary-action"
-                  disabled={!onAnnul || Boolean(actionLoading)}
-                  onClick={() => onAnnul?.(selectedInvoice)}
-                >
-                  {actionLoading === "invoice-annul-" + selectedInvoice.id ? (
-                    <LoaderCircle size={14} className="is-spinning" />
-                  ) : (
-                    <RotateCcw size={14} />
-                  )}
-                  {actionLoading === "invoice-annul-" + selectedInvoice.id
-                    ? "Guardando…"
-                    : "Confirmar devolución"}
-                </button>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="sales-empty-selection">
-            <RotateCcw size={22} />
-            <strong>Selecciona una factura</strong>
-            <span>
-              El detalle aparecerá aquí antes de confirmar la devolución.
-            </span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function InvoicePanel({
   title,
   description,
@@ -1644,10 +1674,19 @@ export function InvoicePanel({
   actionLabel,
   onAction,
   onAnnul,
+  onValidateInvoice,
+  actionLoading,
   onSelect,
 }) {
   const [search, setSearch] = useState("");
-  const visibleInvoices = filterDocuments(invoices, search);
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const visibleInvoices = filterDocuments(
+    invoices,
+    search,
+    sourceFilter,
+    statusFilter,
+  );
   return (
     <div className="sales-list-panel">
       <SalesPanelHeading
@@ -1656,11 +1695,30 @@ export function InvoicePanel({
         actionLabel={actionLabel}
         onAction={onAction}
       />
-      <SearchRow
-        value={search}
-        onChange={setSearch}
-        placeholder="Buscar por factura o cliente…"
-      />
+      <div className="sales-filter-row">
+        <SearchRow
+          value={search}
+          onChange={setSearch}
+          placeholder="Buscar por factura o cliente…"
+        />
+        <label className="sales-source-filter">
+          <span>Origen</span>
+          <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
+            <option value="">Todos los orígenes</option>
+            <option value="POS">POS</option>
+            <option value="ADMIN">Administrativo</option>
+            <option value="APP_MOVIL">App móvil</option>
+          </select>
+        </label>
+        <label className="sales-source-filter">
+          <span>Estado</span>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="">Todos los estados</option>
+            <option value="ACTIVA">Activa</option>
+            <option value="ANULADA">Anulada</option>
+          </select>
+        </label>
+      </div>
       <div className="sales-table-wrap">
         <table className="provider-data-table sales-data-table">
           <thead>
@@ -1669,6 +1727,7 @@ export function InvoicePanel({
               <th>Cliente</th>
               <th>Origen</th>
               <th>Estado</th>
+              <th>Validación</th>
               <th>Fecha</th>
               <th>Total</th>
               <th>Acciones</th>
@@ -1688,7 +1747,7 @@ export function InvoicePanel({
                   </td>
                   <td>{clientName(invoice.client)}</td>
                   <td>
-                    {invoice.source === "APP_MOVIL" ? "App móvil" : "POS"}
+                    {invoiceSourceLabel(invoice.source)}
                   </td>
                   <td>
                     <StatusPill
@@ -1696,6 +1755,16 @@ export function InvoicePanel({
                         invoiceStatusLabels[invoice.status] ?? invoice.status
                       }
                       tone={invoice.status === "ACTIVA" ? "success" : "muted"}
+                    />
+                  </td>
+                  <td>
+                    <StatusPill
+                      value={
+                        invoiceValidationLabels[invoice.validationStatus] ??
+                        invoice.validationStatus ??
+                        "Validada"
+                      }
+                      tone={invoice.validationStatus === "PENDIENTE" ? "warning" : "success"}
                     />
                   </td>
                   <td>{formatDate(invoice.createdAt)}</td>
@@ -1716,7 +1785,22 @@ export function InvoicePanel({
                           className="danger-text-button"
                           onClick={() => onAnnul(invoice)}
                         >
-                          <RotateCcw size={12} /> Anular
+                          <RotateCcw size={12} /> Anular y devolver
+                        </button>
+                      )}
+                      {onValidateInvoice && invoice.validationStatus === "PENDIENTE" && (
+                        <button
+                          type="button"
+                          className="primary-action"
+                          disabled={Boolean(actionLoading)}
+                          onClick={() => onValidateInvoice(invoice)}
+                        >
+                          {actionLoading === `invoice-validate-${invoice.id}` ? (
+                            <LoaderCircle size={12} className="is-spinning" />
+                          ) : (
+                            <Check size={12} />
+                          )}
+                          Validar
                         </button>
                       )}
                     </div>
@@ -1725,7 +1809,7 @@ export function InvoicePanel({
               ))
             ) : (
               <tr>
-                <td colSpan="7">
+                <td colSpan="8">
                   <div className="table-empty">
                     No hay facturas para mostrar.
                   </div>
@@ -1749,11 +1833,13 @@ function QuoteList({
   onConvert,
   onSelect,
   onLoad,
+  onExport,
+  onSendToWarehouse,
 }) {
   return (
     <div className="sales-list-panel sales-quote-list">
       <SalesPanelHeading
-        title="Presupuestos registrados"
+        title="Cotizaciones registradas"
         description="Aprueba, rechaza o convierte una propuesta en factura."
       />
       <div className="sales-table-wrap">
@@ -1807,6 +1893,21 @@ function QuoteList({
                       >
                         Ver
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => onExport?.({ ...quote, __salesType: "quote" })}
+                      >
+                        <Printer size={12} /> PDF
+                      </button>
+                      {!["RECHAZADA", "EXPIRADA", "CONVERTIDA"].includes(quote.status) && (
+                        <button
+                          type="button"
+                          disabled={Boolean(actionLoading)}
+                          onClick={() => onSendToWarehouse?.(quote)}
+                        >
+                          <Send size={12} /> Enviar a Bodega
+                        </button>
+                      )}
                       <button
                         type="button"
                         disabled={Boolean(actionLoading)}
@@ -1867,7 +1968,7 @@ function QuoteList({
               <tr>
                 <td colSpan="7">
                   <div className="table-empty">
-                    No hay presupuestos registrados.
+                    No hay cotizaciones registradas.
                   </div>
                 </td>
               </tr>
@@ -2002,23 +2103,82 @@ function DeliveryPanel({
 
 function OrdersPanel({
   orders,
+  deliveries,
+  actionLoading,
+  canManage,
   onSelect,
   onPrepareDelivery,
-  onGoToDeliveries,
+  onUpdateStatus,
+  onCreateDelivery,
 }) {
   const [search, setSearch] = useState("");
+  const [activeTab, setActiveTab] = useState("orders");
   const visible = orders.filter((order) =>
     `${order.consecutive} ${clientName(order.client)} ${order.delivery?.address ?? ""}`
       .toLowerCase()
       .includes(search.trim().toLowerCase()),
   );
+
+  if (activeTab === "deliveries") {
+    return (
+      <div className="sales-orders-workspace">
+        <div className="sales-billing-tabs" role="tablist" aria-label="Pedidos y domicilios">
+          <button
+            type="button"
+            className=""
+            role="tab"
+            aria-selected="false"
+            onClick={() => setActiveTab("orders")}
+          >
+            Pedidos <span>{orders.length}</span>
+          </button>
+          <button
+            type="button"
+            className="is-active"
+            role="tab"
+            aria-selected="true"
+            onClick={() => setActiveTab("deliveries")}
+          >
+            Domicilios <span>{deliveries.length}</span>
+          </button>
+        </div>
+        <DeliveryPanel
+          deliveries={deliveries}
+          actionLoading={actionLoading}
+          canManage={canManage}
+          onUpdateStatus={onUpdateStatus}
+          onSelect={onSelect}
+          onCreate={onCreateDelivery}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="sales-list-panel">
+    <div className="sales-orders-workspace">
+      <div className="sales-billing-tabs" role="tablist" aria-label="Pedidos y domicilios">
+        <button
+          type="button"
+          className="is-active"
+          role="tab"
+          aria-selected="true"
+          onClick={() => setActiveTab("orders")}
+        >
+          Pedidos <span>{orders.length}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected="false"
+          onClick={() => setActiveTab("deliveries")}
+        >
+          Domicilios <span>{deliveries.length}</span>
+        </button>
+      </div>
+      <div className="sales-list-panel">
       <SalesPanelHeading
-        title="Recepción de pedidos"
-        description="Pedidos recibidos desde la tienda móvil y su trazabilidad comercial."
-        actionLabel="Notas de entrega"
-        onAction={onGoToDeliveries}
+        title="Pedidos recibidos"
+        description="Pedidos de la tienda móvil y sus domicilios en una sola vista."
       />
       <SearchRow
         value={search}
@@ -2101,6 +2261,7 @@ function OrdersPanel({
         </table>
       </div>
     </div>
+    </div>
   );
 }
 
@@ -2121,7 +2282,7 @@ function ReportsPanel({ invoices, quotes, orders }) {
     ["Ventas activas", activeInvoices.length, "Facturas vigentes"],
     ["Valor vendido", formatCurrency(totalSales), "Facturación acumulada"],
     [
-      "Presupuestos",
+      "Cotizaciones",
       formatCurrency(totalQuotes),
       `${quotes.length} propuestas`,
     ],
@@ -2177,57 +2338,6 @@ function ReportsPanel({ invoices, quotes, orders }) {
             No hay facturas activas para graficar.
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function VariousPanel({ onNavigate }) {
-  const shortcuts = [
-    [
-      "Devoluciones",
-      "Anula una factura conservando trazabilidad.",
-      RotateCcw,
-      "returns",
-    ],
-    [
-      "Notas de entrega",
-      "Consulta y actualiza entregas de facturas.",
-      Truck,
-      "deliveries",
-    ],
-    [
-      "Pedidos móviles",
-      "Revisa los pedidos capturados desde la tienda.",
-      ShoppingCart,
-      "orders",
-    ],
-    [
-      "Reportes",
-      "Consulta la información consolidada de ventas.",
-      BarChart3,
-      "reports",
-    ],
-  ];
-  return (
-    <div className="sales-various-panel">
-      <SalesPanelHeading
-        title="Varios"
-        description="Accesos complementarios del módulo de ventas."
-      />
-      <div className="sales-shortcut-grid">
-        {shortcuts.map(([label, description, Icon, view]) => (
-          <button type="button" key={label} onClick={() => onNavigate(view)}>
-            <span>
-              <Icon size={16} />
-            </span>
-            <div>
-              <strong>{label}</strong>
-              <small>{description}</small>
-            </div>
-            <ChevronRight size={15} />
-          </button>
-        ))}
       </div>
     </div>
   );
@@ -2515,7 +2625,7 @@ function getLookupTitle(type) {
       products: "Información de productos",
       warehouses: "Información de depósitos",
       invoices: "Facturas para reimprimir",
-      quotes: "Presupuestos guardados",
+      quotes: "Cotizaciones guardadas",
     }[type] ?? "Búsqueda"
   );
 }
@@ -2634,7 +2744,72 @@ function getLookupSearchText(record, type) {
   return `${record.consecutive ?? ""} ${clientName(record.client)} ${record.status ?? ""}`;
 }
 
-function SalesDocumentDialog({ document, type, onPrint, onClose }) {
+function WarehouseDispatchDialog({ quote, users, warehouses, busy, onSend, onClose }) {
+  const [search, setSearch] = useState("");
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const query = search.trim().toLowerCase();
+  const visibleUsers = users.filter((user) => {
+    const warehouse = warehouses.find(
+      (item) => Number(item.id) === Number(user.warehouseId),
+    );
+    const label = `${user.username} ${user.employee?.firstName ?? ""} ${user.employee?.lastName ?? ""} ${warehouse?.location ?? ""}`;
+    return label.toLowerCase().includes(query);
+  });
+  return (
+    <div className="sales-dialog-backdrop" role="presentation">
+      <div className="sales-document-dialog warehouse-dispatch-dialog" role="dialog" aria-modal="true" aria-label="Enviar cotización a bodega">
+        <header>
+          <strong>Enviar cotización a Bodega</strong>
+          <button type="button" onClick={onClose} aria-label="Cerrar envío">
+            <X size={15} />
+          </button>
+        </header>
+        <div className="warehouse-dispatch-summary">
+          <FileText size={18} />
+          <div>
+            <strong>{quote.consecutive}</strong>
+            <span>{clientName(quote.client)} · {quote.items?.length ?? 0} productos · {formatCurrency(quote.total)}</span>
+          </div>
+        </div>
+        <label className="warehouse-dispatch-search">
+          <Search size={14} />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar bodeguero o bodega…" />
+        </label>
+        <div className="warehouse-dispatch-users">
+          {visibleUsers.length ? visibleUsers.map((user) => {
+            const warehouse = warehouses.find(
+              (item) => Number(item.id) === Number(user.warehouseId),
+            );
+            const employeeName = [user.employee?.firstName, user.employee?.lastName].filter(Boolean).join(" ");
+            const selected = String(selectedUserId) === String(user.id);
+            return (
+              <button type="button" className={`warehouse-dispatch-user ${selected ? "is-selected" : ""}`} key={user.id} onClick={() => setSelectedUserId(String(user.id))}>
+                <span className="warehouse-dispatch-radio" aria-hidden="true" />
+                <span><strong>{employeeName || user.username}</strong><small>{user.username}</small></span>
+                <b><Warehouse size={13} /> {warehouse?.location ?? `Bodega #${user.warehouseId}`}</b>
+              </button>
+            );
+          }) : <div className="table-empty">No hay bodegueros activos con bodega asignada.</div>}
+        </div>
+        <footer>
+          <button type="button" onClick={onClose}>Cancelar</button>
+          <button type="button" className="primary-action" disabled={!selectedUserId || busy} onClick={() => onSend(selectedUserId)}>
+            <Send size={13} /> {busy ? "Enviando…" : "Enviar cotización"}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function SalesDocumentDialog({
+  document,
+  type,
+  onPrint,
+  onAnnul,
+  actionLoading,
+  onClose,
+}) {
   const isInvoice = type === "invoice";
   const isQuote = type === "quote";
   const isDelivery = type === "delivery";
@@ -2644,7 +2819,7 @@ function SalesDocumentDialog({ document, type, onPrint, onClose }) {
     (isInvoice
       ? "Factura"
       : isQuote
-        ? "Presupuesto"
+        ? "Cotización"
         : `Nota de entrega · ${relatedInvoice?.consecutive ?? `#${document.id}`}`);
   const items = document.items ?? [];
   return (
@@ -2702,7 +2877,24 @@ function SalesDocumentDialog({ document, type, onPrint, onClose }) {
         <footer>
           {onPrint && (
             <button type="button" className="primary-action" onClick={onPrint}>
-              <Printer size={13} /> Imprimir
+              <Printer size={13} /> {isQuote ? "Exportar PDF" : "Imprimir"}
+            </button>
+          )}
+          {onAnnul && document.status === "ACTIVA" && (
+            <button
+              type="button"
+              className="danger-text-button"
+              disabled={Boolean(actionLoading)}
+              onClick={() => onAnnul(document)}
+            >
+              {actionLoading === `invoice-annul-${document.id}` ? (
+                <LoaderCircle size={13} className="is-spinning" />
+              ) : (
+                <RotateCcw size={13} />
+              )}
+              {actionLoading === `invoice-annul-${document.id}`
+                ? "Procesando…"
+                : "Anular y devolver"}
             </button>
           )}
           <button type="button" onClick={onClose}>
@@ -2723,6 +2915,17 @@ function getDefaultPrice(product) {
     activePrices(product)[0] ??
     null
   );
+}
+function getPriceForClient(product, client) {
+  const prices = activePrices(product);
+  if (client?.clientType) {
+    const keyword = client.clientType === "MAYORISTA"
+      ? /mayor|mayoreo|wholesale/i
+      : /minorista|detal|retail/i;
+    const clientPrice = prices.find((price) => keyword.test(price.name ?? ""));
+    if (clientPrice) return clientPrice;
+  }
+  return getDefaultPrice(product);
 }
 function getPriceById(product, id) {
   return activePrices(product).find((price) => Number(price.id) === Number(id));
@@ -2749,14 +2952,19 @@ function calculateCartTotals(cart) {
     { subtotal: 0, taxes: 0, total: 0 },
   );
 }
-function filterDocuments(documents, search) {
+function filterDocuments(documents, search, sourceFilter = "", statusFilter = "") {
   const query = search.trim().toLowerCase();
-  if (!query) return documents;
   return documents.filter((document) =>
-    `${document.consecutive ?? ""} ${clientName(document.client)}`
-      .toLowerCase()
-      .includes(query),
+    (!sourceFilter || document.source === sourceFilter) &&
+    (!statusFilter || document.status === statusFilter) &&
+    (!query ||
+      `${document.consecutive ?? ""} ${clientName(document.client)}`
+        .toLowerCase()
+        .includes(query)),
   );
+}
+function invoiceSourceLabel(source) {
+  return { POS: "POS", ADMIN: "Administrativo", APP_MOVIL: "App móvil" }[source] ?? source ?? "Sin origen";
 }
 function clientName(client) {
   if (!client) return "Consumidor final";

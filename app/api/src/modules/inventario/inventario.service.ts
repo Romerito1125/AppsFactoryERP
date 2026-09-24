@@ -3,8 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InventoryMovementType } from '@prisma/client';
+import { InventoryMovementType, Prisma, Role } from '@prisma/client';
 import { buildPackagingBreakdown } from '../../common/utils/packaging.util';
+import {
+  convertProductQuantityToBase,
+  convertProductUnitCost,
+  getProductStockStatus,
+} from '../../common/utils/product-quantity.util';
 import {
   buildPaginatedResponse,
   resolvePagination,
@@ -43,6 +48,11 @@ export class InventarioService {
           productType: true,
           primaryProvider: true,
           packagingProfile: true,
+          costs: {
+            where: { isActive: true },
+            orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+            take: 1,
+          },
           providers: {
             include: { provider: true },
             orderBy: { providerId: 'asc' },
@@ -77,6 +87,11 @@ export class InventarioService {
             productType: true,
             primaryProvider: true,
             packagingProfile: true,
+            costs: {
+              where: { isActive: true },
+              orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+              take: 1,
+            },
             providers: {
               include: { provider: true },
               orderBy: { providerId: 'asc' },
@@ -94,8 +109,11 @@ export class InventarioService {
     }));
   }
 
-  async findByWarehouse(warehouseId: number) {
+  async findByWarehouse(warehouseId: number, authUser?: AuthUser) {
     this.ensurePositiveId(warehouseId);
+    if (authUser?.role === Role.BODEGA && authUser.warehouseId !== warehouseId) {
+      throw new NotFoundException('Bodega no encontrada');
+    }
     await this.ensureActiveWarehouse(warehouseId);
     const rows = await this.prisma.productWarehouse.findMany({
       where: { warehouseId },
@@ -105,6 +123,11 @@ export class InventarioService {
             productType: true,
             primaryProvider: true,
             packagingProfile: true,
+            costs: {
+              where: { isActive: true },
+              orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
+              take: 1,
+            },
             providers: {
               include: { provider: true },
               orderBy: { providerId: 'asc' },
@@ -127,9 +150,15 @@ export class InventarioService {
       const product = await this.productResolver.resolve(dto, tx, {
         packagingProfile: true,
       });
+      this.ensureActorWarehouseAccess(dto.toWarehouseId, actor);
       await this.ensureActiveWarehouse(dto.toWarehouseId, tx);
-      const packaging = buildPackagingBreakdown(
+      const stockQuantity = this.resolveStockQuantity(
         dto.quantity,
+        dto.unit ?? product.unit,
+        product,
+      );
+      const packaging = buildPackagingBreakdown(
+        stockQuantity,
         product.packagingProfile,
       );
       await tx.productWarehouse.upsert({
@@ -139,11 +168,11 @@ export class InventarioService {
             warehouseId: dto.toWarehouseId,
           },
         },
-        update: { quantity: { increment: dto.quantity } },
+        update: { quantity: { increment: stockQuantity } },
         create: {
           productId: product.id,
           warehouseId: dto.toWarehouseId,
-          quantity: dto.quantity,
+          quantity: stockQuantity,
         },
       });
       return tx.inventoryMovement.create({
@@ -152,7 +181,7 @@ export class InventarioService {
           toWarehouseId: dto.toWarehouseId,
           createdByUserId: actor.sub,
           approvedByUserId: actor.sub,
-          quantity: dto.quantity,
+          quantity: stockQuantity,
           movementType: InventoryMovementType.ENTRADA,
           reason: dto.reason,
           approvedAt: new Date(),
@@ -188,16 +217,22 @@ export class InventarioService {
       const product = await this.productResolver.resolve(dto, tx, {
         packagingProfile: true,
       });
+      this.ensureActorWarehouseAccess(dto.fromWarehouseId, actor);
       await this.ensureActiveWarehouse(dto.fromWarehouseId, tx);
-      const packaging = buildPackagingBreakdown(
+      const stockQuantity = this.resolveStockQuantity(
         dto.quantity,
+        dto.unit ?? product.unit,
+        product,
+      );
+      const packaging = buildPackagingBreakdown(
+        stockQuantity,
         product.packagingProfile,
       );
       await this.decrementStock(
         tx,
         product.id,
         dto.fromWarehouseId,
-        dto.quantity,
+        stockQuantity,
       );
       return tx.inventoryMovement.create({
         data: {
@@ -205,7 +240,7 @@ export class InventarioService {
           fromWarehouseId: dto.fromWarehouseId,
           createdByUserId: actor.sub,
           approvedByUserId: actor.sub,
-          quantity: dto.quantity,
+          quantity: stockQuantity,
           movementType: InventoryMovementType.SALIDA,
           reason: dto.reason,
           approvedAt: new Date(),
@@ -245,17 +280,24 @@ export class InventarioService {
       const product = await this.productResolver.resolve(dto, tx, {
         packagingProfile: true,
       });
+      this.ensureActorWarehouseAccess(dto.fromWarehouseId, actor);
+      this.ensureActorWarehouseAccess(dto.toWarehouseId, actor);
       await this.ensureActiveWarehouse(dto.fromWarehouseId, tx);
       await this.ensureActiveWarehouse(dto.toWarehouseId, tx);
-      const packaging = buildPackagingBreakdown(
+      const stockQuantity = this.resolveStockQuantity(
         dto.quantity,
+        dto.unit ?? product.unit,
+        product,
+      );
+      const packaging = buildPackagingBreakdown(
+        stockQuantity,
         product.packagingProfile,
       );
       await this.decrementStock(
         tx,
         product.id,
         dto.fromWarehouseId,
-        dto.quantity,
+        stockQuantity,
       );
       await tx.productWarehouse.upsert({
         where: {
@@ -264,11 +306,11 @@ export class InventarioService {
             warehouseId: dto.toWarehouseId,
           },
         },
-        update: { quantity: { increment: dto.quantity } },
+        update: { quantity: { increment: stockQuantity } },
         create: {
           productId: product.id,
           warehouseId: dto.toWarehouseId,
-          quantity: dto.quantity,
+          quantity: stockQuantity,
         },
       });
       const createdMovement = await tx.inventoryMovement.create({
@@ -278,7 +320,7 @@ export class InventarioService {
           toWarehouseId: dto.toWarehouseId,
           createdByUserId: actor.sub,
           approvedByUserId: actor.sub,
-          quantity: dto.quantity,
+          quantity: stockQuantity,
           movementType: InventoryMovementType.TRASLADO,
           reason: dto.reason,
           approvedAt: new Date(),
@@ -335,7 +377,14 @@ export class InventarioService {
       const product = await this.productResolver.resolve(dto, tx, {
         packagingProfile: true,
       });
+      this.ensureActorWarehouseAccess(dto.warehouseId, actor);
       await this.ensureActiveWarehouse(dto.warehouseId, tx);
+      const targetQuantity = this.resolveStockQuantity(
+        dto.quantity,
+        dto.unit ?? product.unit,
+        product,
+        true,
+      );
       const current = await tx.productWarehouse.findUnique({
         where: {
           productId_warehouseId: {
@@ -351,14 +400,14 @@ export class InventarioService {
             warehouseId: dto.warehouseId,
           },
         },
-        update: { quantity: dto.quantity },
+        update: { quantity: targetQuantity },
         create: {
           productId: product.id,
           warehouseId: dto.warehouseId,
-          quantity: dto.quantity,
+          quantity: targetQuantity,
         },
       });
-      const difference = dto.quantity - (current?.quantity ?? 0);
+      const difference = targetQuantity - (current?.quantity ?? 0);
       const packaging = buildPackagingBreakdown(
         Math.abs(difference),
         product.packagingProfile,
@@ -403,8 +452,19 @@ export class InventarioService {
     return movement;
   }
 
-  async findMovements(query: ListInventoryQueryDto) {
-    const where = this.getMovementSearchWhere(query.q);
+  async findMovements(query: ListInventoryQueryDto, authUser?: AuthUser) {
+    const warehouseId = this.resolveActorWarehouse(authUser);
+    const conditions: Prisma.InventoryMovementWhereInput[] = [];
+    const searchWhere = this.getMovementSearchWhere(query.q);
+    if (searchWhere) conditions.push(searchWhere);
+    if (warehouseId) {
+      conditions.push({
+        OR: [{ fromWarehouseId: warehouseId }, { toWarehouseId: warehouseId }],
+      });
+    }
+    const where: Prisma.InventoryMovementWhereInput = conditions.length
+      ? { AND: conditions }
+      : {};
     const { page, limit, skip, take } = resolvePagination(query);
     const [total, data] = await Promise.all([
       this.prisma.inventoryMovement.count({ where }),
@@ -420,7 +480,7 @@ export class InventarioService {
     return buildPaginatedResponse(data, total, page, limit);
   }
 
-  async findMovement(id: number) {
+  async findMovement(id: number, authUser?: AuthUser) {
     this.ensurePositiveId(id);
     const movement = await this.prisma.inventoryMovement.findUnique({
       where: { id },
@@ -428,11 +488,28 @@ export class InventarioService {
     });
     if (!movement)
       throw new NotFoundException('Movimiento de inventario no encontrado');
+    this.ensureMovementAccess(movement, authUser);
     return movement;
   }
 
-  async findTransferTickets(query: ListInventoryQueryDto) {
-    const where = this.getTransferTicketSearchWhere(query.q);
+  async findTransferTickets(query: ListInventoryQueryDto, authUser?: AuthUser) {
+    const warehouseId = this.resolveActorWarehouse(authUser);
+    const conditions: Prisma.InventoryTransferTicketWhereInput[] = [];
+    const searchWhere = this.getTransferTicketSearchWhere(query.q);
+    if (searchWhere) conditions.push(searchWhere);
+    if (warehouseId) {
+      conditions.push({
+        movement: {
+          OR: [
+            { fromWarehouseId: warehouseId },
+            { toWarehouseId: warehouseId },
+          ],
+        },
+      });
+    }
+    const where: Prisma.InventoryTransferTicketWhereInput = conditions.length
+      ? { AND: conditions }
+      : {};
     const { page, limit, skip, take } = resolvePagination(query);
     const [total, data] = await Promise.all([
       this.prisma.inventoryTransferTicket.count({ where }),
@@ -448,7 +525,7 @@ export class InventarioService {
     return buildPaginatedResponse(data, total, page, limit);
   }
 
-  async findTransferTicket(id: number) {
+  async findTransferTicket(id: number, authUser?: AuthUser) {
     this.ensurePositiveId(id);
 
     const ticket = await this.prisma.inventoryTransferTicket.findUnique({
@@ -459,6 +536,8 @@ export class InventarioService {
     if (!ticket) {
       throw new NotFoundException('Ticket de traslado no encontrado');
     }
+
+    this.ensureMovementAccess(ticket.movement, authUser);
 
     return ticket;
   }
@@ -562,11 +641,21 @@ export class InventarioService {
   }
 
   private formatProduct(product) {
+    const totalStock = (product.warehouses ?? []).reduce(
+      (sum, item) => sum + Number(item.quantity ?? 0),
+      0,
+    );
+    const currentCost = product.costs?.[0];
+    const costPerUnit = currentCost && Number(currentCost.quantity) > 0
+      ? convertProductUnitCost(
+          Number(currentCost.cost) / Number(currentCost.quantity),
+          currentCost.unit,
+          product.unit,
+          product.packagingProfile,
+        ) ?? 0
+      : 0;
     const packaging = buildPackagingBreakdown(
-      (product.warehouses ?? []).reduce(
-        (sum, item) => sum + Number(item.quantity ?? 0),
-        0,
-      ),
+      totalStock,
       product.packagingProfile,
     );
 
@@ -577,8 +666,73 @@ export class InventarioService {
         ...item.provider,
         isPrimary: item.providerId === product.providerId,
       })),
+      stock: totalStock,
+      totalStock,
+      cost: costPerUnit,
+      inventoryValue: totalStock * costPerUnit,
+      stockStatus: getProductStockStatus(
+        totalStock,
+        product.minimumStock,
+        product.maximumStock,
+      ),
+      warehouses: (product.warehouses ?? []).map((item) => ({
+        ...item,
+        stockStatus: getProductStockStatus(
+          Number(item.quantity ?? 0),
+          product.minimumStock,
+          product.maximumStock,
+        ),
+        inventoryValue: Number(item.quantity ?? 0) * costPerUnit,
+      })),
       packagingSummary: packaging,
     };
+  }
+
+  private resolveStockQuantity(
+    quantity: number,
+    fromUnit,
+    product,
+    allowZero = false,
+  ) {
+    const stockQuantity = convertProductQuantityToBase(
+      quantity,
+      fromUnit,
+      product.unit,
+      product.packagingProfile,
+    );
+    if (
+      stockQuantity === null ||
+      !Number.isInteger(stockQuantity) ||
+      (!allowZero && stockQuantity <= 0)
+    ) {
+      throw new BadRequestException(
+        `La cantidad no se puede convertir a la unidad de inventario (${product.unit})`,
+      );
+    }
+    return stockQuantity;
+  }
+
+  private ensureActorWarehouseAccess(warehouseId: number, actor: AuthUser) {
+    if (actor.role === Role.BODEGA && actor.warehouseId !== warehouseId) {
+      throw new NotFoundException('Bodega no encontrada');
+    }
+  }
+
+  private resolveActorWarehouse(authUser?: AuthUser) {
+    return authUser?.role === Role.BODEGA
+      ? authUser.warehouseId ?? undefined
+      : undefined;
+  }
+
+  private ensureMovementAccess(movement: any, authUser?: AuthUser) {
+    const warehouseId = this.resolveActorWarehouse(authUser);
+    if (
+      warehouseId &&
+      movement.fromWarehouseId !== warehouseId &&
+      movement.toWarehouseId !== warehouseId
+    ) {
+      throw new NotFoundException('Movimiento de inventario no encontrado');
+    }
   }
 
   private getMovementSearchWhere(search?: string) {

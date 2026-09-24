@@ -16,6 +16,7 @@ import {
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { SearchOptionsMenu } from "@/components/desktop/search-options-menu";
+import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
 import {
   buildPermissionDraft,
@@ -29,6 +30,7 @@ const roleOptions = [
   ["VENDEDOR", "Vendedor"],
   ["BODEGA", "Bodega"],
   ["CONTADOR", "Contador"],
+  ["DOMICILIARIO", "Domiciliario"],
 ];
 
 const emptyUser = {
@@ -443,9 +445,13 @@ export function UsersWindow({ onClose, onRequestLogin }) {
         </div>
       </div>
       {error && (
-        <div className="window-error" role="alert">
+        <TransientMessage
+          className="window-error"
+          role="alert"
+          onDismiss={() => setError("")}
+        >
           {error}
-        </div>
+        </TransientMessage>
       )}
       <footer className="provider-window-footer">
         <div className="provider-crud-actions">

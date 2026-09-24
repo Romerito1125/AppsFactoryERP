@@ -48,6 +48,30 @@ export class UsuariosService {
     return buildPaginatedResponse(data, total, page, limit);
   }
 
+  async findSalesUsers() {
+    return this.prisma.user.findMany({
+      where: {
+        isActive: true,
+        deletedAt: null,
+        role: { in: [Role.ADMIN, Role.CAJERO, Role.VENDEDOR] },
+      },
+      orderBy: [{ role: 'asc' }, { username: 'asc' }],
+      select: {
+        id: true,
+        username: true,
+        role: true,
+        employee: {
+          select: {
+            firstName: true,
+            lastName: true,
+            isActive: true,
+            deletedAt: true,
+          },
+        },
+      },
+    });
+  }
+
   async findOne(id: number) {
     this.ensurePositiveId(id);
 
