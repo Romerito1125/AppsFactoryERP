@@ -6395,13 +6395,14 @@ button {
 }
 .inventory-transfer-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 390px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 390px) minmax(0, 1fr);
   gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
 }
 .inventory-transfer-form,
 .inventory-transfer-history {
+  min-width: 0;
   min-height: 0;
   padding: 12px;
   background: #f9fcfd;
@@ -6412,6 +6413,9 @@ button {
   display: flex;
   flex-direction: column;
   gap: 9px;
+}
+.inventory-transfer-history {
+  overflow: hidden;
 }
 .inventory-transfer-history {
   display: flex;
@@ -6438,6 +6442,9 @@ button {
 }
 .inventory-transfer-form select,
 .inventory-transfer-form input {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
   height: 29px;
   padding: 4px 7px;
@@ -6457,6 +6464,9 @@ button {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+.inventory-transfer-fields-two > label {
+  min-width: 0;
 }
 .inventory-transfer-stock-card {
   display: grid;

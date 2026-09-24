@@ -49,6 +49,7 @@ export function AccountsReceivableWindow({
   const [activeTab, setActiveTab] = useState("operations");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [editor, setEditor] = useState(null);
   const [saving, setSaving] = useState(false);
   const {
@@ -189,6 +190,7 @@ export function AccountsReceivableWindow({
     setSelectedCreditId(null);
     setEditor(null);
     setError("");
+    setNotice("");
   }
 
   function startCredit() {
@@ -202,6 +204,7 @@ export function AccountsReceivableWindow({
       dueDate: todayValue(),
     });
     setError("");
+    setNotice("");
   }
 
   function startPayment(credit = null) {
@@ -278,6 +281,7 @@ export function AccountsReceivableWindow({
     if (!editor) return;
     setSaving(true);
     setError("");
+    setNotice("");
     try {
       if (editor.type === "credit") {
         if (!editor.clientId || !editor.warehouseId || !editor.dueDate) {
@@ -319,13 +323,25 @@ export function AccountsReceivableWindow({
         setSelectedClientId(normalized.clientId);
         setSelectedCreditId(normalized.id);
       } else {
-        if (Number(editor.amount) <= 0) {
+        const target = clientCredits.find(
+          (credit) => String(credit.id) === String(editor.creditId),
+        );
+        const amount = Number(editor.amount);
+        if (!target) {
+          throw new Error("Selecciona una cuenta por cobrar válida para abonar.");
+        }
+        if (!Number.isFinite(amount) || amount <= 0) {
           throw new Error("Ingresa un monto de pago válido.");
+        }
+        if (amount > target.balance + 0.000001) {
+          throw new Error(
+            `El abono no puede superar el saldo pendiente de ${formatCurrency(target.balance)}.`,
+          );
         }
         const saved = await apiClient.post(
           `/creditos/${editor.creditId}/pagos`,
           {
-            amount: Number(editor.amount),
+            amount,
             bankAccountId: editor.bankAccountId
               ? Number(editor.bankAccountId)
               : undefined,
@@ -337,6 +353,12 @@ export function AccountsReceivableWindow({
           current.map((credit) =>
             credit.id === normalized.id ? normalized : credit,
           ),
+        );
+        setSelectedCreditId(normalized.balance > 0 ? normalized.id : null);
+        setNotice(
+          normalized.balance > 0
+            ? `Abono registrado correctamente. Saldo pendiente: ${formatCurrency(normalized.balance)}.`
+            : "Pago registrado correctamente. La cuenta quedó saldada.",
         );
       }
       setEditor(null);
@@ -525,6 +547,7 @@ export function AccountsReceivableWindow({
               onCancel={() => {
                 setEditor(null);
                 setError("");
+                setNotice("");
               }}
             />
           )}
@@ -537,6 +560,15 @@ export function AccountsReceivableWindow({
           onDismiss={() => setError("")}
         >
           {error}
+        </TransientMessage>
+      )}
+      {notice && (
+        <TransientMessage
+          className="window-notice"
+          role="status"
+          onDismiss={() => setNotice("")}
+        >
+          {notice}
         </TransientMessage>
       )}
       <footer className="provider-window-footer">
@@ -727,6 +759,8 @@ function ReceivableStatement({
                         <button
                           type="button"
                           disabled={!canEdit}
+                          aria-label={`Abonar a ${credit.invoice?.consecutive ?? `crédito ${credit.id}`}`}
+                          title="Registrar abono"
                           onClick={(event) => {
                             event.stopPropagation();
                             onPayment(credit);
@@ -987,6 +1021,9 @@ function ReceivableEditor({
                 label="Monto del pago"
                 value={editor.amount}
                 type="number"
+                min="0.01"
+                max={selectedCredit?.balance ?? undefined}
+                step="0.01"
                 onChange={(value) => onChange("amount", value)}
               />
               <EditorSelect
@@ -1048,13 +1085,16 @@ function ReceivableEditor({
   );
 }
 
-function EditorField({ label, value, type = "text", onChange }) {
+function EditorField({ label, value, type = "text", min, max, step, onChange }) {
   return (
     <label className="editor-field">
       <span>{label}</span>
       <input
         type={type}
         value={value ?? ""}
+        min={min}
+        max={max}
+        step={step}
         onChange={(event) => onChange(event.target.value)}
       />
     </label>

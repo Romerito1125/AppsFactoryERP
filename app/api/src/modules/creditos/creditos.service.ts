@@ -116,7 +116,12 @@ export class CreditosService {
     return this.prisma.$transaction(async (tx) => {
       const credit = await tx.invoiceCredit.findUnique({ where: { id } });
       if (!credit) throw new NotFoundException('Crédito no encontrado');
-      if (Number(credit.balance) < dto.amount)
+      const balance = Number(credit.balance);
+      if (!Number.isFinite(balance) || balance <= 0)
+        throw new BadRequestException(
+          'La cuenta por cobrar no tiene saldo pendiente para abonar',
+        );
+      if (dto.amount > balance + 0.000001)
         throw new BadRequestException(
           'El pago no puede superar el saldo pendiente',
         );
@@ -153,13 +158,14 @@ export class CreditosService {
         },
       });
       const paidAmount = Number(credit.paidAmount) + dto.amount;
-      const balance = Number(credit.balance) - dto.amount;
+      const nextBalance = balance - dto.amount;
+      const finalBalance = nextBalance <= 0.000001 ? 0 : nextBalance;
       return tx.invoiceCredit.update({
         where: { id },
         data: {
           paidAmount,
-          balance,
-          status: balance === 0 ? CreditStatus.PAGADA : CreditStatus.PARCIAL,
+          balance: finalBalance,
+          status: finalBalance === 0 ? CreditStatus.PAGADA : CreditStatus.PARCIAL,
         },
         include: this.include,
       });

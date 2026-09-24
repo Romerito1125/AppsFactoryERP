@@ -888,7 +888,7 @@ model BankAccountMovement {
   totalAmount   Decimal          @default(0) @db.Decimal(14, 2)
   appliesGmf    Boolean          @default(false)
   description   String?
-  invoiceId     Int?             @unique
+  invoiceId     Int?
   createdAt     DateTime         @default(now())
 
   bankAccount    BankAccount     @relation(fields: [bankAccountId], references: [id])
