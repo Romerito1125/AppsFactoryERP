@@ -774,6 +774,17 @@ button {
   outline: 0;
   font-size: 12px;
 }
+.product-brand-filter {
+  width: 118px;
+  min-width: 118px;
+  height: 27px;
+  padding: 3px 5px;
+  color: #34536a;
+  background: #fff;
+  border: 1px solid #9aabb9;
+  border-radius: 3px;
+  font-size: 10px;
+}
 .search-options {
   display: grid;
   place-items: center;
@@ -1032,9 +1043,9 @@ button {
   display: grid;
   grid-template-columns: minmax(235px, 1fr) minmax(235px, 1fr);
   align-content: start;
-  gap: 6px 12px;
+  gap: 11px 18px;
   min-height: 0;
-  padding: 11px 9px;
+  padding: 16px 14px 24px;
   overflow: auto;
 }
 .wide-field {
@@ -1044,11 +1055,36 @@ button {
   display: grid;
   grid-template-columns: 100px minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
+  gap: 9px;
+  min-height: 28px;
+}
+.product-main-details .detail-field {
+  grid-template-columns: 112px minmax(0, 1fr);
+}
+.product-main-details .provider-secondary-field {
+  grid-column: 1 / -1;
+  align-items: start;
+}
+.product-main-details .provider-secondary-field > label {
+  padding-top: 6px;
+}
+.product-relation-fields {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 11px;
+  min-width: 0;
+}
+.product-relation-fields .provider-secondary-field {
+  grid-column: auto;
+}
+.product-relation-fields .provider-secondary-field:has(.multi-select-field.is-open) {
+  position: relative;
+  z-index: 70;
 }
 .detail-field label {
   margin: 0;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.15;
 }
 .detail-control {
   display: flex;
@@ -1488,6 +1524,29 @@ button {
 .product-window .provider-data-table {
   min-width: 760px;
 }
+.product-window .prices-data-table-wrap {
+  overflow-x: hidden;
+}
+.product-window .prices-data-table-wrap .provider-data-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+.product-window .prices-data-table-wrap .provider-data-table th,
+.product-window .prices-data-table-wrap .provider-data-table td {
+  min-width: 0;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.2;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+.product-window .prices-data-table-wrap .provider-data-table th {
+  padding: 7px 6px;
+  vertical-align: middle;
+}
 .product-window .detail-control.is-accent {
   color: #19445f;
   background: #b9dced;
@@ -1502,7 +1561,7 @@ button {
   display: grid;
   grid-template-columns: 100px minmax(0, 1fr);
   align-items: start;
-  gap: 7px;
+  gap: 9px;
 }
 .product-image-field > label {
   padding-top: 7px;
@@ -1531,7 +1590,7 @@ button {
   grid-column: 2;
   display: flex;
   gap: 6px;
-  margin-top: -2px;
+  margin-top: 2px;
 }
 .image-upload-button,
 .product-image-actions button,
@@ -1640,6 +1699,44 @@ button {
   color: #19445f;
   font-size: 11px;
 }
+.price-tax-setting {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.65fr) minmax(240px, 1.35fr);
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 9px;
+  padding: 7px;
+  background: #e4f1f6;
+  border: 1px solid #9dc2d1;
+  border-radius: 4px;
+}
+.price-tax-setting p {
+  margin: 0;
+  color: #557386;
+  font-size: 10px;
+  line-height: 1.35;
+}
+.price-tax-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 8px;
+  padding: 7px;
+  color: #416576;
+  background: #f6fbfd;
+  border: 1px solid #b7d0db;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.price-tax-preview span {
+  display: flex;
+  justify-content: space-between;
+  min-width: 190px;
+  gap: 8px;
+}
+.price-tax-preview strong {
+  color: #155a79;
+}
 .inline-action,
 .inline-editor-actions button,
 .cancel-inline {
@@ -1694,6 +1791,19 @@ button {
   max-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.product-window .prices-data-table-wrap .provider-data-table th,
+.product-window .prices-data-table-wrap .provider-data-table td {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.2;
+  word-break: normal;
+}
+.product-window .prices-data-table-wrap .provider-data-table th {
+  min-width: 78px;
+  padding: 7px 6px;
 }
 .inventory-data-table tr.is-inline-editing {
   background: #d9edf7;
@@ -2247,6 +2357,119 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.multi-select-field {
+  display: grid;
+  gap: 4px;
+  position: relative;
+  min-width: 0;
+}
+.multi-select-field.is-open {
+  z-index: 60;
+}
+.multi-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 26px;
+  padding: 4px 6px;
+  gap: 6px;
+  color: #2d4a60;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #6e9bb8;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.multi-select-trigger:hover,
+.multi-select-field.is-open .multi-select-trigger {
+  border-color: #2d759e;
+  box-shadow: 0 0 0 2px rgba(46, 124, 168, 0.15);
+}
+.multi-select-trigger span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.multi-select-menu {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  width: auto;
+  max-height: min(280px, 45vh);
+  overflow: auto;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid #6e9bb8;
+  border-radius: 3px;
+  box-shadow: 0 5px 12px rgba(35, 78, 105, 0.18);
+}
+.multi-select-option {
+  display: flex;
+  align-items: center;
+  min-height: 27px;
+  padding: 4px 5px;
+  gap: 6px;
+  color: #34536a;
+  font-size: 10px;
+  cursor: pointer;
+}
+.multi-select-option:hover {
+  background: #edf6fb;
+}
+.multi-select-option input {
+  accent-color: #2f79ac;
+}
+.multi-select-empty {
+  display: block;
+  padding: 7px 5px;
+  color: #7890a0;
+  font-size: 10px;
+}
+.multi-select-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 4px;
+}
+.multi-select-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  padding: 2px 4px 2px 6px;
+  gap: 3px;
+  color: #245a78;
+  background: #dceef6;
+  border: 1px solid #9dc6d8;
+  border-radius: 10px;
+  font-size: 9px;
+}
+.multi-select-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.multi-select-chip button {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  color: #416d82;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.multi-select-chip button:hover {
+  color: #8b3131;
+  background: #fff;
 }
 .field-help {
   grid-column: 2;
@@ -3024,6 +3247,7 @@ button {
 .warehouse-review-item-head, .warehouse-review-item { display: grid; grid-template-columns: minmax(0, 1fr) 110px 125px 115px; align-items: center; gap: 9px; min-width: 610px; padding: 0 8px; }
 .warehouse-review-item-head { min-height: 28px; color: #718995; background: #e7f0f4; font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .warehouse-review-item { min-height: 38px; color: #496a79; border-bottom: 1px solid #e4edf0; font-size: 10px; }
+.warehouse-review-empty { min-height: 42px; display: grid; place-items: center; color: #8a9da5; font-size: 10px; }
 .warehouse-review-item strong { color: #315d72; }
 .warehouse-review-item small { color: #8196a0; font-size: 9px; }
 .warehouse-review-item b { color: #315d72; font-size: 10px; }
@@ -5212,7 +5436,7 @@ button {
 }
 .sales-billing-context .sales-legacy-context {
   grid-template-columns: minmax(245px, 0.82fr) minmax(300px, 1.18fr);
-  grid-template-rows: repeat(4, 34px);
+  grid-template-rows: 34px 34px 34px 46px;
   column-gap: 12px;
   row-gap: 0;
   margin-bottom: 12px;
@@ -5300,20 +5524,26 @@ button {
   outline-offset: 0;
 }
 .sales-billing-context .sales-context-price {
-  display: flex;
+  display: grid;
   grid-column: 1;
   grid-row: 4;
+  grid-template-columns: 72px 150px;
+  grid-template-rows: 28px 12px;
+  align-content: center;
   align-items: center;
-  gap: 0;
   min-height: 34px;
   padding: 0 6px;
 }
 .sales-billing-context .sales-context-price > span {
+  grid-column: 1;
+  grid-row: 1;
   width: 72px;
   color: #3f5f72;
   font-size: 11px;
 }
 .sales-billing-context .sales-context-price select {
+  grid-column: 2;
+  grid-row: 1;
   width: 150px;
   height: 28px;
   padding: 0 6px;
@@ -5321,6 +5551,18 @@ button {
   background: #fff;
   border: 1px solid #a6b9c5;
   border-radius: 2px;
+}
+.sales-billing-context .sales-context-price small {
+  grid-column: 2;
+  grid-row: 2;
+  margin: 0;
+  color: #47758c;
+  font-size: 9px;
+  line-height: 12px;
+}
+.sales-billing-context .sales-context-price small.has-missing {
+  color: #9b5c35;
+  font-weight: 700;
 }
 .sales-billing-totals {
   display: flex;
@@ -5733,8 +5975,13 @@ button {
   white-space: nowrap;
 }
 .sales-cart-table .sales-quantity-control {
-  width: 112px;
+  width: 76px;
+  height: 27px;
   margin: 0 auto;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  justify-content: center;
 }
 .sales-cart-empty-row td {
   height: 30px;
@@ -5742,7 +5989,7 @@ button {
   background: #fffdf7;
 }
 .sales-billing-context .sales-legacy-context {
-  grid-template-rows: repeat(3, 34px);
+  grid-template-rows: 34px 34px 34px 46px;
   margin-bottom: 8px;
 }
 .sales-billing-context .sales-payment-box {
@@ -5812,11 +6059,61 @@ button {
   height: 31px;
 }
 .sales-cart-table .sales-quantity-control {
-  height: 26px;
+  height: 27px;
 }
 .sales-cart-table .sales-quantity-control button {
   width: 24px;
   height: 24px;
+}
+.sales-cart-table .sales-quantity-control input {
+  width: 72px;
+  height: 25px;
+  padding: 0 6px;
+  color: #173f57;
+  background: #fff;
+  border: 1px solid #7fa7b8;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.sales-cart-table .sales-quantity-control input:focus {
+  outline: 2px solid rgba(20, 119, 159, 0.3);
+  border-color: #247b9e;
+}
+.sales-cart-price-level {
+  display: inline-flex;
+  min-width: 125px;
+  flex-direction: column;
+  gap: 2px;
+  color: #1d5874;
+}
+.sales-cart-price-level strong {
+  font-size: 10px;
+}
+.sales-cart-price-level small {
+  color: #2d7595;
+  font-size: 11px;
+  font-weight: 700;
+}
+.sales-window .sales-legacy-context {
+  background: #e0edf3;
+  border-color: #7da7b8;
+}
+.sales-window .sales-billing-context .sales-context-field > strong,
+.sales-window .sales-billing-context .sales-seller-select {
+  color: #123f59;
+  background: #afd0df;
+  border-color: #78a8bc;
+}
+.sales-window .sales-context-price select {
+  color: #123f59;
+  background: #fff;
+  border-color: #6e9caf;
+  font-weight: 700;
+}
+.sales-window .sales-cart-table td {
+  color: #234b61;
 }
 .sales-cart-table td select {
   min-height: 25px;

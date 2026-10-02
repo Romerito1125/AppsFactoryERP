@@ -3,6 +3,7 @@ import { UnitType } from '@prisma/client';
 import {
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
@@ -33,7 +34,7 @@ export class InventoryEntryDto {
   toWarehouseId: number;
 
   @Type(() => Number)
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 3 })
   @IsPositive()
   quantity: number;
 
@@ -67,7 +68,7 @@ export class InventoryExitDto {
   fromWarehouseId: number;
 
   @Type(() => Number)
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 3 })
   @IsPositive()
   quantity: number;
 
@@ -113,7 +114,7 @@ export class InventoryAdjustmentDto {
   warehouseId: number;
 
   @Type(() => Number)
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 3 })
   @Min(0)
   quantity: number;
 

@@ -7,6 +7,7 @@ import {
   IsNumber,
   IsOptional,
   IsPositive,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -45,6 +46,13 @@ export class CreateInvoiceDto {
   @IsOptional()
   @IsEnum(SaleMode)
   saleMode?: SaleMode;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(3)
+  priceLevel?: number;
 
   @IsOptional()
   zone?: string;

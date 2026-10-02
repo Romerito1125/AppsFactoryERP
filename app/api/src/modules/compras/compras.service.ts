@@ -476,7 +476,6 @@ export class ComprasService {
         );
         if (
           stockQuantity === null ||
-          !Number.isInteger(stockQuantity) ||
           stockQuantity <= 0 ||
           normalizedCost === null ||
           !Number.isFinite(normalizedCost)
@@ -605,13 +604,13 @@ export class ComprasService {
       this.prisma.purchaseOrder.aggregate({
         where,
         _count: { _all: true },
-        _sum: { subtotal: true, taxes: true, total: true },
+        _sum: { subtotal: true, total: true },
       }),
       this.prisma.purchaseOrder.groupBy({
         by: ['providerId'],
         where,
         _count: { _all: true },
-        _sum: { subtotal: true, taxes: true, total: true },
+        _sum: { subtotal: true, total: true },
       }),
       this.prisma.purchaseOrderItem.groupBy({
         by: ['productId'],
@@ -649,7 +648,6 @@ export class ComprasService {
           expectedAt: true,
           receivedAt: true,
           subtotal: true,
-          taxes: true,
           total: true,
         },
         orderBy: { receivedAt: 'asc' },
@@ -681,7 +679,6 @@ export class ComprasService {
         provider: providerById.get(group.providerId),
         orders: group._count._all,
         subtotal: group._sum.subtotal ?? this.zero,
-        taxes: group._sum.taxes ?? this.zero,
         total: group._sum.total ?? this.zero,
         averageLeadDays: this.averageLeadDays(
           timeRows.filter((row) => row.providerId === group.providerId),
@@ -723,7 +720,6 @@ export class ComprasService {
       summary: {
         orders: summary._count._all,
         subtotal: summary._sum.subtotal ?? this.zero,
-        taxes: summary._sum.taxes ?? this.zero,
         total: summary._sum.total ?? this.zero,
       },
       byProvider,
@@ -1004,7 +1000,6 @@ export class ComprasService {
       );
       if (
         stockQuantity === null ||
-        !Number.isInteger(stockQuantity) ||
         stockQuantity <= 0 ||
         normalizedCost === null ||
         !Number.isFinite(normalizedCost)
@@ -1014,19 +1009,15 @@ export class ComprasService {
         );
       }
       const unitCost = new Prisma.Decimal(item.unitCost).toDecimalPlaces(2);
-      const taxRate = new Prisma.Decimal(item.taxRate ?? 0).toDecimalPlaces(2);
       const subtotal = unitCost.mul(item.quantity).toDecimalPlaces(2);
-      const taxAmount = subtotal.mul(taxRate).div(100).toDecimalPlaces(2);
 
       return {
         productId: item.productId,
         quantity: item.quantity,
         unit: purchaseUnit,
         unitCost,
-        taxRate,
         subtotal,
-        taxAmount,
-        total: subtotal.plus(taxAmount),
+        total: subtotal,
       };
     });
   }
@@ -1037,10 +1028,9 @@ export class ComprasService {
     return items.reduce(
       (totals, item) => ({
         subtotal: totals.subtotal.plus(item.subtotal),
-        taxes: totals.taxes.plus(item.taxAmount),
         total: totals.total.plus(item.total),
       }),
-      { subtotal: this.zero, taxes: this.zero, total: this.zero },
+      { subtotal: this.zero, total: this.zero },
     );
   }
 
@@ -1147,7 +1137,6 @@ export class ComprasService {
     rows: Array<{
       receivedAt: Date | null;
       subtotal: Prisma.Decimal;
-      taxes: Prisma.Decimal;
       total: Prisma.Decimal;
     }>,
     granularity: PurchaseReportGranularity,
@@ -1158,7 +1147,6 @@ export class ComprasService {
         period: string;
         orders: number;
         subtotal: Prisma.Decimal;
-        taxes: Prisma.Decimal;
         total: Prisma.Decimal;
       }
     >();
@@ -1174,12 +1162,10 @@ export class ComprasService {
         period,
         orders: 0,
         subtotal: this.zero,
-        taxes: this.zero,
         total: this.zero,
       };
       current.orders += 1;
       current.subtotal = current.subtotal.plus(row.subtotal);
-      current.taxes = current.taxes.plus(row.taxes);
       current.total = current.total.plus(row.total);
       buckets.set(period, current);
     }

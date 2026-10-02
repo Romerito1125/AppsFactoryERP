@@ -5,8 +5,11 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsPositive,
+  Max,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { QuoteStatus } from '@prisma/client';
@@ -18,12 +21,18 @@ export class QuoteItemDto {
   @IsInt()
   @IsPositive()
   productPriceId?: number;
-  @Type(() => Number) @IsInt() @IsPositive() quantity: number;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @IsPositive() quantity: number;
 }
 
 export class CreateQuoteDto {
   @Type(() => Number) @IsInt() @IsPositive() clientId: number;
   @IsOptional() @IsDateString() expiresAt?: string;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(3)
+  priceLevel?: number;
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })

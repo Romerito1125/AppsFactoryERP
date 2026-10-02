@@ -6,8 +6,6 @@ import {
   IsNumber,
   IsOptional,
   IsPositive,
-  Max,
-  Min,
 } from 'class-validator';
 
 export class PurchaseOrderItemDto {
@@ -29,11 +27,4 @@ export class PurchaseOrderItemDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @IsPositive()
   unitCost: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
-  @Min(0)
-  @Max(100)
-  taxRate?: number = 0;
 }

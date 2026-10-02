@@ -4,14 +4,24 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsInt,
   IsNumber,
   IsOptional,
   IsPositive,
+  Max,
+  Min,
   IsString,
   MinLength,
 } from 'class-validator';
 
 export class UpdateProductPriceDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(3)
+  priceLevel?: number;
+
   @IsOptional()
   @IsString()
   @MinLength(2)

@@ -626,6 +626,7 @@ export class ProductosService {
           product.packagingProfile,
         ) ?? 0
       : 0;
+    const inventoryValue = totalStock * cost;
 
     return {
       ...product,
@@ -634,7 +635,7 @@ export class ProductosService {
       stock: totalStock,
       totalStock,
       cost,
-      inventoryValue: totalStock * cost,
+      inventoryValue,
       stockStatus: getProductStockStatus(
         totalStock,
         product.minimumStock,
@@ -670,7 +671,19 @@ export class ProductosService {
       );
     }
 
+    const usedLevels = new Set<number>();
     return prices.map((price, index) => {
+      const parsedLevel = String(price.name ?? '').match(/^precio\s*([0-3])$/i);
+      const priceLevel = price.priceLevel ?? (parsedLevel ? Number(parsedLevel[1]) : index);
+      if (!Number.isInteger(priceLevel) || priceLevel < 0 || priceLevel > 3) {
+        throw new BadRequestException(
+          'Los precios iniciales solo pueden usar Precio 0, Precio 1, Precio 2 y Precio 3',
+        );
+      }
+      if (usedLevels.has(priceLevel)) {
+        throw new BadRequestException(`No puedes repetir el Precio ${priceLevel}`);
+      }
+      usedLevels.add(priceLevel);
       const startsAt = price.startsAt ? new Date(price.startsAt) : undefined;
       const endsAt = price.endsAt ? new Date(price.endsAt) : undefined;
 
@@ -681,7 +694,8 @@ export class ProductosService {
       }
 
       return {
-        name: price.name,
+        name: `Precio ${priceLevel}`,
+        priceLevel,
         price: price.price,
         unit: price.unit ?? defaultUnit,
         quantity: price.quantity ?? 1,

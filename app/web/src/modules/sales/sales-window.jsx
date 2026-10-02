@@ -4,7 +4,6 @@ import {
   CircleX,
   FileText,
   LoaderCircle,
-  Minus,
   Package,
   Plus,
   Printer,
@@ -65,6 +64,7 @@ const deliveryStatusSequence = [
 ];
 
 const emptyCart = [];
+const PRICE_LEVELS = [0, 1, 2, 3];
 
 let criticalSalesDataPromise;
 let criticalSalesDataSnapshot;
@@ -155,6 +155,7 @@ export function SalesWindow({
   const [selectedWarehouseId, setSelectedWarehouseId] = useState("");
   const [selectedSellerId, setSelectedSellerId] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [selectedPriceLevel, setSelectedPriceLevel] = useState("0");
   const [saleMode, setSaleMode] = useState("CONTADO");
   const [creditDueDate, setCreditDueDate] = useState(defaultDueDate());
   const [cart, setCart] = useState(emptyCart);
@@ -289,19 +290,6 @@ export function SalesWindow({
   ].includes(session?.role);
   const canManageDeliveries = session?.role === "ADMIN";
 
-  useEffect(() => {
-    if (!selectedClient) return;
-    setCart((current) => {
-      let changed = false;
-      const next = current.map((item) => {
-        const price = getPriceForClient(item.product, selectedClient);
-        if (!price || Number(price.id) === Number(item.productPriceId)) return item;
-        changed = true;
-        return { ...item, productPriceId: price.id };
-      });
-      return changed ? next : current;
-    });
-  }, [selectedClient?.id, selectedClient?.clientType]);
   const salesViews = [
     "billing",
     "quotes",
@@ -332,9 +320,35 @@ export function SalesWindow({
     setError("");
   }
 
+  function applyPriceSelection(nextClient, nextPriceLevel = selectedPriceLevel) {
+    setCart((current) => {
+      let changed = false;
+      const next = current.map((item) => {
+        const price = getPriceForClient(item.product, nextClient, nextPriceLevel);
+        if (!price || Number(price.id) === Number(item.productPriceId)) return item;
+        changed = true;
+        return { ...item, productPriceId: price.id };
+      });
+      return changed ? next : current;
+    });
+  }
+
+  function handleClientSelection(nextClientId) {
+    const nextClient = clients.find(
+      (client) => String(client.id) === String(nextClientId),
+    );
+    setSelectedClientId(String(nextClientId));
+    applyPriceSelection(nextClient);
+  }
+
+  function handlePriceLevelChange(nextPriceLevel) {
+    setSelectedPriceLevel(String(nextPriceLevel));
+    applyPriceSelection(selectedClient, String(nextPriceLevel));
+  }
+
   function handleLookupSelection(item) {
     if (lookupType === "clients") {
-      setSelectedClientId(String(item.id));
+      handleClientSelection(item.id);
       setLookupType(null);
       return;
     }
@@ -453,9 +467,11 @@ export function SalesWindow({
   }, []);
 
   function addProduct(product) {
-    const price = getPriceForClient(product, selectedClient);
+    const price = getPriceForClient(product, selectedClient, selectedPriceLevel);
     if (!price) {
-      setError(`El producto ${product.name} no tiene un precio activo.`);
+      setError(
+        `El producto ${product.name} no tiene configurado el Precio ${selectedPriceLevel}.`,
+      );
       return;
     }
     setCart((current) => {
@@ -481,26 +497,12 @@ export function SalesWindow({
   }
 
   function updateCartQuantity(productId, nextQuantity) {
-    if (nextQuantity <= 0) {
-      setCart((current) =>
-        current.filter((item) => item.productId !== productId),
-      );
-      return;
-    }
+    const safeQuantity = parseQuantityInput(nextQuantity);
+    if (safeQuantity === null) return;
     setCart((current) =>
       current.map((item) =>
         item.productId === productId
-          ? { ...item, quantity: nextQuantity }
-          : item,
-      ),
-    );
-  }
-
-  function updateCartPrice(productId, productPriceId) {
-    setCart((current) =>
-      current.map((item) =>
-        item.productId === productId
-          ? { ...item, productPriceId: Number(productPriceId) }
+          ? { ...item, quantity: safeQuantity }
           : item,
       ),
     );
@@ -553,6 +555,7 @@ export function SalesWindow({
           : undefined,
         source: "POS",
         saleMode,
+        priceLevel: Number(selectedPriceLevel),
         items: cart.map((item) => ({
           productId: item.productId,
           productPriceId: item.productPriceId,
@@ -608,6 +611,7 @@ export function SalesWindow({
       const quote = await apiClient.post("/cotizaciones", {
         clientId: Number(selectedClientId),
         expiresAt: new Date(`${creditDueDate}T00:00:00`).toISOString(),
+        priceLevel: Number(selectedPriceLevel),
         items: cart.map((item) => ({
           productId: item.productId,
           productPriceId: item.productPriceId,
@@ -840,6 +844,7 @@ export function SalesWindow({
             selectedSellerId={selectedSellerId}
             salesUsers={salesUsers}
             selectedAccountId={selectedAccountId}
+            selectedPriceLevel={selectedPriceLevel}
             saleMode={saleMode}
             creditDueDate={creditDueDate}
             cart={cart}
@@ -867,7 +872,7 @@ export function SalesWindow({
             onSaleModeChange={setSaleMode}
             onDueDateChange={setCreditDueDate}
             onUpdateQuantity={updateCartQuantity}
-            onUpdatePrice={updateCartPrice}
+            onPriceLevelChange={handlePriceLevelChange}
             onClearCart={() => setCart(emptyCart)}
             onSubmit={saveInvoice}
             onOpenClientLookup={() => openLookup("clients")}
@@ -882,6 +887,7 @@ export function SalesWindow({
             clients={clients}
             selectedClientId={selectedClientId}
             creditDueDate={creditDueDate}
+            selectedPriceLevel={selectedPriceLevel}
             cart={cart}
             totals={cartTotals}
             saving={saving}
@@ -892,7 +898,7 @@ export function SalesWindow({
             onAddProduct={addProduct}
             onBarcode={addBarcodeToCart}
             onUpdateQuantity={updateCartQuantity}
-            onUpdatePrice={updateCartPrice}
+            onPriceLevelChange={handlePriceLevelChange}
             onClearCart={() => setCart(emptyCart)}
             onSubmit={saveQuote}
             onOpenProductLookup={() => openLookup("products")}
@@ -977,6 +983,7 @@ export function SalesWindow({
           warehouses={warehouses}
           invoices={invoices}
           quotes={quotes}
+          cart={cart}
           onClose={() => setLookupType(null)}
           onSelect={handleLookupSelection}
           onLoadQuote={loadQuoteIntoBilling}
@@ -986,7 +993,7 @@ export function SalesWindow({
         <SalesDocumentDialog
           document={selectedDocument}
           type={selectedDocument.__salesType}
-          onPrint={() => window.print()}
+          onPrint={() => printSalesDocument(selectedDocument, selectedDocument.__salesType)}
           onAnnul={
             selectedDocument.__salesType === "invoice" &&
             canManageDocuments &&
@@ -1020,6 +1027,7 @@ function BillingPanel({
   selectedSellerId,
   salesUsers,
   selectedAccountId,
+  selectedPriceLevel,
   saleMode,
   creditDueDate,
   cart,
@@ -1035,11 +1043,11 @@ function BillingPanel({
   onValidateInvoice,
   actionLoading,
   onAccountChange,
+  onPriceLevelChange,
   onSellerChange,
   onSaleModeChange,
   onDueDateChange,
   onUpdateQuantity,
-  onUpdatePrice,
   onClearCart,
   onSubmit,
   onOpenClientLookup,
@@ -1082,6 +1090,7 @@ function BillingPanel({
           selectedSellerId={selectedSellerId}
           salesUsers={salesUsers}
           selectedAccountId={selectedAccountId}
+          selectedPriceLevel={selectedPriceLevel}
           saleMode={saleMode}
           creditDueDate={creditDueDate}
           cart={cart}
@@ -1092,11 +1101,11 @@ function BillingPanel({
           lastDocument={lastDocument}
           documentNumber={documentNumber}
           onAccountChange={onAccountChange}
+          onPriceLevelChange={onPriceLevelChange}
           onSellerChange={onSellerChange}
           onSaleModeChange={onSaleModeChange}
           onDueDateChange={onDueDateChange}
           onUpdateQuantity={onUpdateQuantity}
-          onUpdatePrice={onUpdatePrice}
           onClearCart={onClearCart}
           onSubmit={onSubmit}
           submitLabel="Emitir factura"
@@ -1128,6 +1137,7 @@ function QuotePanel({
   clients,
   selectedClientId,
   creditDueDate,
+  selectedPriceLevel,
   cart,
   totals,
   saving,
@@ -1136,7 +1146,7 @@ function QuotePanel({
   onClientChange,
   onDueDateChange,
   onUpdateQuantity,
-  onUpdatePrice,
+  onPriceLevelChange,
   onClearCart,
   onSubmit,
   onOpenProductLookup,
@@ -1181,6 +1191,19 @@ function QuotePanel({
               onChange={(event) => onDueDateChange(event.target.value)}
             />
           </label>
+          <label>
+            <span>Precio general</span>
+            <select
+              value={selectedPriceLevel}
+              onChange={(event) => onPriceLevelChange(event.target.value)}
+            >
+              {PRICE_LEVELS.map((level) => (
+                <option value={level} key={level}>
+                  Precio {level}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <SalesShortcutBar
           onSales={onGoToBilling}
@@ -1192,7 +1215,6 @@ function QuotePanel({
           cart={cart}
           totals={totals}
           onUpdateQuantity={onUpdateQuantity}
-          onUpdatePrice={onUpdatePrice}
           onClearCart={onClearCart}
           onOpenProductLookup={onOpenProductLookup}
         />
@@ -1277,6 +1299,33 @@ function SalesContextField({
   );
 }
 
+function SalesPriceLevelField({ value, cart = [], onChange }) {
+  const missingProducts = cart.filter(
+    (item) => !getExactPriceForLevel(item.product, value),
+  ).length;
+  return (
+    <div className="sales-context-price" aria-label="Precio general de la venta">
+      <span>Precio general</span>
+      <select
+        value={value}
+        onChange={(event) => onChange?.(event.target.value)}
+        aria-label="Precio general"
+      >
+        {PRICE_LEVELS.map((level) => (
+          <option value={level} key={level}>
+            Precio {level}
+          </option>
+        ))}
+      </select>
+      <small className={missingProducts ? "has-missing" : ""}>
+        {missingProducts
+          ? `${missingProducts} producto${missingProducts === 1 ? "" : "s"} sin este precio`
+          : "Aplica a toda la factura"}
+      </small>
+    </div>
+  );
+}
+
 function SalesShortcutBar({ onSales, onProducts, onReprint, onLoad }) {
   const shortcuts = [
     ["F4", "Facturación", onSales, ReceiptText],
@@ -1305,6 +1354,7 @@ function TicketPanel({
   selectedSellerId,
   salesUsers,
   selectedAccountId,
+  selectedPriceLevel,
   saleMode,
   creditDueDate,
   cart,
@@ -1315,11 +1365,11 @@ function TicketPanel({
   onDismissNotice,
   lastDocument,
   onAccountChange,
+  onPriceLevelChange,
   onSellerChange,
   onSaleModeChange,
   onDueDateChange,
   onUpdateQuantity,
-  onUpdatePrice,
   onClearCart,
   onSubmit,
   submitLabel,
@@ -1374,6 +1424,11 @@ function TicketPanel({
               shortcuts={["F1"]}
               onShortcut={onOpenWarehouseLookup}
             />
+            <SalesPriceLevelField
+              value={selectedPriceLevel}
+              cart={cart}
+              onChange={onPriceLevelChange}
+            />
           </div>
           <SalesShortcutBar
             onSales={onGoToBilling}
@@ -1402,7 +1457,6 @@ function TicketPanel({
         cart={cart}
         totals={totals}
         onUpdateQuantity={onUpdateQuantity}
-        onUpdatePrice={onUpdatePrice}
         onClearCart={onClearCart}
         onOpenProductLookup={onOpenProductLookup}
       />
@@ -1535,20 +1589,23 @@ function CartTable({
   cart,
   totals,
   onUpdateQuantity,
-  onUpdatePrice,
   onClearCart,
   onOpenProductLookup,
 }) {
   const blankRowCount = Math.max(12, 16 - cart.length);
 
   function handleTableClick(event) {
+    // Las líneas existentes son editables, pero las filas vacías siguen
+    // permitiendo agregar otro producto sin abrir el buscador por accidente.
     if (!onOpenProductLookup) return;
     if (event.target.closest("button, select, input, a")) return;
+    const clickedEmptyRow = event.target.closest(".sales-cart-empty-row");
+    if (cart.length > 0 && !clickedEmptyRow) return;
     onOpenProductLookup();
   }
 
   function handleTableKeyDown(event) {
-    if (!onOpenProductLookup) return;
+    if (!onOpenProductLookup || cart.length > 0) return;
     if (!["Enter", " "].includes(event.key)) return;
     event.preventDefault();
     onOpenProductLookup();
@@ -1558,9 +1615,13 @@ function CartTable({
     <div className="sales-cart">
       <div
         className="sales-cart-table-wrap"
-        role="button"
-        tabIndex="0"
-        aria-label="Abrir productos para agregar a la venta"
+        role={cart.length > 0 ? undefined : "button"}
+        tabIndex={cart.length > 0 ? -1 : 0}
+        aria-label={
+          cart.length > 0
+            ? "Detalle de productos de la venta"
+            : "Abrir productos para agregar a la venta"
+        }
         onClick={handleTableClick}
         onKeyDown={handleTableKeyDown}
       >
@@ -1591,43 +1652,17 @@ function CartTable({
                     <strong>{item.product.name}</strong>
                   </td>
                   <td>
-                    <div className="sales-quantity-control">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onUpdateQuantity(item.productId, item.quantity - 1)
-                        }
-                        aria-label="Disminuir cantidad"
-                      >
-                        <Minus size={12} />
-                      </button>
-                      <span>{item.quantity}</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onUpdateQuantity(item.productId, item.quantity + 1)
-                        }
-                        aria-label="Aumentar cantidad"
-                      >
-                        <Plus size={12} />
-                      </button>
-                    </div>
+                    <SalesQuantityInput
+                      item={item}
+                      onUpdateQuantity={onUpdateQuantity}
+                    />
                   </td>
                   <td>UND</td>
                   <td>
-                    <select
-                      value={item.productPriceId}
-                      onChange={(event) =>
-                        onUpdatePrice(item.productId, event.target.value)
-                      }
-                      aria-label={`Precio de ${item.product.name}`}
-                    >
-                      {activePrices(item.product).map((option) => (
-                        <option value={option.id} key={option.id}>
-                          {option.name} · {formatCurrency(option.price)}
-                        </option>
-                      ))}
-                    </select>
+                    <span className="sales-cart-price-level">
+                      <strong>{priceLabel(getPriceLevel(price))}</strong>
+                      <small>{formatCurrency(price?.price)}</small>
+                    </span>
                   </td>
                   <td className="sales-cart-total">
                     {formatCurrency(Number(price?.price ?? 0) * item.quantity)}
@@ -1663,6 +1698,37 @@ function CartTable({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+function SalesQuantityInput({ item, onUpdateQuantity }) {
+  const [draft, setDraft] = useState(String(item.quantity));
+  return (
+    <div className="sales-quantity-control">
+      <input
+        type="text"
+        inputMode="decimal"
+        min="0.001"
+        step="any"
+        value={draft}
+        onChange={(event) => {
+          const rawValue = event.target.value;
+          if (!isQuantityDraft(rawValue)) return;
+          setDraft(rawValue);
+          const parsedValue = parseQuantityInput(rawValue);
+          if (parsedValue !== null) onUpdateQuantity(item.productId, parsedValue);
+        }}
+        onBlur={() => {
+          const parsedValue = parseQuantityInput(draft);
+          if (parsedValue === null) {
+            setDraft(String(item.quantity));
+          } else {
+            setDraft(String(parsedValue));
+          }
+        }}
+        aria-label={`Cantidad de ${item.product.name}`}
+      />
     </div>
   );
 }
@@ -2498,6 +2564,7 @@ function SalesLookupDialog({
   warehouses,
   invoices,
   quotes,
+  cart = [],
   onClose,
   onSelect,
   onLoadQuote,
@@ -2554,9 +2621,15 @@ function SalesLookupDialog({
                 visible.map((record) => (
                   <tr
                     key={record.id}
-                    onDoubleClick={() =>
-                      type === "quotes" ? onLoadQuote(record) : onSelect(record)
-                    }
+                    onDoubleClick={() => {
+                      const alreadyInCart =
+                        type === "products" &&
+                        cart.some((item) => item.productId === record.id);
+                      if (alreadyInCart) return;
+                      type === "quotes"
+                        ? onLoadQuote(record)
+                        : onSelect(record);
+                    }}
                   >
                     {renderLookupCells(record, type)}
                     <td>
@@ -2568,8 +2641,25 @@ function SalesLookupDialog({
                           <ShoppingCart size={12} /> Cargar
                         </button>
                       ) : type === "products" ? (
-                        <button type="button" onClick={() => onSelect(record)}>
-                          <Plus size={12} /> Agregar
+                        <button
+                          type="button"
+                          disabled={cart.some(
+                            (item) => item.productId === record.id,
+                          )}
+                          title={
+                            cart.some((item) => item.productId === record.id)
+                              ? "Este producto ya está en la factura; edita la cantidad en la tabla"
+                              : undefined
+                          }
+                          onClick={() => onSelect(record)}
+                        >
+                          {cart.some((item) => item.productId === record.id) ? (
+                            "En factura"
+                          ) : (
+                            <>
+                              <Plus size={12} /> Agregar
+                            </>
+                          )}
                         </button>
                       ) : type === "invoices" ? (
                         <button type="button" onClick={() => onSelect(record)}>
@@ -2906,26 +2996,89 @@ function SalesDocumentDialog({
   );
 }
 
+function printSalesDocument(record, type) {
+  const printWindow = window.open("", "_blank", "width=900,height=700");
+  if (!printWindow) {
+    window.print();
+    return;
+  }
+
+  const isQuote = type === "quote";
+  const title = record.consecutive ?? (isQuote ? "Cotización" : "Factura");
+  const rows = (record.items ?? [])
+    .map(
+      (item) => `<tr>
+        <td>${escapeHtml(item.product?.name ?? `Producto #${item.productId}`)}</td>
+        <td>${Number(item.quantity ?? 0)}</td>
+        <td>${formatCurrency(item.unitPrice)}</td>
+        <td>${formatCurrency(item.total)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  printWindow.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>
+    @page{size:A4;margin:14mm}*{box-sizing:border-box}body{margin:0;color:#173c53;background:#fff;font:13px Arial,sans-serif}
+    .sheet{border:2px solid #17688c;padding:22px;background:#f7fbfd}.head{display:flex;justify-content:space-between;gap:24px;border-bottom:4px solid #17688c;padding-bottom:14px;margin-bottom:18px}.brand{color:#125578;font-size:20px;font-weight:700}.type{text-align:right;color:#0e6287;font-size:17px;font-weight:700}.meta{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:18px}.meta div{padding:10px;background:#e0eff6;border-left:4px solid #2180a8}.meta span{display:block;color:#376275;font-size:11px;margin-bottom:4px}.meta strong{font-size:13px}table{width:100%;border-collapse:collapse;margin-top:8px}th{padding:10px;text-align:left;color:#fff;background:#176b8d}td{padding:10px;border-bottom:1px solid #b9d0db}th:nth-child(n+2),td:nth-child(n+2){text-align:right}.totals{display:flex;justify-content:flex-end;margin-top:18px}.totals div{min-width:220px;padding:12px;background:#dceef6;border:1px solid #8bb8c9}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .total{padding-top:9px;border-top:2px solid #17688c;font-size:17px;font-weight:700;color:#0b587d}.foot{margin-top:24px;color:#416576;font-size:11px}
+  </style></head><body><main class="sheet"><header class="head"><div class="brand">Mundo Tienda</div><div class="type">${isQuote ? "COTIZACIÓN" : "FACTURA"}<br><span>${escapeHtml(title)}</span></div></header><section class="meta"><div><span>Cliente</span><strong>${escapeHtml(clientName(record.client))}</strong></div><div><span>Fecha</span><strong>${escapeHtml(formatDate(record.createdAt))}</strong></div><div><span>Estado</span><strong>${escapeHtml(record.status ?? "ACTIVA")}</strong></div></section><table><thead><tr><th>Producto</th><th>Cantidad</th><th>Precio unitario</th><th>Total</th></tr></thead><tbody>${rows || '<tr><td colspan="4">Este documento no tiene líneas.</td></tr>'}</tbody></table><section class="totals"><div><p>Subtotal <strong>${formatCurrency(record.subtotal)}</strong></p><p>Impuestos <strong>${formatCurrency(record.taxes)}</strong></p><p class="total">Total <strong>${formatCurrency(record.total)}</strong></p></div></section><p class="foot">Documento generado desde el módulo de ventas.</p></main></body></html>`);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.setTimeout(() => {
+    printWindow.print();
+    printWindow.close();
+  }, 250);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function activePrices(product) {
-  return (product?.prices ?? []).filter(isActive);
+  const now = Date.now();
+  return (product?.prices ?? []).filter(
+    (price) =>
+      isActive(price) &&
+      (!price.startsAt || new Date(price.startsAt).getTime() <= now) &&
+      (!price.endsAt || new Date(price.endsAt).getTime() >= now),
+  );
+}
+function isQuantityDraft(value) {
+  return /^\d*([.,]\d{0,3})?$/.test(String(value ?? ""));
+}
+function parseQuantityInput(value) {
+  const normalized = String(value ?? "").trim().replace(",", ".");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 function getDefaultPrice(product) {
   return (
     activePrices(product).find((price) => price.isDefault) ??
+    activePrices(product).find((price) => getPriceLevel(price) === 0) ??
     activePrices(product)[0] ??
     null
   );
 }
-function getPriceForClient(product, client) {
-  const prices = activePrices(product);
-  if (client?.clientType) {
-    const keyword = client.clientType === "MAYORISTA"
-      ? /mayor|mayoreo|wholesale/i
-      : /minorista|detal|retail/i;
-    const clientPrice = prices.find((price) => keyword.test(price.name ?? ""));
-    if (clientPrice) return clientPrice;
-  }
-  return getDefaultPrice(product);
+function getPriceForClient(product, _client, priceLevel = "0") {
+  return getExactPriceForLevel(product, priceLevel) ?? null;
+}
+function getExactPriceForLevel(product, priceLevel = "0") {
+  return activePrices(product).find(
+    (price) => getPriceLevel(price) === Number(priceLevel),
+  );
+}
+function getPriceLevel(price) {
+  if (price?.priceLevel !== null && price?.priceLevel !== undefined)
+    return Number(price.priceLevel);
+  const match = String(price?.name ?? "").match(/^precio\s*([0-3])$/i);
+  return match ? Number(match[1]) : null;
+}
+function priceLabel(level) {
+  return level === null || level === undefined ? "Precio predeterminado" : `Precio ${level}`;
 }
 function getPriceById(product, id) {
   return activePrices(product).find((price) => Number(price.id) === Number(id));

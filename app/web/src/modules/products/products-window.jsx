@@ -31,6 +31,7 @@ import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
 
 const units = ["UND", "KG", "G", "LB", "L", "ML", "CAJA", "PAQUETE"];
+const PRICE_LEVELS = [0, 1, 2, 3];
 const CREATE_PRODUCT_TYPE_VALUE = "__crear_tipo_producto__";
 const CREATE_WAREHOUSE_VALUE = "__crear_bodega__";
 const barcodeTypes = [
@@ -103,6 +104,7 @@ export function ProductsWindow({
   const [products, setProducts] = useState([]);
   const [selectedId, setSelectedId] = useState(initialProductId ?? null);
   const [searchTerm, setSearchTerm] = useState("");
+  const [brandFilter, setBrandFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("todos");
   const [productView, setProductView] = useState("grid");
   const [favoriteIds, setFavoriteIds] = useState([]);
@@ -255,6 +257,16 @@ export function ProductsWindow({
     [favoriteIds],
   );
 
+  const brands = useMemo(
+    () =>
+      [...new Set(
+        products
+          .map((product) => String(product.brand ?? "").trim())
+          .filter(Boolean),
+      )].sort((left, right) => left.localeCompare(right, "es")),
+    [products],
+  );
+
   const filteredProducts = useMemo(
     () =>
       products.filter((product) => {
@@ -264,14 +276,16 @@ export function ProductsWindow({
             ? isFavorite
             : statusFilter === "todos" ||
               (statusFilter === "activos" ? product.active : !product.active);
+        const matchesBrand = !brandFilter || product.brand === brandFilter;
         return (
           matchesFilter &&
+          matchesBrand &&
           `${product.code} ${product.name} ${product.brand}`
             .toLowerCase()
             .includes(searchTerm.trim().toLowerCase())
         );
       }),
-    [favoriteSet, products, searchTerm, statusFilter],
+    [brandFilter, favoriteSet, products, searchTerm, statusFilter],
   );
   const selectedProduct =
     products.find((product) => product.recordId === selectedId) ?? null;
@@ -432,7 +446,7 @@ export function ProductsWindow({
     const wasCreating = selectedId === null;
     const draftCode = draft.code.trim();
     const currentCode = selectedProduct?.code ?? "";
-    const costValue = Number(draft.cost);
+    const costValue = parseDecimalInput(draft.cost);
     const currentCost = Number(selectedProduct?.cost ?? 0);
     const activeCost = selectedProduct?.costs?.find(
       (cost) => cost.isActive !== false,
@@ -448,19 +462,24 @@ export function ProductsWindow({
         .filter((tagId) => Number.isInteger(tagId) && tagId > 0),
       name: draft.name.trim(),
       description: draft.description.trim() || undefined,
-      taxRate: Number(draft.taxRate) || 0,
+      taxRate: parseDecimalInput(draft.taxRate) || 0,
       unit: draft.unit,
       brand: draft.brand.trim(),
       minimumStock: Number(draft.minimumStock) || 0,
       maximumStock:
-        draft.maximumStock === "" ? undefined : Number(draft.maximumStock),
+        draft.maximumStock === ""
+          ? undefined
+          : parseDecimalInput(draft.maximumStock),
       isActive: Boolean(draft.active),
+      ...(wasCreating && (draft.prices ?? []).length
+        ? { prices: draft.prices.map((price) => buildPriceBody(price)) }
+        : {}),
       ...(selectedId === null && draft.warehouseId
         ? {
             warehouses: [
               {
                 warehouseId: Number(draft.warehouseId),
-                quantity: Number(draft.initialStock) || 0,
+                quantity: parseDecimalInput(draft.initialStock) || 0,
               },
             ],
           }
@@ -551,16 +570,17 @@ export function ProductsWindow({
           : [...current, normalized],
       );
       setPendingImage(null);
-      setActiveTab("main");
       if (wasCreating) {
-        setSelectedId(null);
-        setDraft(createEmptyProductDraft(productTypes, providers, warehouses));
+        setSelectedId(normalized.recordId);
+        setDraft({ ...normalized });
         setEditing(true);
-        setNotice("Producto guardado. Listo para registrar el siguiente.");
+        setActiveTab("prices");
+        setNotice("Producto creado. Agrega ahora sus precios generales.");
       } else {
         setSelectedId(normalized.recordId);
         setDraft({ ...normalized });
         setEditing(false);
+        setActiveTab("main");
         setNotice("Cambios guardados. Puedes continuar con el siguiente producto.");
         // Las utilidades no deben bloquear la confirmación ni el siguiente
         // producto; se actualizan cuando el panel ya está disponible.
@@ -739,9 +759,9 @@ export function ProductsWindow({
   async function saveInventory() {
     if (!canInventoryEdit) return;
     if (!selectedId || !inventoryEditor || actionLoading) return;
-    const quantity = Number(inventoryEditor.quantity);
-    if (!Number.isInteger(quantity) || quantity < 0) {
-      setError("La existencia debe ser un número entero mayor o igual a cero.");
+    const quantity = parseDecimalInput(inventoryEditor.quantity);
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      setError("La existencia debe ser un número mayor o igual a cero.");
       return;
     }
     setActionLoading("inventory");
@@ -765,21 +785,27 @@ export function ProductsWindow({
   function openPriceEditor(price = null) {
     if (!canEdit) return;
     if (!selectedId) {
-      setError("Guarda el producto antes de registrar un precio.");
+      setError("Guarda primero el producto para agregar sus precios.");
+      return;
+    }
+    const draft = price ? toPriceDraft(price) : createPriceDraft(shownProduct);
+    if (!draft) {
+      setError("Este producto ya tiene configurados Precio 0, Precio 1, Precio 2 y Precio 3.");
       return;
     }
     setError("");
     setPriceEditor(
-      price ? toPriceDraft(price) : createPriceDraft(shownProduct),
+      draft,
     );
   }
   async function savePrice() {
     if (!canEdit) return;
     if (!selectedId || !priceEditor || actionLoading) return;
-    const priceValue = Number(priceEditor.price);
-    const quantityValue = Number(priceEditor.quantity);
-    if (!priceEditor.name?.trim() || priceEditor.name.trim().length < 2) {
-      setError("El nombre del precio debe tener al menos 2 caracteres.");
+    const priceValue = parseDecimalInput(priceEditor.price);
+    const quantityValue = parseDecimalInput(priceEditor.quantity);
+    const priceLevel = Number(priceEditor.priceLevel);
+    if (!Number.isInteger(priceLevel) || !PRICE_LEVELS.includes(priceLevel)) {
+      setError("Selecciona un nivel entre Precio 0 y Precio 3.");
       return;
     }
     if (!Number.isFinite(priceValue) || priceValue <= 0) {
@@ -790,10 +816,10 @@ export function ProductsWindow({
       setError("La cantidad debe ser un número mayor que cero.");
       return;
     }
+    const body = buildPriceBody({ ...priceEditor, priceLevel });
     setActionLoading("price");
     setError("");
     try {
-      const body = buildPriceBody(priceEditor);
       if (priceEditor.id) {
         const original = shownProduct?.prices?.find(
           (price) => Number(price.id) === Number(priceEditor.id),
@@ -1034,6 +1060,19 @@ export function ProductsWindow({
                 onChange={(event) => setSearchTerm(event.target.value)}
               />
             </div>
+            <select
+              className="product-brand-filter"
+              aria-label="Filtrar por marca"
+              value={brandFilter}
+              onChange={(event) => setBrandFilter(event.target.value)}
+            >
+              <option value="">Todas las marcas</option>
+              {brands.map((brand) => (
+                <option key={brand} value={brand}>
+                  {brand}
+                </option>
+              ))}
+            </select>
             <SearchOptionsMenu value={statusFilter} onChange={setStatusFilter} />
           </div>
           <div className="product-list-controls">
@@ -1215,6 +1254,7 @@ export function ProductsWindow({
               fieldErrors={fieldErrors}
               productTypes={productTypes}
               providers={providers}
+              brands={brands}
               warehouses={warehouses}
               tags={tags}
               productProfit={productProfit}
@@ -1390,6 +1430,7 @@ function ProductDetails({
   fieldErrors,
   productTypes,
   providers,
+  brands,
   warehouses,
   tags,
   onUpload,
@@ -1397,7 +1438,15 @@ function ProductDetails({
   ...actions
 }) {
   if (activeTab === "prices")
-    return <PricesPanel product={product} {...actions} />;
+    return (
+      <PricesPanel
+        product={product}
+        editing={editing}
+        onChange={onChange}
+        fieldErrors={fieldErrors}
+        {...actions}
+      />
+    );
   if (activeTab === "units")
     return <UnitsPanel product={product} {...actions} />;
   if (activeTab === "inventory")
@@ -1480,11 +1529,12 @@ function ProductDetails({
         onChange={(value) => onChange("description", value)}
         wide
       />
-      <ProductField
+      <BrandField
         label="Marca"
         value={product.brand}
         editing={editing}
         onChange={(value) => onChange("brand", value)}
+        brands={brands}
         error={fieldErrors?.brand}
       />
       <ProductField
@@ -1506,23 +1556,25 @@ function ProductDetails({
         }))}
         select
       />
-      <ProviderMultiSelectField
-        label="Proveedores secundarios"
-        value={product.providerIds ?? []}
-        editing={editing}
-        providers={providers.filter(
-          (provider) => String(provider.id) !== String(product.providerId),
-        )}
-        onChange={(value) => onChange("providerIds", value)}
-      />
-      <ProviderMultiSelectField
-        label="Categorías / subcategorías"
-        value={product.tagIds ?? []}
-        editing={editing}
-        providers={tags ?? []}
-        onChange={(value) => onChange("tagIds", value)}
-        optionLabelKey="name"
-      />
+      <div className="product-relation-fields">
+        <ProviderMultiSelectField
+          label="Proveedores secundarios"
+          value={product.providerIds ?? []}
+          editing={editing}
+          providers={providers.filter(
+            (provider) => String(provider.id) !== String(product.providerId),
+          )}
+          onChange={(value) => onChange("providerIds", value)}
+        />
+        <ProviderMultiSelectField
+          label="Categorías"
+          value={product.tagIds ?? []}
+          editing={editing}
+          providers={tags ?? []}
+          onChange={(value) => onChange("tagIds", value)}
+          optionLabelKey="name"
+        />
+      </div>
       <ProductField
         label="Unidad"
         value={product.unit}
@@ -1532,9 +1584,11 @@ function ProductDetails({
         select
       />
       <ProductField
-        label="Impuesto"
+        label="IVA de venta (%)"
         value={`${product.taxRate}`}
         editing={editing}
+        type="text"
+        inputMode="decimal"
         onChange={(value) => onChange("taxRate", value)}
         error={fieldErrors?.taxRate}
       />
@@ -1568,8 +1622,9 @@ function ProductDetails({
         computed
       />
       <ProductField
-        label="Costo de adquisición"
-        type="number"
+        label="Costo adquisición (IVA incluido)"
+        type="text"
+        inputMode="decimal"
         value={String(product.cost ?? 0)}
         editing={editing}
         onChange={(value) => onChange("cost", value)}
@@ -1578,8 +1633,8 @@ function ProductDetails({
         accent
       />
       <ProductField
-        label="Valor inventario"
-        value={formatCurrency(product.cost * product.stock)}
+        label="Inventario total (IVA incluido)"
+        value={formatCurrency(Number(product.cost ?? 0) * Number(product.stock ?? 0))}
         accent
       />
       <ProductField
@@ -1643,7 +1698,7 @@ function InventoryPanel({
     <div className="provider-tab-panel data-panel inventory-panel">
       <PanelHeading
         title="Inventario por bodega"
-        description="El valor del inventario usa el costo de adquisición y las existencias."
+        description="Usa el costo de adquisición con IVA incluido."
         action={
           <div className="product-panel-heading-actions">
             <button
@@ -1685,7 +1740,7 @@ function InventoryPanel({
                 <th>Mínimo</th>
                 <th>Máximo</th>
                 <th>Costo adquisición</th>
-                <th>Valor inventario</th>
+                <th>Inventario total</th>
               </tr>
             </thead>
             <tbody>
@@ -1693,6 +1748,7 @@ function InventoryPanel({
                 const itemWarehouseId = Number(item.warehouseId);
                 const isEditing =
                   Number(inventoryEditor?.warehouseId) === itemWarehouseId;
+                const quantity = Number(item.quantity ?? 0);
                 return (
                   <tr
                     key={itemWarehouseId}
@@ -1707,9 +1763,9 @@ function InventoryPanel({
                       {isEditing ? (
                         <input
                           className="table-edit-input"
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
                           min="0"
-                          step="1"
                           autoFocus
                           value={inventoryEditor.quantity}
                           onChange={(event) =>
@@ -1726,11 +1782,7 @@ function InventoryPanel({
                     <td>{product.minimumStock}</td>
                     <td>{product.maximumStock ?? "—"}</td>
                     <td>{formatCurrency(product.cost)}</td>
-                    <td>
-                      {formatCurrency(
-                        product.cost * Number(item.quantity ?? 0),
-                      )}
-                    </td>
+                    <td>{formatCurrency(Number(product.cost ?? 0) * quantity)}</td>
                   </tr>
                 );
               })}
@@ -1777,7 +1829,8 @@ function InventoryPanel({
             />
             <EditorField
               label="Nueva existencia"
-              type="number"
+              type="text"
+              inputMode="decimal"
               value={inventoryEditor.quantity}
               onChange={(value) =>
                 onChangeInventory((current) => ({
@@ -1829,15 +1882,24 @@ function PricesPanel({
   onDefaultPrice,
   canEdit = true,
   actionLoading = "",
+  editing = false,
+  onChange,
+  fieldErrors,
 }) {
   const canManagePrices = canEdit && Boolean(product.recordId);
   const allPrices = product.prices ?? [];
-  const activePriceCount = allPrices.filter(isCurrentPrice).length;
+  const priceRows = PRICE_LEVELS.map((level) => ({
+    level,
+    price: allPrices.find((candidate) => getPriceLevel(candidate) === level),
+  }));
+  const activePriceCount = priceRows.filter(
+    ({ price }) => price && isCurrentPrice(price),
+  ).length;
   return (
     <div className="provider-tab-panel data-panel">
       <PanelHeading
         title="Costos y precios"
-        description="Compara el costo de adquisición con los precios de venta."
+        description="Configura aquí los cuatro precios generales y el IVA de venta."
         action={
           <button
             type="button"
@@ -1851,11 +1913,29 @@ function PricesPanel({
       />
       {!product.recordId && (
         <p className="table-hint">
-          Guarda primero el producto para registrar sus precios.
+          Guarda primero el producto. Después quedará seleccionado aquí para
+          agregar Precio 0, Precio 1, Precio 2 y Precio 3.
         </p>
       )}
+      <div className="price-tax-setting">
+        <ProductField
+          label="IVA de venta (%)"
+          value={`${product.taxRate ?? 0}`}
+          editing={editing}
+          onChange={(value) => onChange?.("taxRate", value)}
+          inputMode="decimal"
+          error={fieldErrors?.taxRate}
+        />
+        <p>
+          El precio guardado es antes de IVA. El sistema calcula el impuesto y
+          el total final con este porcentaje.
+        </p>
+      </div>
       <div className="cost-summary">
-        <CostMetric label="Costo adquisición" value={product.cost} />
+        <CostMetric
+          label="Costo adquisición (IVA incluido)"
+          value={product.cost}
+        />
         <CostMetric label="Costo promedio" value={averageCost(product.costs)} />
         <CostMetric
           label="Costo anterior"
@@ -1863,24 +1943,30 @@ function PricesPanel({
         />
       </div>
       <ProductDataTable
-        caption={`Precios de ${product.name} · ${activePriceCount} activos de ${allPrices.length}`}
+        className="prices-data-table-wrap"
+        caption={`Precios de ${product.name} · ${activePriceCount} activos de 4 niveles`}
         columns={[
-          "Nombre",
+          "Precio general",
           "Antes IVA",
           "Después IVA",
           "Unidad",
           "Cantidad",
-          "Ganancia",
-          "Margen",
+          "Ganancia sin IVA",
+          "Margen sin IVA",
+          "Ganancia con IVA",
+          "Margen con IVA",
           "Principal",
           "Estado",
         ]}
-        rows={allPrices.map((price) => {
+        rows={priceRows.map(({ level, price }) => {
+          if (!price) {
+            return [priceLabel(level), "—", "—", "—", "—", "—", "—", "—", "—", "—", "No configurado"];
+          }
           const profit = productProfit?.prices?.find(
             (item) => Number(item.priceId) === Number(price.id),
           );
           return [
-            price.name,
+            priceLabel(level),
             formatCurrency(Number(profit?.priceBeforeTax ?? price.price)),
             formatCurrency(
               Number(
@@ -1896,13 +1982,19 @@ function PricesPanel({
             profit?.profitPercentage == null
               ? "—"
               : `${profit.profitPercentage}%`,
+            profit?.profitAfterTax == null
+              ? "—"
+              : formatCurrency(Number(profit.profitAfterTax)),
+            profit?.marginAfterTax == null
+              ? "—"
+              : `${profit.marginAfterTax}%`,
             price.isDefault ? "Sí" : "No",
             isCurrentPrice(price) ? "Activo" : "Inactivo",
           ];
         })}
-        rowKeys={allPrices.map((price) => price.id)}
-        onRowDoubleClick={(index) => onEditPrice(allPrices[index])}
-        empty="No hay precios registrados."
+        rowKeys={priceRows.map(({ level }) => level)}
+        onRowDoubleClick={(index) => priceRows[index].price && onEditPrice(priceRows[index].price)}
+        empty="No hay niveles de precio configurados."
         />
       {productProfit?.prices?.some((price) => price.warning) && (
         <p className="table-hint product-margin-warning">
@@ -1912,7 +2004,7 @@ function PricesPanel({
       {productProfit?.warning && (
         <p className="table-hint">{productProfit.warning}</p>
       )}
-      <p className="table-hint">Doble clic sobre una fila para editarla.</p>
+      <p className="table-hint">Sin IVA es la utilidad comercial real para comparar contra el costo. Con IVA muestra el valor cobrado antes de entregar ese impuesto. Solo existen Precio 0, Precio 1, Precio 2 y Precio 3.</p>
       {priceEditor && (
         <PriceEditor
           editor={priceEditor}
@@ -1921,6 +2013,7 @@ function PricesPanel({
           onCancel={onCancelPrice}
           onDelete={onDeletePrice}
           onDefault={onDefaultPrice}
+          taxRate={product.taxRate}
           canEdit={canEdit}
           actionLoading={actionLoading}
         />
@@ -1937,6 +2030,7 @@ function PriceEditor({
   onDefault,
   canEdit = true,
   actionLoading = "",
+  taxRate = 0,
 }) {
   const isSaving = actionLoading === "price";
   const isDeleting = actionLoading === "price-delete";
@@ -1955,17 +2049,19 @@ function PriceEditor({
         </button>
       </div>
       <div className="inline-editor-grid">
-        <EditorField
-          label="Nombre"
-          value={editor.name}
+        <EditorSelect
+          label="Nivel global"
+          value={editor.priceLevel}
+          options={PRICE_LEVELS.map((level) => ({ value: level, label: priceLabel(level) }))}
           disabled={isBusy}
           onChange={(value) =>
-            onChange((current) => ({ ...current, name: value }))
+            onChange((current) => ({ ...current, priceLevel: Number(value) }))
           }
         />
         <EditorField
-          label="Precio"
-          type="number"
+          label="Precio antes de IVA"
+          type="text"
+          inputMode="decimal"
           value={editor.price}
           disabled={isBusy}
           onChange={(value) =>
@@ -1983,13 +2079,18 @@ function PriceEditor({
         />
         <EditorField
           label="Cantidad"
-          type="number"
+          type="text"
+          inputMode="decimal"
           value={editor.quantity}
           disabled={isBusy}
           onChange={(value) =>
             onChange((current) => ({ ...current, quantity: value }))
           }
         />
+      </div>
+      <div className="price-tax-preview">
+        <span>IVA venta ({formatDecimal(taxRate)}%) <strong>{formatCurrency(parseDecimalInput(editor.price) * parseDecimalInput(taxRate) / 100)}</strong></span>
+        <span>Precio final con IVA <strong>{formatCurrency(parseDecimalInput(editor.price) * (1 + parseDecimalInput(taxRate) / 100))}</strong></span>
       </div>
       <label className="inline-check">
         <input
@@ -2174,14 +2275,19 @@ function UnitsPanel({
               </tr>
             </thead>
             <tbody>
-              {product.prices.map((price) => (
-                <tr key={price.id}>
-                  <td>{price.name}</td>
-                  <td>{price.unit}</td>
-                  <td>{price.quantity ?? 1}</td>
-                  <td>{formatCurrency(Number(price.price))}</td>
+              {PRICE_LEVELS.map((level) => {
+                const price = product.prices.find(
+                  (candidate) => getPriceLevel(candidate) === level,
+                );
+                return (
+                <tr key={level}>
+                  <td>{priceLabel(level)}</td>
+                  <td>{price?.unit ?? "—"}</td>
+                  <td>{price?.quantity ?? "—"}</td>
+                  <td>{price ? formatCurrency(Number(price.price)) : "No configurado"}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         ) : (
@@ -2773,9 +2879,21 @@ function ProductDataTable({
   rowKeys,
   onRowDoubleClick,
   empty,
+  className = "",
 }) {
+  const tableWrapRef = useRef(null);
+
+  useEffect(() => {
+    if (className.includes("prices-data-table-wrap")) {
+      tableWrapRef.current?.scrollTo({ left: 0, top: 0 });
+    }
+  }, [caption, className]);
+
   return (
-    <div className="provider-data-table-wrap">
+    <div
+      ref={tableWrapRef}
+      className={`provider-data-table-wrap ${className}`.trim()}
+    >
       <div className="provider-table-caption">{caption}</div>
       {rows.length ? (
         <table className="provider-data-table">
@@ -2842,6 +2960,7 @@ function ProductField({
   computed = false,
   displayValue,
   error = "",
+  inputMode,
 }) {
   return (
     <div
@@ -2873,6 +2992,7 @@ function ProductField({
         ) : (
           <input
             type={type}
+            inputMode={inputMode}
             className={`detail-input ${accent ? "is-accent" : ""} ${
               error ? "is-invalid" : ""
             }`}
@@ -2895,6 +3015,40 @@ function ProductField({
   );
 }
 
+function BrandField({ label, value, editing, onChange, brands = [], error = "" }) {
+  const inputId = "product-brand-input";
+  const listId = "product-brand-options";
+  return (
+    <div className={`detail-field ${error ? "has-error" : ""}`}>
+      <label htmlFor={inputId}>{label}</label>
+      {editing ? (
+        <input
+          id={inputId}
+          list={listId}
+          className={`detail-input ${error ? "is-invalid" : ""}`}
+          value={value ?? ""}
+          placeholder="Selecciona o escribe una marca"
+          aria-invalid={Boolean(error)}
+          title={error || undefined}
+          onChange={(event) => onChange?.(event.target.value)}
+        />
+      ) : (
+        <div className="detail-control">
+          <span>{value || " "}</span>
+        </div>
+      )}
+      {editing && (
+        <datalist id={listId}>
+          {brands.map((brand) => (
+            <option key={brand} value={brand} />
+          ))}
+        </datalist>
+      )}
+      {error && <span className="field-error">{error}</span>}
+    </div>
+  );
+}
+
 function ProviderMultiSelectField({
   label,
   value = [],
@@ -2903,45 +3057,88 @@ function ProviderMultiSelectField({
   onChange,
   optionLabelKey = "name",
 }) {
+  const [open, setOpen] = useState(false);
+  const fieldRef = useRef(null);
   const selectedIds = value.map((providerId) => String(providerId));
-  const selectedNames = providers
-    .filter((provider) => selectedIds.includes(String(provider.id)))
-    .map((provider) => provider[optionLabelKey]);
+  const selectedOptions = selectedIds.map((selectedId) => {
+    const option = providers.find((provider) => String(provider.id) === selectedId);
+    return option ?? { id: selectedId, [optionLabelKey]: `Opción #${selectedId}` };
+  });
+  function toggleOption(optionId) {
+    const normalizedId = String(optionId);
+    onChange?.(
+      selectedIds.includes(normalizedId)
+        ? selectedIds.filter((selectedId) => selectedId !== normalizedId)
+        : [...selectedIds, normalizedId],
+    );
+  }
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeWhenOutside = (event) => {
+      if (!fieldRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeWhenOutside);
+    return () => document.removeEventListener("pointerdown", closeWhenOutside);
+  }, [open]);
 
   return (
     <div className="detail-field provider-secondary-field">
       <label>{label}</label>
       {editing ? (
-        <select
-          multiple
-          className="detail-input provider-multi-select"
-          value={selectedIds}
-          aria-label={label}
-          onChange={(event) =>
-            onChange?.(
-              Array.from(event.target.selectedOptions, (option) => option.value),
-            )
-          }
+        <div
+          ref={fieldRef}
+          className={`multi-select-field ${open ? "is-open" : ""}`}
         >
-          {providers.length ? (
-            providers.map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider[optionLabelKey]}
-              </option>
-            ))
-          ) : (
-            <option disabled value="">
-              No hay opciones activas
-            </option>
+          <button
+            type="button"
+            className="multi-select-trigger"
+            aria-label={label}
+            aria-expanded={open}
+            title={selectedOptions.map((option) => option[optionLabelKey]).join(", ")}
+            onClick={() => setOpen((current) => !current)}
+          >
+            <span>
+              {selectedIds.length
+                ? `${selectedIds.length} seleccionada${selectedIds.length === 1 ? "" : "s"}`
+                : `Seleccionar ${label.toLowerCase()}`}
+            </span>
+            <ChevronDown size={13} />
+          </button>
+          {open && (
+            <div
+              className="multi-select-menu"
+              role="group"
+              aria-label={`Opciones de ${label}`}
+            >
+              {providers.length ? (
+                providers.map((provider) => {
+                  const optionId = String(provider.id);
+                  return (
+                    <label className="multi-select-option" key={provider.id}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(optionId)}
+                        onChange={() => toggleOption(optionId)}
+                      />
+                      <span>{provider[optionLabelKey]}</span>
+                    </label>
+                  );
+                })
+              ) : (
+                <span className="multi-select-empty">No hay opciones activas</span>
+              )}
+            </div>
           )}
-        </select>
+        </div>
       ) : (
         <div className="detail-control provider-secondary-value">
-          <span>{selectedNames.length ? selectedNames.join(", ") : "Ninguno"}</span>
+          <span>
+            {selectedOptions.length
+              ? selectedOptions.map((option) => option[optionLabelKey]).join(", ")
+              : "Ninguno"}
+          </span>
         </div>
-      )}
-      {editing && providers.length > 1 && (
-        <small className="field-help">Mantén Ctrl/Cmd para seleccionar varios.</small>
       )}
     </div>
   );
@@ -2977,12 +3174,14 @@ function EditorField({
   type = "text",
   disabled = false,
   wide = false,
+  inputMode,
 }) {
   return (
     <label className={`editor-field ${wide ? "editor-field-wide" : ""}`}>
       <span>{label}</span>
       <input
         type={type}
+        inputMode={inputMode}
         value={value ?? ""}
         disabled={disabled}
         onChange={(event) => onChange?.(event.target.value)}
@@ -3065,6 +3264,9 @@ function mapProduct(product) {
 function toPriceDraft(price) {
   return {
     ...price,
+    originalPriceLevel: getPriceLevel(price) ?? 0,
+    priceLevel: getPriceLevel(price) ?? 0,
+    name: priceLabel(getPriceLevel(price) ?? 0),
     price: String(price.price ?? ""),
     quantity: String(price.quantity ?? 1),
     unit: price.unit ?? "UND",
@@ -3080,8 +3282,16 @@ function isCurrentPrice(price, now = new Date()) {
   );
 }
 function createPriceDraft(product) {
+  const usedLevels = new Set(
+    (product?.prices ?? [])
+      .map(getPriceLevel)
+      .filter((level) => level !== null && level !== undefined),
+  );
+  const priceLevel = PRICE_LEVELS.find((level) => !usedLevels.has(level));
+  if (priceLevel === undefined) return null;
   return {
-    name: `Precio ${(product?.prices?.length ?? 0) + 1}`,
+    name: priceLabel(priceLevel),
+    priceLevel,
     price: "1",
     unit: product?.unit ?? "UND",
     quantity: "1",
@@ -3090,16 +3300,27 @@ function createPriceDraft(product) {
   };
 }
 function buildPriceBody(editor) {
+  const priceLevel = Number(editor.priceLevel);
   return {
-    name: editor.name.trim(),
-    price: Number(editor.price),
+    name: priceLabel(priceLevel),
+    priceLevel,
+    price: parseDecimalInput(editor.price),
     unit: editor.unit,
-    quantity: Number(editor.quantity) || 1,
+    quantity: parseDecimalInput(editor.quantity) || 1,
     isDefault: Boolean(editor.isDefault),
     isActive: editor.isActive !== false,
     startsAt: null,
     endsAt: null,
   };
+}
+function getPriceLevel(price) {
+  if (price?.priceLevel !== null && price?.priceLevel !== undefined)
+    return Number(price.priceLevel);
+  const match = String(price?.name ?? "").match(/^precio\s*([0-3])$/i);
+  return match ? Number(match[1]) : null;
+}
+function priceLabel(level) {
+  return `Precio ${Number(level)}`;
 }
 function inferBarcodeType(code) {
   const value = String(code ?? "").trim();
@@ -3137,8 +3358,21 @@ function hasProductDraftChanges(draft, product) {
   const draftProviders = (draft.providerIds ?? []).map(String).sort();
   const productProviders = (product.providerIds ?? []).map(String).sort();
   if (draftProviders.join(",") !== productProviders.join(",")) return true;
-  return (draft.tagIds ?? []).map(String).sort().join(",") !==
-    (product.tagIds ?? []).map(String).sort().join(",");
+  if ((draft.tagIds ?? []).map(String).sort().join(",") !==
+    (product.tagIds ?? []).map(String).sort().join(",")) return true;
+  const normalizePrices = (prices) =>
+    (prices ?? [])
+      .map((price) => ({
+        level: getPriceLevel(price),
+        price: Number(price.price),
+        unit: price.unit,
+        quantity: Number(price.quantity ?? 1),
+        isDefault: Boolean(price.isDefault),
+        isActive: price.isActive !== false,
+      }))
+      .sort(comparePriceDrafts);
+  return JSON.stringify(normalizePrices(draft.prices)) !==
+    JSON.stringify(normalizePrices(product.prices));
 }
 function validateProductDraft(product) {
   const errors = {};
@@ -3151,24 +3385,35 @@ function validateProductDraft(product) {
     errors.name = "El nombre debe tener al menos 2 caracteres.";
   if (!product.brand?.trim()) errors.brand = "La marca es obligatoria.";
   const numericFields = [
-    ["taxRate", "El impuesto debe ser un número mayor o igual a cero."],
+    ["taxRate", "El IVA de venta debe ser un número mayor o igual a cero."],
     ["minimumStock", "El stock mínimo debe ser un entero mayor o igual a cero."],
     ["cost", "El precio de costo debe ser un número mayor o igual a cero."],
     ["initialStock", "El stock inicial debe ser un entero mayor o igual a cero."],
   ];
   for (const [field, message] of numericFields) {
-    const value = Number(product[field]);
-    if (!Number.isFinite(value) || value < 0 || (field !== "taxRate" && !Number.isInteger(value)))
+    const value = parseDecimalInput(product[field]);
+    if (!Number.isFinite(value) || value < 0 || (field !== "taxRate" && field !== "cost" && !Number.isInteger(value)))
       errors[field] = message;
   }
+  const taxRate = parseDecimalInput(product.taxRate);
+  if (Number.isFinite(taxRate) && taxRate > 100)
+    errors.taxRate = "El IVA de venta no puede superar 100%.";
   if (product.maximumStock !== "" && product.maximumStock !== null) {
-    const maximumStock = Number(product.maximumStock);
+    const maximumStock = parseDecimalInput(product.maximumStock);
     if (!Number.isInteger(maximumStock) || maximumStock < 0)
       errors.maximumStock = "El stock máximo debe ser un entero mayor o igual a cero.";
   }
-  if (Number(product.initialStock) > 0 && !product.warehouseId)
+  if (parseDecimalInput(product.initialStock) > 0 && !product.warehouseId)
     errors.warehouseId = "Selecciona una bodega para registrar el stock inicial.";
   return errors;
+}
+function parseDecimalInput(value) {
+  if (value === null || value === undefined || String(value).trim() === "")
+    return 0;
+  return Number(String(value).trim().replace(/,/g, "."));
+}
+function comparePriceDrafts(left, right) {
+  return Number(left.level ?? 0) - Number(right.level ?? 0);
 }
 function barcodeTypeLabel(type) {
   return barcodeTypes.find(([value]) => value === type)?.[1] ?? type ?? "Otro";
@@ -3183,6 +3428,12 @@ function isProductRelationError(error) {
 }
 function formatCurrency(value) {
   return `$ ${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(Number(value) || 0)}`;
+}
+function formatDecimal(value) {
+  return new Intl.NumberFormat("es-CO", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 3,
+  }).format(Number(value) || 0);
 }
 
 async function readBarcodeFromImage(file) {

@@ -10,6 +10,7 @@ import {
   IsNumber,
   IsOptional,
   IsPositive,
+  Max,
   IsString,
   Min,
   MinLength,
@@ -20,6 +21,13 @@ export class CreateInitialProductPriceDto {
   @IsString()
   @MinLength(2)
   name: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(3)
+  priceLevel?: number;
 
   @Type(() => Number)
   @IsNumber()
@@ -105,6 +113,7 @@ export class CreateProductDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0)
+  @Max(100)
   taxRate: number;
 
   @IsOptional()

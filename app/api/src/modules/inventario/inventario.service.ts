@@ -407,7 +407,7 @@ export class InventarioService {
           quantity: targetQuantity,
         },
       });
-      const difference = targetQuantity - (current?.quantity ?? 0);
+      const difference = targetQuantity - Number(current?.quantity ?? 0);
       const packaging = buildPackagingBreakdown(
         Math.abs(difference),
         product.packagingProfile,
@@ -654,6 +654,7 @@ export class InventarioService {
           product.packagingProfile,
         ) ?? 0
       : 0;
+    const inventoryValue = totalStock * costPerUnit;
     const packaging = buildPackagingBreakdown(
       totalStock,
       product.packagingProfile,
@@ -669,7 +670,7 @@ export class InventarioService {
       stock: totalStock,
       totalStock,
       cost: costPerUnit,
-      inventoryValue: totalStock * costPerUnit,
+      inventoryValue,
       stockStatus: getProductStockStatus(
         totalStock,
         product.minimumStock,
@@ -702,7 +703,7 @@ export class InventarioService {
     );
     if (
       stockQuantity === null ||
-      !Number.isInteger(stockQuantity) ||
+      !Number.isFinite(stockQuantity) ||
       (!allowZero && stockQuantity <= 0)
     ) {
       throw new BadRequestException(

@@ -364,7 +364,7 @@ function WarehouseDashboard({ session, focus, activeTab, onTabChange, pendingQuo
                     <strong>{order.consecutive}</strong>
                     <span>{order.provider?.name ?? "Proveedor"} · {formatDate(order.expectedAt)}</span>
                   </div>
-                  <button type="button" className="primary-action" onClick={() => setReviewOrder(order)} disabled={Boolean(actionLoading)}>
+                  <button type="button" className="primary-action" onClick={() => openPurchaseOrder(order)} disabled={Boolean(actionLoading)}>
                     <FileText size={13} /> Ver cotización y PDF
                   </button>
                 </div>
@@ -501,6 +501,7 @@ function EmptyState({ text }) {
 }
 
 function WarehousePurchaseReviewDialog({ order, canReceive, busy, onPrint, onClose, onReceive }) {
+  const items = order.items ?? [];
   return (
     <div className="warehouse-review-backdrop" role="presentation">
       <div className="warehouse-review-dialog" role="dialog" aria-modal="true" aria-label="Revisar orden de compra">
@@ -512,8 +513,8 @@ function WarehousePurchaseReviewDialog({ order, canReceive, busy, onPrint, onClo
           <div><span>Bodega destino</span><strong>{order.warehouse?.location ?? "Bodega asignada"}</strong></div>
           <div><span>Entrega prevista</span><strong>{formatDate(order.expectedAt)}</strong></div>
         </div>
-        <div className="warehouse-review-items"><div className="warehouse-review-item-head"><span>Producto</span><span>Cantidad</span><span>Costo unitario</span><span>Total</span></div>{(order.items ?? []).map((item) => <div className="warehouse-review-item" key={item.id}><strong>{item.product?.name ?? `Producto #${item.productId}`}</strong><span>{item.quantity} {item.unit ?? "UND"}<small> · recibido {item.receivedQuantity ?? 0}</small></span><span>{formatCurrency(item.unitCost)}</span><b>{formatCurrency(item.total)}</b></div>)}</div>
-        <div className="warehouse-review-totals"><span>Subtotal <b>{formatCurrency(order.subtotal)}</b></span><span>Impuestos <b>{formatCurrency(order.taxes)}</b></span><strong>Total <b>{formatCurrency(order.total)}</b></strong></div>
+        <div className="warehouse-review-items"><div className="warehouse-review-item-head"><span>Producto</span><span>Cantidad</span><span>Costo unitario (IVA incluido)</span><span>Total</span></div>{items.length ? items.map((item) => <div className="warehouse-review-item" key={item.id}><strong>{item.product?.name ?? `Producto #${item.productId}`}</strong><span>{item.quantity} {item.unit ?? "UND"}<small> · recibido {item.receivedQuantity ?? 0}</small></span><span>{formatCurrency(item.unitCost)}</span><b>{formatCurrency(item.total)}</b></div>) : <div className="warehouse-review-empty">No se encontraron líneas de productos en el detalle de esta orden.</div>}</div>
+        <div className="warehouse-review-totals"><span>Costo de adquisición <b>{formatCurrency(order.subtotal)}</b></span><strong>Total <b>{formatCurrency(order.total)}</b></strong></div>
         {order.notes && <div className="warehouse-review-note">{order.notes}</div>}
         <footer><button type="button" onClick={onPrint}><Printer size={13} /> Ver / imprimir PDF de cotización</button><button type="button" onClick={onClose}>Cerrar</button>{canReceive && <button type="button" className="primary-action" disabled={busy} onClick={onReceive}><Check size={13} /> {busy ? "Recibiendo…" : "Confirmar recepción"}</button>}</footer>
       </div>

@@ -38,7 +38,7 @@ export class CreateInvoiceItemDto {
   productPriceId?: number;
 
   @Type(() => Number)
-  @IsInt()
+  @IsNumber({ maxDecimalPlaces: 3 })
   @IsPositive()
   quantity: number;
 

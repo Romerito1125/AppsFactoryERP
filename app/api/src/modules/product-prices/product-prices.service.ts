@@ -94,6 +94,11 @@ export class ProductPricesService {
     await this.ensureProductExists(productId);
 
     const data = this.normalizeDates(createProductPriceDto);
+    const priceLevel = await this.resolvePriceLevel(
+      productId,
+      createProductPriceDto.priceLevel,
+      createProductPriceDto.name,
+    );
 
     if (data.isDefault && data.isActive === false) {
       throw new BadRequestException(
@@ -102,6 +107,15 @@ export class ProductPricesService {
     }
 
     const price = await this.prisma.$transaction(async (tx) => {
+      const existingLevel = await tx.productPrice.findFirst({
+        where: { productId, priceLevel },
+        select: { id: true },
+      });
+      if (existingLevel) {
+        throw new BadRequestException(
+          `El producto ya tiene configurado el Precio ${priceLevel}`,
+        );
+      }
       if (data.isDefault) {
         await tx.productPrice.updateMany({
           where: { productId },
@@ -111,7 +125,8 @@ export class ProductPricesService {
 
       return tx.productPrice.create({
         data: {
-          name: createProductPriceDto.name,
+          name: this.priceLabel(priceLevel),
+          priceLevel,
           price: createProductPriceDto.price,
           unit: createProductPriceDto.unit ?? 'UND',
           quantity: createProductPriceDto.quantity ?? 1,
@@ -152,6 +167,26 @@ export class ProductPricesService {
     const current = await this.findOne(id);
     const { reason, ...updateData } = updateProductPriceDto;
     const data = this.normalizeDates(updateData, current);
+    const priceLevel =
+      updateProductPriceDto.priceLevel ??
+      current.priceLevel ??
+      this.parsePriceLevel(current.name) ??
+      0;
+    const duplicateLevel = await this.prisma.productPrice.findFirst({
+      where: {
+        productId: current.productId,
+        priceLevel,
+        id: { not: id },
+      },
+      select: { id: true },
+    });
+    if (duplicateLevel) {
+      throw new BadRequestException(
+        `El producto ya tiene configurado el Precio ${priceLevel}`,
+      );
+    }
+    data.name = this.priceLabel(priceLevel);
+    data.priceLevel = priceLevel;
 
     if (data.isDefault && data.isActive === false) {
       throw new BadRequestException(
@@ -332,6 +367,49 @@ export class ProductPricesService {
       startsAt,
       endsAt,
     };
+  }
+
+  private async resolvePriceLevel(
+    productId: number,
+    requestedLevel?: number,
+    name?: string,
+  ) {
+    const parsedLevel = requestedLevel ?? this.parsePriceLevel(name);
+    if (parsedLevel !== undefined && parsedLevel !== null) {
+      this.ensurePriceLevel(parsedLevel);
+      return parsedLevel;
+    }
+
+    const prices = await this.prisma.productPrice.findMany({
+      where: { productId, isActive: true },
+      select: { priceLevel: true },
+    });
+    const nextLevel = [0, 1, 2, 3].find(
+      (level) => !prices.some((price) => price.priceLevel === level),
+    );
+    if (nextLevel === undefined) {
+      throw new BadRequestException(
+        'El producto ya tiene los cuatro niveles: Precio 0, Precio 1, Precio 2 y Precio 3',
+      );
+    }
+    return nextLevel;
+  }
+
+  private parsePriceLevel(name?: string) {
+    const match = String(name ?? '').match(/^precio\s*([0-3])$/i);
+    return match ? Number(match[1]) : undefined;
+  }
+
+  private ensurePriceLevel(level: number) {
+    if (!Number.isInteger(level) || level < 0 || level > 3) {
+      throw new BadRequestException(
+        'El nivel de precio debe ser Precio 0, Precio 1, Precio 2 o Precio 3',
+      );
+    }
+  }
+
+  private priceLabel(level: number) {
+    return `Precio ${level}`;
   }
 
   private ensurePositiveId(id: number) {

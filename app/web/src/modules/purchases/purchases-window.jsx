@@ -14,6 +14,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { TransientMessage } from "@/components/desktop/transient-message";
@@ -35,6 +36,16 @@ const statusLabels = {
 
 let purchasesDataPromise;
 let purchasesDataSnapshot;
+let pdfWorkerConfigured = false;
+
+function configurePdfWorker() {
+  if (pdfWorkerConfigured) return;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/build/pdf.worker.mjs",
+    import.meta.url,
+  ).toString();
+  pdfWorkerConfigured = true;
+}
 
 function invalidatePurchasesDataCache() {
   purchasesDataPromise = undefined;
@@ -292,7 +303,6 @@ export function PurchasesWindow({
             parsedItem.unitCost > 0
               ? parsedItem.unitCost
               : defaultCostForUnit(product, getDefaultPurchaseUnit(product)),
-        taxRate: Number(product.taxRate ?? parsedItem.taxRate ?? 0),
       });
     }
     setCart(matchedItems);
@@ -342,7 +352,6 @@ export function PurchasesWindow({
             item.unit ?? getDefaultPurchaseUnit(item.product),
           ),
           unitCost: Number(item.unitCost ?? 0),
-          taxRate: Number(item.taxRate ?? item.product?.taxRate ?? 0),
         })),
       );
       setView("purchases");
@@ -371,7 +380,6 @@ export function PurchasesWindow({
         quantity: 1,
         unit: getDefaultPurchaseUnit(product),
         unitCost: defaultCostForUnit(product, getDefaultPurchaseUnit(product)),
-        taxRate: Number(product.taxRate ?? 0),
       },
     ]);
     setNotice(`${productName(product)} agregado a la tabla.`);
@@ -485,7 +493,6 @@ export function PurchasesWindow({
          quantity: Number(item.quantity),
          unit: item.unit,
          unitCost: Number(item.unitCost),
-         taxRate: Number(item.taxRate ?? 0),
        })),
       };
       const saved = editingPurchaseId
@@ -873,7 +880,7 @@ function PurchaseDocumentPanel({
               {isOrder && <th>Existencia</th>}
               <th>Cantidad</th>
               <th>Und</th>
-              <th>Costo</th>
+              <th>Costo unitario (IVA incluido)</th>
               <th>Total</th>
               <th aria-label="Acciones" />
             </tr>
@@ -1011,12 +1018,8 @@ function PurchaseTotalsPanel({ title, totals }) {
         <strong>{totals.quantity}</strong>
       </div>
       <div className="purchase-number-row">
-        <span>Total renglones</span>
+        <span>Subtotal adquisición</span>
         <strong>{formatCurrency(totals.subtotal)}</strong>
-      </div>
-      <div className="purchase-number-row">
-        <span>Impuestos</span>
-        <strong>{formatCurrency(totals.tax)}</strong>
       </div>
       {totals.retentionAmount > 0 && (
         <div className="purchase-number-row">
@@ -1446,7 +1449,6 @@ function PurchasePdfPreview({ order, onClose }) {
     items.map((item) => ({
       quantity: item.quantity,
       unitCost: item.unitCost,
-      taxRate: item.taxRate ?? item.product?.taxRate ?? 0,
     })),
     order.provider,
   );
@@ -1490,7 +1492,7 @@ function PurchasePdfPreview({ order, onClose }) {
           </div>
           <table className="purchase-table purchase-pdf-table">
             <thead>
-              <tr><th>Código</th><th>Producto</th><th>Cantidad</th><th>Costo</th><th>Total</th></tr>
+              <tr><th>Código</th><th>Producto</th><th>Cantidad</th><th>Costo unitario (IVA incluido)</th><th>Total</th></tr>
             </thead>
             <tbody>
               {items.map((item) => (
@@ -1604,7 +1606,7 @@ function QuickPurchaseProductDialog({
           <label><span>Marca</span><input value={draft.brand} onChange={(event) => update("brand", event.target.value)} /></label>
           <label><span>Unidad base</span><select value={draft.unit} onChange={(event) => update("unit", event.target.value)}>{["UND", "KG", "G", "LB", "L", "ML"].map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select></label>
           <label><span>Precio inicial</span><input type="number" min="0.01" step="0.01" value={draft.price} onChange={(event) => update("price", event.target.value)} /></label>
-          <label><span>IVA %</span><input type="number" min="0" step="0.01" value={draft.taxRate} onChange={(event) => update("taxRate", event.target.value)} /></label>
+          <label><span>IVA venta %</span><input type="number" min="0" step="0.01" value={draft.taxRate} onChange={(event) => update("taxRate", event.target.value)} /></label>
           <label><span>Código de barras</span><input value={draft.barcode} onChange={(event) => update("barcode", event.target.value)} /></label>
           <label><span>Descripción</span><input value={draft.description} onChange={(event) => update("description", event.target.value)} /></label>
           <label><span>Unidades por paquete</span><input type="number" min="1" value={draft.unitsPerPackage} onChange={(event) => update("unitsPerPackage", event.target.value)} /></label>
@@ -1814,11 +1816,7 @@ export function PurchaseOperationDialog({ provider, onClose, onAccept }) {
 
 function calculateCartTotals(cart, provider) {
   const subtotal = cart.reduce((sum, item) => sum + lineTotal(item), 0);
-  const tax = cart.reduce(
-    (sum, item) => sum + lineTotal(item) * (Number(item.taxRate ?? 0) / 100),
-    0,
-  );
-  const total = subtotal + tax;
+  const total = subtotal;
   const explicitRate = Number(provider?.withholdingRate ?? 0);
   const textRate = Number(
     String(provider?.withholdingType ?? "")
@@ -1838,7 +1836,6 @@ function calculateCartTotals(cart, provider) {
   return {
     quantity: cart.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
     subtotal,
-    tax,
     total,
     retentionRate: appliesRetention ? retentionRate : 0,
     retentionAmount,
@@ -2047,12 +2044,8 @@ async function extractQuoteText(file, onProgress) {
 }
 
 async function extractPdfQuoteText(file, onProgress) {
-  const pdfjs = await import("pdfjs-dist/build/pdf.mjs");
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/build/pdf.worker.mjs",
-    import.meta.url,
-  ).toString();
-  const pdfDocument = await pdfjs.getDocument({
+  configurePdfWorker();
+  const pdfDocument = await pdfjsLib.getDocument({
     data: await file.arrayBuffer(),
   }).promise;
   const pages = Math.min(pdfDocument.numPages, 5);

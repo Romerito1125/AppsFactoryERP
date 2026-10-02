@@ -4,9 +4,12 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsInt,
   IsNumber,
   IsOptional,
   IsPositive,
+  Max,
+  Min,
   IsString,
   MinLength,
 } from 'class-validator';
@@ -15,6 +18,13 @@ export class CreateProductPriceDto {
   @IsString()
   @MinLength(2)
   name: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(3)
+  priceLevel?: number;
 
   @Type(() => Number)
   @IsNumber()

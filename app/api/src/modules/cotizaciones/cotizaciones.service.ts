@@ -18,6 +18,14 @@ import {
   UpdateQuoteStatusDto,
 } from './dto/quote.dto';
 
+function getPriceLevel(price: { priceLevel?: number | null; name: string }) {
+  if (price.priceLevel !== null && price.priceLevel !== undefined) {
+    return price.priceLevel;
+  }
+  const match = String(price.name ?? '').match(/^precio\s*([0-3])$/i);
+  return match ? Number(match[1]) : undefined;
+}
+
 @Injectable()
 export class CotizacionesService {
   constructor(
@@ -54,7 +62,7 @@ export class CotizacionesService {
   create(dto: CreateQuoteDto) {
     return this.prisma.$transaction(async (tx) => {
       await this.ensureActiveClient(tx, dto.clientId);
-      const items = await this.buildItems(tx, dto.items);
+      const items = await this.buildItems(tx, dto.items, dto.priceLevel);
       const totals = this.calculateTotals(items);
       return tx.quote.create({
         data: {
@@ -182,7 +190,11 @@ export class CotizacionesService {
     if (!client) throw new NotFoundException('Cliente no encontrado');
     if (!client.isActive) throw new BadRequestException('Cliente inactivo');
   }
-  private async buildItems(tx: any, input: CreateQuoteDto['items']) {
+  private async buildItems(
+    tx: any,
+    input: CreateQuoteDto['items'],
+    priceLevel?: number,
+  ) {
     const productIds = [...new Set(input.map((item) => item.productId))];
     const products = await tx.product.findMany({
       where: { id: { in: productIds } },
@@ -196,9 +208,13 @@ export class CotizacionesService {
         throw new BadRequestException(
           `El producto ${item.productId} está inactivo`,
         );
-      const price = item.productPriceId
-        ? product.prices.find((current) => current.id === item.productPriceId)
-        : product.prices.find((current) => current.isDefault);
+      const price =
+        priceLevel !== undefined
+          ? product.prices.find((current) => getPriceLevel(current) === priceLevel) ??
+            product.prices.find((current) => current.isDefault)
+          : item.productPriceId
+            ? product.prices.find((current) => current.id === item.productPriceId)
+            : product.prices.find((current) => current.isDefault);
       if (!price)
         throw new BadRequestException(
           `El producto ${item.productId} no tiene precio válido`,

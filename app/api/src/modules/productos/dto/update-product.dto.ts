@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsOptional,
   IsPositive,
+  Max,
   IsString,
   Min,
   MinLength,
@@ -56,6 +57,7 @@ export class UpdateProductDto {
   @Type(() => Number)
   @IsNumber()
   @Min(0)
+  @Max(100)
   taxRate?: number;
 
   @IsOptional()

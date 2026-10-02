@@ -36,7 +36,6 @@ function emptyPurchaseItem(productId = "") {
     productId: String(productId),
     quantity: "1",
     unitCost: "",
-    taxRate: "0",
   };
 }
 
@@ -1019,11 +1018,7 @@ function PurchaseEditor({
       sum + Number(item.quantity || 0) * Number(item.unitCost || 0),
     0,
   );
-  const total = editor.items.reduce((sum, item) => {
-    const itemSubtotal =
-      Number(item.quantity || 0) * Number(item.unitCost || 0);
-    return sum + itemSubtotal * (1 + Number(item.taxRate || 0) / 100);
-  }, 0);
+  const total = subtotal;
   return (
     <div className="payable-editor-backdrop">
       <div
@@ -1097,19 +1092,11 @@ function PurchaseEditor({
                     }
                   />
                   <EditorField
-                    label="Costo unitario"
+                    label="Costo unitario (IVA incluido)"
                     value={item.unitCost}
                     type="number"
                     onChange={(value) =>
                       onItemChange(index, "unitCost", value)
-                    }
-                  />
-                  <EditorField
-                    label="Impuesto %"
-                    value={item.taxRate}
-                    type="number"
-                    onChange={(value) =>
-                      onItemChange(index, "taxRate", value)
                     }
                   />
                   <button
@@ -1368,7 +1355,6 @@ function toPurchaseEditor(order) {
           productId: String(item.productId ?? ""),
           quantity: String(item.quantity ?? 1),
           unitCost: String(item.unitCost ?? ""),
-          taxRate: String(item.taxRate ?? 0),
         }))
       : [emptyPurchaseItem()],
     orderedAt: toDateInput(order.orderedAt),
@@ -1394,7 +1380,6 @@ function buildOrderBody(editor) {
       productId: Number(item.productId),
       quantity: Number(item.quantity),
       unitCost: Number(item.unitCost),
-      taxRate: Number(item.taxRate) || 0,
     })),
   };
 }

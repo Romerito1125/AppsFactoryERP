@@ -5,12 +5,12 @@ import {
   ChevronDown,
   Heart,
   LoaderCircle,
-  Minus,
   PackagePlus,
   Plus,
   Search,
   ShoppingCart,
   Star,
+  Tag,
   Trash2,
   UserRound,
   Warehouse,
@@ -27,6 +27,7 @@ const CLIENT_TYPE_LABELS = {
   MAYORISTA: "Mayorista",
   MINORISTA: "Minorista",
 };
+const PRICE_LEVELS = [0, 1, 2, 3];
 const POS_CLIENT_STORAGE_KEY = "mmm-pos-client-id";
 const POS_WAREHOUSE_STORAGE_KEY = "mmm-pos-warehouse-id";
 const POS_SELLER_STORAGE_KEY = "mmm-pos-seller-id";
@@ -44,6 +45,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
   const [selectedWarehouseId, setSelectedWarehouseId] = useState(() => readStoredSelection(POS_WAREHOUSE_STORAGE_KEY));
   const [selectedSellerId, setSelectedSellerId] = useState(() => readStoredSelection(POS_SELLER_STORAGE_KEY));
   const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [selectedPriceLevel, setSelectedPriceLevel] = useState("0");
   const [saleMode, setSaleMode] = useState("CONTADO");
   const [creditDueDate, setCreditDueDate] = useState(defaultDueDate());
   const [cart, setCart] = useState(EMPTY_CART);
@@ -126,8 +128,6 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
 
   useEffect(() => {
     if (loading || !selectedClientId || !products.length) {
-      setOfferPrices({});
-      setOfferPricingLoading(false);
       return undefined;
     }
 
@@ -135,7 +135,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
     const client = clients.find((item) => String(item.id) === String(selectedClientId));
     const items = products
       .map((product) => {
-        const price = priceForClient(product, client);
+        const price = priceForClient(product, client, selectedPriceLevel);
         return price
           ? { productId: Number(product.id), productPriceId: Number(price.id), quantity: 1, unitPrice: Number(price.price) }
           : null;
@@ -143,11 +143,9 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
       .filter(Boolean);
 
     if (!items.length) {
-      setOfferPrices({});
       return undefined;
     }
 
-    setOfferPricingLoading(true);
     apiClient.post("/ofertas/aplicables", { clientId: Number(selectedClientId), items })
       .then((response) => {
         if (cancelled) return;
@@ -158,7 +156,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
         }
         setOfferPrices(nextPrices);
         setCart((current) => current.map((line) => {
-          const basePrice = priceForClient(line.product, client);
+          const basePrice = priceForClient(line.product, client, selectedPriceLevel);
           const effective = nextPrices[String(line.productId)];
           return basePrice
             ? { ...line, productPriceId: basePrice.id, appliedUnitPrice: Number.isFinite(effective) ? effective : null }
@@ -173,7 +171,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
       });
 
     return () => { cancelled = true; };
-  }, [clients, loading, products, selectedClientId]);
+  }, [clients, loading, products, selectedClientId, selectedPriceLevel]);
 
   useEffect(() => {
     const keepAlive = window.setInterval(() => {
@@ -232,21 +230,42 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
 
   function handleClientChange(nextClientId) {
     const nextClient = clients.find((client) => String(client.id) === String(nextClientId));
+    setOfferPricingLoading(products.some((product) => priceForClient(product, nextClient, selectedPriceLevel)));
+    setOfferPrices({});
     setSelectedClientId(String(nextClientId));
     persistSelection(POS_CLIENT_STORAGE_KEY, nextClientId);
     setCart((current) => current.map((item) => {
-      const price = priceForClient(item.product, nextClient);
+      const price = priceForClient(item.product, nextClient, selectedPriceLevel);
       if (!price) return item;
       const available = stockForWarehouse(item.product, selectedWarehouseId, price);
       return { ...item, productPriceId: price.id, quantity: Math.min(item.quantity, available) };
     }).filter((item) => item.quantity > 0));
   }
 
+  function handlePriceLevelChange(nextPriceLevel) {
+    setOfferPricingLoading(products.some((product) => priceForClient(product, selectedClient, nextPriceLevel)));
+    setSelectedPriceLevel(String(nextPriceLevel));
+    setOfferPrices({});
+    setCart((current) =>
+      current.map((item) => {
+        const price = priceForClient(item.product, selectedClient, nextPriceLevel);
+        if (!price) return item;
+        const available = stockForWarehouse(item.product, selectedWarehouseId, price);
+        return {
+          ...item,
+          productPriceId: price.id,
+          quantity: Math.min(item.quantity, available),
+          appliedUnitPrice: null,
+        };
+      }).filter((item) => item.quantity > 0),
+    );
+  }
+
   function handleWarehouseChange(nextWarehouseId) {
     setSelectedWarehouseId(String(nextWarehouseId));
     persistSelection(POS_WAREHOUSE_STORAGE_KEY, nextWarehouseId);
     setCart((current) => current.flatMap((item) => {
-      const price = getPriceById(item.product, item.productPriceId) ?? priceForClient(item.product, null);
+      const price = getPriceById(item.product, item.productPriceId) ?? priceForClient(item.product, null, selectedPriceLevel);
       const available = stockForWarehouse(item.product, nextWarehouseId, price);
       if (available <= 0) return [];
       return [{ ...item, quantity: Math.min(item.quantity, available) }];
@@ -259,9 +278,9 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
   }
 
   function addProduct(product) {
-    const price = priceForClient(product, selectedClient);
+    const price = priceForClient(product, selectedClient, selectedPriceLevel);
     if (!price) {
-      setError(`El producto ${product.name} no tiene un precio activo.`);
+      setError(`El producto ${product.name} no tiene configurado el Precio ${selectedPriceLevel}.`);
       return;
     }
     const available = stockForWarehouse(product, selectedWarehouseId, price);
@@ -284,22 +303,14 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
   }
 
   function updateQuantity(productId, quantity) {
+    const safeQuantity = parseQuantityInput(quantity);
+    if (safeQuantity === null) return;
     setCart((current) => current.flatMap((item) => {
       if (item.productId !== productId) return [item];
-      if (quantity <= 0) return [];
-      const price = getPriceById(item.product, item.productPriceId) ?? priceForClient(item.product, null);
+      const price = getPriceById(item.product, item.productPriceId) ?? priceForClient(item.product, null, selectedPriceLevel);
       const available = stockForWarehouse(item.product, selectedWarehouseId, price);
-      return available > 0 ? [{ ...item, quantity: Math.min(quantity, available) }] : [];
+      return available > 0 ? [{ ...item, quantity: Math.min(safeQuantity, available) }] : [item];
     }));
-  }
-
-  function updatePrice(productId, productPriceId) {
-    setCart((current) => current.map((item) => {
-      if (item.productId !== productId) return item;
-      const price = getPriceById(item.product, productPriceId);
-      const available = stockForWarehouse(item.product, selectedWarehouseId, price);
-      return { ...item, productPriceId: Number(productPriceId), quantity: Math.min(item.quantity, available) };
-    }).filter((item) => item.quantity > 0));
   }
 
   async function resolveBarcode(event) {
@@ -363,6 +374,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
         warehouseId: selectedWarehouseId ? Number(selectedWarehouseId) : undefined,
         source: "POS",
         saleMode,
+        priceLevel: Number(selectedPriceLevel),
         items: cart.map((item) => ({ productId: item.productId, productPriceId: item.productPriceId, warehouseId: selectedWarehouseId ? Number(selectedWarehouseId) : undefined, quantity: item.quantity })),
       });
       if (saleMode === "CONTADO") {
@@ -431,6 +443,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
             selectedSellerId={selectedSellerId}
             selectedAccountId={selectedAccountId}
             selectedWarehouse={selectedWarehouse}
+            selectedPriceLevel={selectedPriceLevel}
             bankAccounts={bankAccounts}
             products={visibleProducts}
             selectedClient={selectedClient}
@@ -452,6 +465,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
             barcodeRef={barcodeRef}
             onClientChange={handleClientChange}
             onWarehouseChange={handleWarehouseChange}
+            onPriceLevelChange={handlePriceLevelChange}
             onSellerChange={handleSellerChange}
             onAccountChange={setSelectedAccountId}
             onSearch={setSearchTerm}
@@ -461,7 +475,6 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
             onAddProduct={addProduct}
             onToggleFavorite={toggleFavorite}
             onUpdateQuantity={updateQuantity}
-            onUpdatePrice={updatePrice}
             onClearCart={() => setCart(EMPTY_CART)}
             onSaleModeChange={setSaleMode}
             onDueDateChange={setCreditDueDate}
@@ -520,6 +533,7 @@ function BillingView({
   selectedSellerId,
   selectedAccountId,
   selectedWarehouse,
+  selectedPriceLevel,
   bankAccounts,
   products,
   selectedClient,
@@ -541,6 +555,7 @@ function BillingView({
   barcodeRef,
   onClientChange,
   onWarehouseChange,
+  onPriceLevelChange,
   onSellerChange,
   onAccountChange,
   onSearch,
@@ -550,7 +565,6 @@ function BillingView({
   onAddProduct,
   onToggleFavorite,
   onUpdateQuantity,
-  onUpdatePrice,
   onClearCart,
   onSaleModeChange,
   onDueDateChange,
@@ -567,6 +581,7 @@ function BillingView({
           <div className="new-pos-context-grid">
             <SearchableSelect label="Cliente" icon={<UserRound size={14} />} value={selectedClientId} onChange={onClientChange} placeholder="Sin cliente" options={[{ value: "", label: "Sin cliente" }, ...clients.map((client) => ({ value: client.id, label: `${clientName(client)} · ${CLIENT_TYPE_LABELS[client.clientType] ?? "Cliente"}` }))]} />
             <SearchableSelect label="Bodega / depósito" icon={<Warehouse size={14} />} value={selectedWarehouseId} onChange={onWarehouseChange} placeholder="Seleccionar depósito" options={warehouses.map((warehouse) => ({ value: warehouse.id, label: `${warehouseName(warehouse)}${warehouse.isDefault ? " · Predeterminado" : ""}` }))} />
+            <SearchableSelect label="Precio general" icon={<Tag size={14} />} value={selectedPriceLevel} onChange={onPriceLevelChange} placeholder="Precio 0" options={PRICE_LEVELS.map((level) => ({ value: level, label: `Precio ${level}` }))} />
             <SearchableSelect label="Vendedor" icon={<UserRound size={14} />} value={selectedSellerId} onChange={onSellerChange} placeholder="Seleccionar vendedor" options={sellers.map((seller) => ({ value: seller.id, label: `${userName(seller)} · ${roleLabel(seller.role)}` }))} />
           </div>
           <div className="new-pos-search-row">
@@ -585,13 +600,13 @@ function BillingView({
 
         <section className="new-pos-product-area" aria-label="Productos para agregar a la venta">
           <div className="new-pos-section-heading"><div><strong>{favoritesOnly ? "Productos favoritos" : "Productos disponibles"}</strong><span>{products.length} resultado{products.length === 1 ? "" : "s"} · selecciona para agregar al ticket</span></div></div>
-          {products.length ? <div className="new-pos-product-grid">{products.map((product) => <ProductCard key={product.id} product={product} favorite={favoriteSet.has(String(product.id))} favoriteLoading={actionLoading === `favorite-${product.id}`} onAdd={onAddProduct} onToggleFavorite={onToggleFavorite} selectedWarehouseId={selectedWarehouse?.id} selectedClient={selectedClient} offerPrice={offerPrices[String(product.id)]} />)}</div> : <EmptyState icon={<Search size={22} />} title="No hay productos para esa búsqueda" detail="Prueba otro nombre, código o limpia el filtro de favoritos." />}
+          {products.length ? <div className="new-pos-product-grid">{products.map((product) => <ProductCard key={product.id} product={product} inCart={cart.some((item) => item.productId === product.id)} favorite={favoriteSet.has(String(product.id))} favoriteLoading={actionLoading === `favorite-${product.id}`} onAdd={onAddProduct} onToggleFavorite={onToggleFavorite} selectedWarehouseId={selectedWarehouse?.id} selectedClient={selectedClient} selectedPriceLevel={selectedPriceLevel} offerPrice={offerPrices[String(product.id)]} />)}</div> : <EmptyState icon={<Search size={22} />} title="No hay productos para esa búsqueda" detail="Prueba otro nombre, código o limpia el filtro de favoritos." />}
         </section>
       </main>
 
       <aside className="new-pos-ticket" aria-label="Ticket de venta">
         <div className="new-pos-ticket-heading"><div><span className="new-pos-eyebrow">TICKET ACTUAL</span><h2><ShoppingCart size={17} /> Venta <span>{cart.length} líneas</span></h2></div>{cart.length > 0 && <button type="button" className="new-pos-icon-button" onClick={onClearCart} title="Limpiar ticket"><Trash2 size={15} /></button>}</div>
-        <div className="new-pos-ticket-lines">{cart.length ? cart.map((item) => <CartLine key={item.productId} item={item} onUpdateQuantity={onUpdateQuantity} onUpdatePrice={onUpdatePrice} />) : <EmptyState icon={<ShoppingCart size={26} />} title="Ticket vacío" detail="Agrega productos desde la búsqueda o escanea un código." />}</div>
+        <div className="new-pos-ticket-lines">{cart.length ? cart.map((item) => <CartLine key={item.productId} item={item} onUpdateQuantity={onUpdateQuantity} selectedPriceLevel={selectedPriceLevel} />) : <EmptyState icon={<ShoppingCart size={26} />} title="Ticket vacío" detail="Agrega productos desde la búsqueda o escanea un código." />}</div>
         <div className="new-pos-ticket-bottom">
           <div className="new-pos-total-lines"><span>Subtotal <b>{formatCurrency(totals.subtotal)}</b></span><span>IVA <b>{formatCurrency(totals.taxes)}</b></span><span className="is-total">Total <strong>{formatCurrency(totals.total)}</strong></span></div>
           <div className="new-pos-payment-heading"><span>Forma de pago</span><div className="new-pos-payment-switch"><button type="button" className={saleMode === "CONTADO" ? "is-active" : ""} onClick={() => onSaleModeChange("CONTADO")}>Contado</button><button type="button" className={saleMode === "CREDITO" ? "is-active" : ""} onClick={() => onSaleModeChange("CREDITO")}>Crédito</button></div></div>
@@ -716,23 +731,24 @@ function SearchableSelect({ label, icon, value, onChange, options, placeholder }
   );
 }
 
-function ProductCard({ product, favorite, favoriteLoading, onAdd, onToggleFavorite, selectedWarehouseId, selectedClient, offerPrice }) {
-  const catalogPrice = priceForClient(product, selectedClient);
-  const price = Number.isFinite(Number(offerPrice)) ? { ...catalogPrice, price: Number(offerPrice), name: "Oferta aplicada" } : catalogPrice;
+function ProductCard({ product, inCart, favorite, favoriteLoading, onAdd, onToggleFavorite, selectedWarehouseId, selectedClient, selectedPriceLevel, offerPrice }) {
+  const catalogPrice = priceForClient(product, selectedClient, selectedPriceLevel);
+  const price = hasAppliedUnitPrice(offerPrice) ? { ...catalogPrice, price: Number(offerPrice), name: "Oferta aplicada" } : catalogPrice;
   const stock = stockForWarehouse(product, selectedWarehouseId, catalogPrice);
   const activePriceCount = activePrices(product).length;
   const outOfStock = stock <= 0;
-  return <article className={`new-pos-product-card ${outOfStock ? "is-out-of-stock" : ""}`}>
+  return <article className={`new-pos-product-card ${outOfStock ? "is-out-of-stock" : ""} ${inCart ? "is-in-cart" : ""}`}>
     <button type="button" className={`new-pos-favorite-button ${favorite ? "is-active" : ""}`} onClick={() => onToggleFavorite(product)} disabled={favoriteLoading} aria-label={favorite ? `Quitar ${product.name} de favoritos` : `Agregar ${product.name} a favoritos`}><Heart size={14} fill={favorite ? "currentColor" : "none"} /></button>
-    <button type="button" className="new-pos-product-main" onClick={() => onAdd(product)} disabled={outOfStock} aria-disabled={outOfStock}><div className="new-pos-product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt="" loading="lazy" /> : <PackagePlus size={22} />}</div><div className="new-pos-product-info"><strong title={product.name}>{product.name}</strong><span>{product.brand || "Sin marca"} · {productCode(product)}</span><div><b>{formatCurrency(price?.price)}</b><em>{activePriceCount} precio{activePriceCount === 1 ? "" : "s"} activo{activePriceCount === 1 ? "" : "s"}</em></div><small className={outOfStock ? "is-empty" : ""}>{outOfStock ? "Sin existencias" : `${stock} disponibles`}</small></div></button>
-    <div className="new-pos-product-actions"><button type="button" className="new-pos-add-button" onClick={() => onAdd(product)} disabled={outOfStock} aria-disabled={outOfStock}>{outOfStock ? "Sin existencias" : <><Plus size={14} /> Agregar</>}</button></div>
+    <button type="button" className="new-pos-product-main" onClick={() => onAdd(product)} disabled={outOfStock || inCart} aria-disabled={outOfStock || inCart}><div className="new-pos-product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt="" loading="lazy" /> : <PackagePlus size={22} />}</div><div className="new-pos-product-info"><strong title={product.name}>{product.name}</strong><span>{product.brand || "Sin marca"} · {productCode(product)}</span><div><b>{formatCurrency(price?.price)}</b><em>{activePriceCount} precio{activePriceCount === 1 ? "" : "s"} activo{activePriceCount === 1 ? "" : "s"}</em></div><small className={outOfStock ? "is-empty" : ""}>{outOfStock ? "Sin existencias" : `${stock} disponibles`}</small></div></button>
+    <div className="new-pos-product-actions"><button type="button" className="new-pos-add-button" onClick={() => onAdd(product)} disabled={outOfStock || inCart} aria-disabled={outOfStock || inCart}>{outOfStock ? "Sin existencias" : inCart ? "En factura" : <><Plus size={14} /> Agregar</>}</button></div>
   </article>;
 }
 
-function CartLine({ item, onUpdateQuantity, onUpdatePrice }) {
-  const catalogPrice = getPriceById(item.product, item.productPriceId) ?? priceForClient(item.product, null);
-  const price = Number.isFinite(Number(item.appliedUnitPrice)) ? { ...catalogPrice, price: Number(item.appliedUnitPrice), name: "Oferta aplicada" } : catalogPrice;
-  return <div className="new-pos-cart-line"><div className="new-pos-cart-line-top"><div><strong>{item.product.name}</strong><span>{productCode(item.product)}</span></div><strong>{formatCurrency(Number(price?.price ?? 0) * item.quantity)}</strong></div><div className="new-pos-cart-line-bottom"><div className="new-pos-quantity"><button type="button" onClick={() => onUpdateQuantity(item.productId, item.quantity - 1)} aria-label="Disminuir"><Minus size={12} /></button><b>{item.quantity}</b><button type="button" onClick={() => onUpdateQuantity(item.productId, item.quantity + 1)} aria-label="Aumentar"><Plus size={12} /></button></div><select value={item.productPriceId} onChange={(event) => onUpdatePrice(item.productId, event.target.value)} aria-label={`Precio de ${item.product.name}`}>{activePrices(item.product).map((option) => <option value={option.id} key={option.id}>{option.name} · {formatCurrency(option.price)}</option>)}</select></div></div>;
+function CartLine({ item, onUpdateQuantity, selectedPriceLevel }) {
+  const [quantityDraft, setQuantityDraft] = useState(String(item.quantity));
+  const catalogPrice = getPriceById(item.product, item.productPriceId) ?? priceForClient(item.product, null, selectedPriceLevel);
+  const price = hasAppliedUnitPrice(item.appliedUnitPrice) ? { ...catalogPrice, price: Number(item.appliedUnitPrice), name: "Oferta aplicada" } : catalogPrice;
+  return <div className="new-pos-cart-line"><div className="new-pos-cart-line-top"><div><strong>{item.product.name}</strong><span>{productCode(item.product)}</span></div><strong>{formatCurrency(Number(price?.price ?? 0) * item.quantity)}</strong></div><div className="new-pos-cart-line-bottom"><label className="new-pos-quantity"><span className="sr-only">Cantidad</span><input type="text" inputMode="decimal" min="0.001" step="any" value={quantityDraft} onChange={(event) => { const rawValue = event.target.value; if (!isQuantityDraft(rawValue)) return; setQuantityDraft(rawValue); const parsedValue = parseQuantityInput(rawValue); if (parsedValue !== null) onUpdateQuantity(item.productId, parsedValue); }} onBlur={() => { const parsedValue = parseQuantityInput(quantityDraft); if (parsedValue === null) setQuantityDraft(String(item.quantity)); else setQuantityDraft(String(parsedValue)); }} aria-label={`Cantidad de ${item.product.name}`} /></label><span className="new-pos-line-price">{priceLabel(getPriceLevel(catalogPrice))}</span></div></div>;
 }
 
 function PosLoadingState() {
@@ -748,19 +764,30 @@ function activePrices(product) {
   return (product?.prices ?? []).filter((price) => price.isActive !== false && (!price.startsAt || new Date(price.startsAt).getTime() <= now) && (!price.endsAt || new Date(price.endsAt).getTime() >= now));
 }
 
-function priceForClient(product, client) {
+function priceForClient(product, _client, priceLevel = "0") {
   const prices = activePrices(product);
   if (!prices.length) return null;
-  const type = client?.clientType;
-  const scored = prices.map((price) => {
-    const name = String(price.name ?? "").toLowerCase();
-    let score = price.isDefault ? 10 : 0;
-    if (type === "MAYORISTA" && /mayor|wholesale|distrib/.test(name)) score += 50;
-    if (type === "MINORISTA" && /minor|retail|detal|consumidor|final/.test(name)) score += 45;
-    if (!type && /minor|retail|detal|consumidor|final/.test(name)) score += 20;
-    return { price, score };
-  });
-  return scored.sort((left, right) => right.score - left.score || Number(left.price.id) - Number(right.price.id))[0]?.price ?? null;
+  return prices.find((price) => getPriceLevel(price) === Number(priceLevel)) ?? null;
+}
+
+function getPriceLevel(price) {
+  if (price?.priceLevel !== null && price?.priceLevel !== undefined)
+    return Number(price.priceLevel);
+  const match = String(price?.name ?? "").match(/^precio\s*([0-3])$/i);
+  return match ? Number(match[1]) : null;
+}
+
+function priceLabel(level) {
+  return level === null || level === undefined ? "Precio predeterminado" : `Precio ${level}`;
+}
+function isQuantityDraft(value) {
+  return /^\d*([.,]\d{0,3})?$/.test(String(value ?? ""));
+}
+function parseQuantityInput(value) {
+  const normalized = String(value ?? "").trim().replace(",", ".");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function getPriceById(product, id) {
@@ -809,11 +836,15 @@ function saleStockQuantity(product, price, quantity) {
 function calculateTotals(cart) {
   return cart.reduce((total, item) => {
     const catalogPrice = getPriceById(item.product, item.productPriceId) ?? priceForClient(item.product, null);
-    const price = Number.isFinite(Number(item.appliedUnitPrice)) ? { ...catalogPrice, price: Number(item.appliedUnitPrice) } : catalogPrice;
+    const price = hasAppliedUnitPrice(item.appliedUnitPrice) ? { ...catalogPrice, price: Number(item.appliedUnitPrice) } : catalogPrice;
     const subtotal = Number(price?.price ?? 0) * Number(item.quantity ?? 0);
     const taxes = subtotal * (Number(item.product.taxRate ?? 0) / 100);
     return { subtotal: total.subtotal + subtotal, taxes: total.taxes + taxes, total: total.total + subtotal + taxes };
   }, { subtotal: 0, taxes: 0, total: 0 });
+}
+
+function hasAppliedUnitPrice(value) {
+  return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
 }
 
 function isSaleableProduct(product) {

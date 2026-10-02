@@ -167,6 +167,7 @@ export class FacturasService {
       const resolvedItems: Array<{
         productId: number;
         productPriceId?: number;
+        priceLevel?: number;
         quantity: number;
         warehouseId?: number;
         unitPrice?: number;
@@ -188,6 +189,7 @@ export class FacturasService {
         resolvedItems.push({
           productId: product.id,
           productPriceId: item.productPriceId,
+          priceLevel: createInvoiceDto.priceLevel,
           quantity: item.quantity,
           warehouseId: item.warehouseId ?? requestedWarehouseId,
           unitPrice: item.unitPrice,
@@ -316,6 +318,7 @@ export class FacturasService {
           product,
           item.productPriceId,
           client.clientType,
+          item.priceLevel,
         );
 
         if (!productPrice) {
@@ -645,12 +648,12 @@ export class FacturasService {
       for (const item of invoiceItems) {
         if (!item.warehouseId || !item.productPrice) continue;
         const stockUnits = this.convertPriceQuantity(
-          item.quantity * Number(item.productPrice.quantity),
+          Number(item.quantity) * Number(item.productPrice.quantity),
           item.productPrice.unit,
           item.product,
           item.product.unit,
         );
-        if (stockUnits === null || !Number.isInteger(stockUnits)) continue;
+        if (stockUnits === null || !Number.isFinite(stockUnits) || stockUnits <= 0) continue;
         await tx.productWarehouse.updateMany({
           where: { productId: item.productId, warehouseId: item.warehouseId },
           data: { quantity: { increment: stockUnits } },
@@ -777,7 +780,7 @@ export class FacturasService {
         item.product.unit,
       );
 
-      if (stockUnits === null || !Number.isInteger(stockUnits)) {
+      if (stockUnits === null || !Number.isFinite(stockUnits) || stockUnits <= 0) {
         throw new BadRequestException(
           `No se puede convertir el empaque del producto ${item.product.name} a inventario`,
         );
@@ -796,7 +799,7 @@ export class FacturasService {
       const selectedWarehouse = warehouses.find((warehouse) => {
         const key = `${item.productId}:${warehouse.warehouseId}`;
         const reserved = reservedByWarehouse.get(key) ?? 0;
-        return warehouse.quantity - reserved >= stockUnits;
+        return Number(warehouse.quantity) - reserved >= stockUnits;
       });
 
       if (!selectedWarehouse) {
@@ -941,6 +944,7 @@ export class FacturasService {
     items: Array<{
       productId: number;
       productPriceId?: number;
+      priceLevel?: number;
       quantity: number;
       warehouseId?: number;
       unitPrice?: number;
@@ -952,6 +956,7 @@ export class FacturasService {
       {
         productId: number;
         productPriceId?: number;
+        priceLevel?: number;
         quantity: number;
         warehouseId?: number;
         unitPrice?: number;
@@ -961,12 +966,13 @@ export class FacturasService {
 
     // Agrupa líneas repetidas solo cuando usan el mismo producto y precio.
     for (const item of items) {
-      const key = `${item.productId}:${item.productPriceId ?? 'default'}:${item.warehouseId ?? 'none'}:${item.unitPrice ?? 'catalog'}`;
+      const key = `${item.productId}:${item.priceLevel ?? item.productPriceId ?? 'default'}:${item.warehouseId ?? 'none'}:${item.unitPrice ?? 'catalog'}`;
       const current = groupedItems.get(key);
 
       groupedItems.set(key, {
         productId: item.productId,
         productPriceId: item.productPriceId,
+        priceLevel: item.priceLevel,
         quantity: (current?.quantity ?? 0) + item.quantity,
         warehouseId: item.warehouseId,
         unitPrice: item.unitPrice,
@@ -1006,7 +1012,7 @@ export class FacturasService {
         item.product,
         item.product.unit,
       );
-      if (stockUnits === null || !Number.isInteger(stockUnits)) {
+      if (stockUnits === null || !Number.isFinite(stockUnits) || stockUnits <= 0) {
         throw new BadRequestException(
           `No se puede convertir el empaque del producto ${item.product.name} a inventario`,
         );
@@ -1104,12 +1110,22 @@ export class FacturasService {
     product: ResolvedInvoiceProduct,
     productPriceId?: number,
     clientType?: 'MAYORISTA' | 'MINORISTA',
+    priceLevel?: number,
   ) {
     const now = new Date();
     const isInSaleWindow = (price: ProductPrice) =>
       price.isActive &&
       (!price.startsAt || price.startsAt <= now) &&
       (!price.endsAt || price.endsAt >= now);
+
+    if (priceLevel !== undefined) {
+      return (
+        product.prices.find(
+          (price) =>
+            this.getPriceLevel(price) === priceLevel && isInSaleWindow(price),
+        ) ?? product.prices.find((price) => price.isDefault && isInSaleWindow(price))
+      );
+    }
 
     if (productPriceId) {
       return product.prices.find(
@@ -1130,6 +1146,14 @@ export class FacturasService {
     return (
       clientPrice ?? product.prices.find((price) => price.isDefault && isInSaleWindow(price))
     );
+  }
+
+  private getPriceLevel(price: ProductPrice) {
+    if (price.priceLevel !== null && price.priceLevel !== undefined) {
+      return price.priceLevel;
+    }
+    const match = price.name.match(/^precio\s*([0-3])$/i);
+    return match ? Number(match[1]) : undefined;
   }
 
   private ensurePositiveId(id: number) {

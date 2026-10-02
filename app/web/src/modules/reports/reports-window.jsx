@@ -46,7 +46,7 @@ export function ReportsWindow({ onClose, onRequestLogin, session }) {
   const totals = useMemo(() => ({
     invoices: filteredInvoices.length,
     sales: sum(filteredInvoices, "total"),
-    iva: filteredInvoices.reduce((total, invoice) => total + Number(invoice.taxAmount ?? invoice.tax ?? 0), 0),
+    iva: filteredInvoices.reduce((total, invoice) => total + invoiceTaxAmount(invoice), 0),
     purchases: sum(filteredPurchases, "total"),
     critical: state.inventory.filter((row) => Number(row.quantity ?? 0) <= Number(row.product?.minimumStock ?? 0)).length,
   }), [filteredInvoices, filteredPurchases, state.inventory]);
@@ -60,7 +60,7 @@ export function ReportsWindow({ onClose, onRequestLogin, session }) {
   }, [filteredInvoices]);
 
   function exportCsv() {
-    const rows = tab === "facturas" ? filteredInvoices.map((row) => ({ fecha: row.createdAt, factura: row.consecutive, origen: row.source, total: row.total })) : tab === "compras" ? filteredPurchases.map((row) => ({ fecha: row.createdAt, compra: row.consecutive, estado: row.status, total: row.total })) : tab === "productos" ? topProducts : state.inventory.map((row) => ({ producto: row.product?.name, existencia: row.quantity, minimo: row.product?.minimumStock, estado: manualSignals[row.productId] ?? semaphore(row) }));
+    const rows = tab === "facturas" ? filteredInvoices.map((row) => ({ fecha: row.createdAt, factura: row.consecutive, origen: row.source, ivaVenta: invoiceTaxLabel(row), ivaPagado: invoiceTaxAmount(row), total: row.total })) : tab === "compras" ? filteredPurchases.map((row) => ({ fecha: row.createdAt, compra: row.consecutive, estado: row.status, total: row.total })) : tab === "productos" ? topProducts : state.inventory.map((row) => ({ producto: row.product?.name, existencia: row.quantity, inventario: row.inventoryValue ?? Number(row.product?.cost ?? 0) * Number(row.quantity ?? 0), minimo: row.product?.minimumStock, estado: manualSignals[row.productId] ?? semaphore(row) }));
     if (!rows.length) return setNotice("No hay datos para exportar.");
     const headers = Object.keys(rows[0]);
     const csv = [headers.join(","), ...rows.map((row) => headers.map((key) => `"${String(row[key] ?? "").replaceAll('"', '""')}"`).join(","))].join("\n");
@@ -84,8 +84,8 @@ export function ReportsWindow({ onClose, onRequestLogin, session }) {
         sections: ["RESUMEN", "FACTURAS", "IVA", "EXOGENAS", "STOCK", "TRASLADOS", "PRODUCTOS"],
         summaryCards: [{ label: "Ventas", value: `$${money(totals.sales)}` }, { label: "Facturas", value: totals.invoices }, { label: "Stock crítico", value: totals.critical }],
         highlights: [{ label: "Periodo", value: periodLabel(period) }],
-        invoiceRows: filteredInvoices.map((row) => ({ fecha: date(row.createdAt), factura: row.consecutive, origen: row.source, total: money(row.total) })),
-        ivaRows: filteredInvoices.map((row) => ({ factura: row.consecutive, iva: money(row.taxAmount ?? row.tax) })),
+        invoiceRows: filteredInvoices.map((row) => ({ fecha: date(row.createdAt), factura: row.consecutive, origen: row.source, ivaVenta: invoiceTaxLabel(row), ivaPagado: money(invoiceTaxAmount(row)), total: money(row.total) })),
+        ivaRows: filteredInvoices.map((row) => ({ factura: row.consecutive, ivaVenta: invoiceTaxLabel(row), iva: money(invoiceTaxAmount(row)) })),
         exogenousRows: filteredInvoices.map((row) => ({ factura: row.consecutive, cliente: row.client?.identification ?? "—", total: money(row.total) })),
         lowStockRows: state.inventory.filter((row) => semaphore(row) === "Rojo").map((row) => ({ producto: row.product?.name, existencia: row.quantity })),
         transferRows: state.transfers.map((row) => ({ ticket: row.ticketNumber ?? row.id, fecha: date(row.createdAt) })),
@@ -115,14 +115,14 @@ export function ReportsWindow({ onClose, onRequestLogin, session }) {
 
 function ReportBody({ tab, state, totals, topProducts, period, manualSignals, onManualSignal }) {
   if (tab === "resumen") return <div className="p1-report-grid"><ReportKpi label="Ventas" value={`$${money(totals.sales)}`} /><ReportKpi label="Facturas" value={totals.invoices} /><ReportKpi label="IVA" value={`$${money(totals.iva)}`} /><ReportKpi label="Compras" value={`$${money(totals.purchases)}`} /><ReportKpi label="Stock crítico" value={totals.critical} /><section className="p1-card p1-report-wide"><div className="p1-card-title"><div><strong>Biblioteca incluida</strong><span>Facturación, inventario, IVA, compras, clientes, top de productos y traslados.</span></div></div><div className="p1-report-highlights"><span>• Facturas filtrables por origen</span><span>• Stock crítico y semáforo</span><span>• Movimientos diarios / cada 3 días</span><span>• Exportación PDF y CSV</span></div></section></div>;
-  if (tab === "facturas") return <DataTable headers={["Fecha", "Factura", "Origen", "Cliente", "Total"]} rows={state.invoices.filter((row) => inPeriod(row.createdAt, period)).map((row) => [date(row.createdAt), row.consecutive, row.source, row.client ? `${row.client.firstName ?? ""} ${row.client.lastName ?? ""}` : "—", `$${money(row.total)}`])} />;
+  if (tab === "facturas") return <DataTable headers={["Fecha", "Factura", "Origen", "Cliente", "IVA venta", "IVA pagado", "Total"]} rows={state.invoices.filter((row) => inPeriod(row.createdAt, period)).map((row) => [date(row.createdAt), row.consecutive, row.source, row.client ? `${row.client.firstName ?? ""} ${row.client.lastName ?? ""}` : "—", invoiceTaxLabel(row), `$${money(invoiceTaxAmount(row))}`, `$${money(row.total)}`])} />;
   if (tab === "compras") return <DataTable headers={["Fecha", "Orden", "Estado", "Bodega", "Total"]} rows={state.purchases.filter((row) => inPeriod(row.createdAt, period)).map((row) => [date(row.createdAt), row.consecutive, row.status, row.warehouse?.location ?? "—", `$${money(row.total)}`])} />;
   if (tab === "clientes") return <DataTable headers={["Identificación", "Cliente", "Tipo", "Estado"]} rows={state.clients.map((row) => [row.identification, `${row.firstName ?? ""} ${row.lastName ?? ""}`, row.clientType ?? row.type ?? "—", row.isActive ? "Activo" : "Inactivo"]) } />;
   if (tab === "productos") return <DataTable headers={["Producto", "Unidades vendidas", "Total"]} rows={topProducts.map((row) => [row.name, row.quantity, `$${money(row.total)}`])} />;
   if (tab === "traslados") return <DataTable headers={["Fecha", "Ticket", "Estado", "Origen", "Destino"]} rows={state.transfers.map((row) => [date(row.createdAt), row.ticketNumber ?? row.id, row.status ?? "Registrado", row.fromWarehouse?.location ?? row.sourceWarehouse?.location ?? "—", row.toWarehouse?.location ?? row.destinationWarehouse?.location ?? "—"]) } />;
-  if (tab === "iva") return <DataTable headers={["Fecha", "Factura", "Base", "IVA", "Total"]} rows={state.invoices.filter((row) => inPeriod(row.createdAt, period)).map((row) => [date(row.createdAt), row.consecutive, `$${money(row.subtotal)}`, `$${money(row.taxAmount ?? row.tax)}`, `$${money(row.total)}`])} />;
+  if (tab === "iva") return <DataTable headers={["Fecha", "Factura", "IVA venta", "Base", "IVA pagado", "Total"]} rows={state.invoices.filter((row) => inPeriod(row.createdAt, period)).map((row) => [date(row.createdAt), row.consecutive, invoiceTaxLabel(row), `$${money(row.subtotal)}`, `$${money(invoiceTaxAmount(row))}`, `$${money(row.total)}`])} />;
   if (tab === "exogena") return <DataTable headers={["Factura", "Identificación", "Origen", "Total"]} rows={state.invoices.filter((row) => inPeriod(row.createdAt, period)).map((row) => [row.consecutive, row.client?.identification ?? "—", row.source, `$${money(row.total)}`])} />;
-  return <section className="p1-card p1-report-table-card"><div className="p1-card-title"><div><strong>Existencias y semáforo manual</strong><span>Haz clic en el estado para marcarlo y conservarlo en los reportes de esta estación.</span></div></div><div className="p1-simple-table"><div className="p1-simple-head"><span>Producto</span><span>Existencia</span><span>Mínimo</span><span>Estado</span></div>{state.inventory.length ? state.inventory.map((row) => { const signal = manualSignals[row.productId] ?? semaphore(row); return <div className="p1-simple-row" key={`${row.productId}-${row.warehouseId}`}><span>{row.product?.name ?? `Producto #${row.productId}`}</span><span>{row.quantity}</span><span>{row.product?.minimumStock ?? 0}</span><span><button type="button" className={`p1-signal-button ${signal.toLowerCase()}`} onClick={() => onManualSignal(row.productId)}>{signal}</button></span></div>; }) : <div className="p1-state">No hay existencias para este periodo.</div>}</div></section>;
+  return <section className="p1-card p1-report-table-card"><div className="p1-card-title"><div><strong>Existencias y semáforo manual</strong><span>Se muestra el valor total del inventario con el costo de adquisición incluido.</span></div></div><div className="p1-simple-table"><div className="p1-simple-head"><span>Producto</span><span>Existencia</span><span>Inventario total</span><span>Estado</span></div>{state.inventory.length ? state.inventory.map((row) => { const signal = manualSignals[row.productId] ?? semaphore(row); return <div className="p1-simple-row" key={`${row.productId}-${row.warehouseId}`}><span>{row.product?.name ?? `Producto #${row.productId}`}</span><span>{row.quantity}</span><span>${money(row.inventoryValue)}</span><span><button type="button" className={`p1-signal-button ${signal.toLowerCase()}`} onClick={() => onManualSignal(row.productId)}>{signal}</button></span></div>; }) : <div className="p1-state">No hay existencias para este periodo.</div>}</div></section>;
 }
 
 function ReportKpi({ label, value }) { return <article className="p1-kpi blue"><span>{label}</span><strong>{value}</strong></article>; }
@@ -133,6 +133,16 @@ function periodLabel(period) { return { DIARIO: "hoy", TRES_DIAS: "ultimos 3 dia
 function sum(rows, key) { return rows.reduce((total, row) => total + Number(row[key] ?? 0), 0); }
 function money(value) { return Number(value ?? 0).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function date(value) { return value ? new Date(value).toLocaleDateString("es-CO") : "-"; }
+function invoiceTaxAmount(invoice) {
+  return Number(invoice?.taxes ?? invoice?.taxAmount ?? invoice?.tax ?? 0);
+}
+function invoiceTaxLabel(invoice) {
+  const rates = [...new Set((invoice.items ?? []).map((item) => Number(item.taxRate ?? item.product?.taxRate ?? 0)))];
+  if (rates.length) return rates.map((rate) => `${money(rate)}%`).join(" / ");
+  const subtotal = Number(invoice?.subtotal ?? 0);
+  const tax = invoiceTaxAmount(invoice);
+  return subtotal > 0 ? `${money((tax / subtotal) * 100)}%` : "0%";
+}
 function semaphore(row) { const quantity = Number(row.quantity ?? 0); const minimum = Number(row.product?.minimumStock ?? 0); const maximum = Number(row.product?.maximumStock ?? 0); if (quantity <= minimum) return "Rojo"; if (maximum && quantity >= maximum) return "Amarillo"; return "Verde"; }
 function readManualSignals() { try { return JSON.parse(localStorage.getItem("mmm-manual-report-signals") ?? "{}"); } catch { return {}; } }
 function downloadBlob(content, filename, type) {
@@ -157,17 +167,20 @@ function buildReportPdfLines({ tab, period, state, filteredInvoices, filteredPur
   if (tab === "resumen") {
     lines.push(`Ventas: $${money(totals.sales)}`, `Facturas: ${totals.invoices}`, `IVA: $${money(totals.iva)}`, `Compras: $${money(totals.purchases)}`, `Stock critico: ${totals.critical}`);
   } else if (tab === "facturas") {
-    lines.push("Fecha | Factura | Origen | Total");
-    filteredInvoices.slice(0, 45).forEach((row) => lines.push(`${date(row.createdAt)} | ${row.consecutive} | ${row.source} | $${money(row.total)}`));
+    lines.push("Fecha | Factura | Origen | IVA venta | IVA pagado | Total");
+    filteredInvoices.slice(0, 45).forEach((row) => lines.push(`${date(row.createdAt)} | ${row.consecutive} | ${row.source} | ${invoiceTaxLabel(row)} | $${money(invoiceTaxAmount(row))} | $${money(row.total)}`));
   } else if (tab === "compras") {
     lines.push("Fecha | Orden | Estado | Bodega | Total");
     filteredPurchases.slice(0, 45).forEach((row) => lines.push(`${date(row.createdAt)} | ${row.consecutive} | ${row.status} | ${row.warehouse?.location ?? "-"} | $${money(row.total)}`));
   } else if (tab === "productos") {
     lines.push("Producto | Unidades | Total");
     topProducts.slice(0, 45).forEach((row) => lines.push(`${row.name} | ${row.quantity} | $${money(row.total)}`));
+  } else if (tab === "iva") {
+    lines.push("Fecha | Factura | IVA venta | Base | IVA pagado | Total");
+    filteredInvoices.slice(0, 45).forEach((row) => lines.push(`${date(row.createdAt)} | ${row.consecutive} | ${invoiceTaxLabel(row)} | $${money(row.subtotal)} | $${money(invoiceTaxAmount(row))} | $${money(row.total)}`));
   } else {
-    lines.push("Producto | Existencia | Minimo | Estado");
-    state.inventory.slice(0, 45).forEach((row) => lines.push(`${row.product?.name ?? `Producto #${row.productId}`} | ${row.quantity} | ${row.product?.minimumStock ?? 0} | ${manualSignals[row.productId] ?? semaphore(row)}`));
+    lines.push("Producto | Existencia | Inventario total | Estado");
+    state.inventory.slice(0, 45).forEach((row) => lines.push(`${row.product?.name ?? `Producto #${row.productId}`} | ${row.quantity} | $${money(row.inventoryValue)} | ${manualSignals[row.productId] ?? semaphore(row)}`));
   }
   if (lines.length > 49) lines.push("... mostrando las primeras 45 filas");
   return lines;
@@ -203,6 +216,7 @@ function normalizeInventoryRows(products) {
       productId: product.id,
       warehouseId: warehouseRow.warehouseId ?? warehouseRow.warehouse?.id ?? null,
       quantity: warehouseRow.quantity ?? warehouseRow.stock ?? 0,
+      inventoryValue: warehouseRow.inventoryValue ?? product.inventoryValue ?? 0,
       product: {
         ...product,
         minimumStock: product.minimumStock ?? 0,
