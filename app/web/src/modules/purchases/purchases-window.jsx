@@ -876,7 +876,7 @@ function PurchaseDocumentPanel({
           <thead>
             <tr>
               <th>Código</th>
-              <th>Descripción</th>
+              <th>Producto</th>
               {isOrder && <th>Existencia</th>}
               <th>Cantidad</th>
               <th>Und</th>
@@ -1296,7 +1296,11 @@ function PurchaseLookupDialog({
                 <th>Código</th>
                 {type !== "orders" && (
                   <th>
-                    {type === "warehouses" ? "Nombre del depósito" : "Descripción"}
+                    {type === "warehouses"
+                      ? "Nombre del depósito"
+                      : type === "providers"
+                        ? "Nombre"
+                        : "Producto"}
                   </th>
                 )}
                 {type === "providers" && (
@@ -1431,7 +1435,7 @@ function PurchaseLookupDialog({
               id="purchase-lookup-search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Código, descripción o referencia"
+              placeholder="Código, nombre o referencia"
             />
           </div>
           <button type="button" onClick={onClose}>
@@ -1608,7 +1612,7 @@ function QuickPurchaseProductDialog({
           <label><span>Precio inicial</span><input type="number" min="0.01" step="0.01" value={draft.price} onChange={(event) => update("price", event.target.value)} /></label>
           <label><span>IVA venta %</span><input type="number" min="0" step="0.01" value={draft.taxRate} onChange={(event) => update("taxRate", event.target.value)} /></label>
           <label><span>Código de barras</span><input value={draft.barcode} onChange={(event) => update("barcode", event.target.value)} /></label>
-          <label><span>Descripción</span><input value={draft.description} onChange={(event) => update("description", event.target.value)} /></label>
+          <label><span>Descripción (opcional)</span><input value={draft.description} onChange={(event) => update("description", event.target.value)} /></label>
           <label><span>Unidades por paquete</span><input type="number" min="1" value={draft.unitsPerPackage} onChange={(event) => update("unitsPerPackage", event.target.value)} /></label>
           <label><span>Paquetes por caja</span><input type="number" min="1" value={draft.packagesPerBox} onChange={(event) => update("packagesPerBox", event.target.value)} /></label>
         </div>

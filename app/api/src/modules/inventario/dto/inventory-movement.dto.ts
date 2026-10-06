@@ -1,6 +1,8 @@
 import { Type } from 'class-transformer';
 import { UnitType } from '@prisma/client';
 import {
+  ArrayMinSize,
+  IsArray,
   IsEnum,
   IsInt,
   IsNumber,
@@ -10,6 +12,7 @@ import {
   Min,
   MinLength,
   Validate,
+  ValidateNested,
 } from 'class-validator';
 import { HasProductIdentifierConstraint } from '../../../shared/products/validators/has-product-identifier.validator';
 
@@ -86,6 +89,45 @@ export class InventoryTransferDto extends InventoryExitDto {
   @IsInt()
   @IsPositive()
   toWarehouseId: number;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(3)
+  supportNote?: string;
+}
+
+export class InventoryTransferItemDto {
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  productId: number;
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 3 })
+  @IsPositive()
+  quantity: number;
+
+  @IsOptional()
+  @IsEnum(UnitType)
+  unit?: UnitType;
+}
+
+export class InventoryTransferBatchDto {
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  fromWarehouseId: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  toWarehouseId: number;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => InventoryTransferItemDto)
+  items: InventoryTransferItemDto[];
 
   @IsOptional()
   @IsString()

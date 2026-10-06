@@ -30,7 +30,7 @@ export const filesMenuItems = [
   { label: "Productos", action: "products", permission: "PRODUCTS_VIEW" },
   { label: "Tipos de producto", action: "product-types", permission: "PRODUCTS_VIEW" },
   { label: "Bodegas", action: "warehouses", permission: "PRODUCTS_VIEW" },
-  { label: "Traslados de inventario", action: "inventory-transfers", permission: "INVENTORY_EDIT" },
+  { label: "Operaciones de inventario", action: "inventory-transfers", permission: "INVENTORY_EDIT" },
   { label: "Retenciones", action: "retentions", permission: "RETENTIONS_VIEW" },
   { label: "Usuarios", action: "users", permission: "USERS_MANAGE" },
   { label: "Acciones del sistema", action: "audit-log", permission: "USERS_MANAGE" },

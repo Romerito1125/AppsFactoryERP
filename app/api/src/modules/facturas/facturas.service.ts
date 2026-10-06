@@ -142,6 +142,9 @@ export class FacturasService {
         throw new NotFoundException('Cliente no encontrado');
       }
 
+      const effectivePriceLevel =
+        createInvoiceDto.priceLevel ?? client.priceLevel ?? 0;
+
       if (
         createInvoiceDto.warehouseId &&
         actorWarehouseId !== undefined &&
@@ -189,7 +192,7 @@ export class FacturasService {
         resolvedItems.push({
           productId: product.id,
           productPriceId: item.productPriceId,
-          priceLevel: createInvoiceDto.priceLevel,
+          priceLevel: effectivePriceLevel,
           quantity: item.quantity,
           warehouseId: item.warehouseId ?? requestedWarehouseId,
           unitPrice: item.unitPrice,

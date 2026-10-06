@@ -22,6 +22,7 @@ import {
   InventoryEntryDto,
   InventoryExitDto,
   InventoryTransferDto,
+  InventoryTransferBatchDto,
 } from './dto/inventory-movement.dto';
 import { ListInventoryQueryDto } from './dto/list-inventory-query.dto';
 import { InventarioService } from './inventario.service';
@@ -69,6 +70,12 @@ export class InventarioController {
   @Permissions('INVENTORY_EDIT')
   transfer(@Body() dto: InventoryTransferDto, @Req() request: AuthRequest) {
     return this.inventarioService.transfer(dto, request.user);
+  }
+
+  @Post('traslado-multiple')
+  @Permissions('INVENTORY_EDIT')
+  transferBatch(@Body() dto: InventoryTransferBatchDto, @Req() request: AuthRequest) {
+    return this.inventarioService.transferBatch(dto, request.user);
   }
 
   @Post('ajuste')

@@ -179,7 +179,7 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
       providers.filter((provider) =>
         (statusFilter === "todos" ||
           (statusFilter === "activos" ? provider.active : !provider.active)) &&
-        `${provider.id} ${provider.description}`
+        `${provider.id} ${provider.name} ${provider.description}`
           .toLowerCase()
           .includes(searchTerm.toLowerCase()),
       ),
@@ -383,7 +383,7 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
             >
               <div className="provider-table-head" role="row">
                 <span>ID Fiscal</span>
-                <span>Descripción</span>
+                <span>Nombre</span>
               </div>
               {filteredProviders.map((provider) => (
                 <button
@@ -398,7 +398,7 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
                   onClick={() => selectProvider(provider.recordId)}
                 >
                   <span>{provider.id}</span>
-                  <span>{provider.description}</span>
+                  <span>{provider.name || provider.description}</span>
                 </button>
               ))}
               <div className="provider-empty-rows" aria-hidden="true">
@@ -450,10 +450,10 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
                 </>
               ) : (
                 <EditableSummaryField
-                  label="Descripción"
-                  value={shownProvider?.description ?? ""}
+                  label="Nombre"
+                  value={shownProvider?.name ?? ""}
                   editing={editing && canEdit}
-                  onChange={(value) => updateDraft("description", value)}
+                  onChange={(value) => updateDraft("name", value)}
                 />
               )}
               <div className="summary-field summary-type">
@@ -685,13 +685,20 @@ function ProviderDetails({
     return (
       <div className="provider-tab-panel data-panel">
         <ProviderDataTable
-          caption={`Productos asociados a ${provider.description}`}
-          columns={["Código", "Descripción", "Documento"]}
+          caption={`Productos asociados a ${provider.name || provider.description}`}
+          columns={["Código", "Producto", "Stock", "Mínimo", "Máximo", "Semáforo"]}
           rows={providerProducts.map((row) => [
             row.barcodes?.find((barcode) => barcode.isPrimary)?.code ??
               String(row.id),
             row.name,
-            row.primaryProvider?.taxId ?? "—",
+            formatProviderStock(row.totalStock ?? row.stock),
+            formatProviderStock(row.minimumStock),
+            row.maximumStock === null || row.maximumStock === undefined
+              ? "—"
+              : formatProviderStock(row.maximumStock),
+            <span className={`provider-stock-signal ${providerStockTone(row)}`}>
+              <span aria-hidden="true" /> {providerStockLabel(row)}
+            </span>,
           ])}
           rowKeys={providerProducts.map((row) => row.id)}
           onRowDoubleClick={(index) =>
@@ -844,7 +851,7 @@ function ProviderDetails({
         error={fieldErrors?.name}
       />
       <DetailField
-        label="Descripción"
+        label="Observaciones (opcional)"
         value={provider.description}
         wide
         editing={editing}
@@ -928,6 +935,34 @@ function ProviderDetails({
       />
     </div>
   );
+}
+
+function formatProviderStock(value) {
+  const amount = Number(value ?? 0);
+  return Number.isInteger(amount) ? String(amount) : amount.toFixed(3);
+}
+
+function providerStockValue(product) {
+  return Number(product?.totalStock ?? product?.stock ?? (product?.warehouses ?? []).reduce(
+    (sum, row) => sum + Number(row.quantity ?? 0),
+    0,
+  ));
+}
+
+function providerStockTone(product) {
+  const stock = providerStockValue(product);
+  const minimum = Number(product?.minimumStock ?? 0);
+  const maximum = product?.maximumStock === null || product?.maximumStock === undefined
+    ? null
+    : Number(product.maximumStock);
+  if (stock <= minimum) return "is-low";
+  if (maximum !== null && stock >= maximum) return "is-limit";
+  return "is-ok";
+}
+
+function providerStockLabel(product) {
+  const tone = providerStockTone(product);
+  return tone === "is-low" ? "Bajo" : tone === "is-limit" ? "Límite" : "Normal";
 }
 
 function ProviderDataTable({

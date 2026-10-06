@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleX,
+  Copy,
   FileText,
   LoaderCircle,
   Plus,
@@ -24,6 +25,9 @@ const emptyClient = {
   lastName: "",
   phone: "",
   address: "",
+  neighborhood: "",
+  referencePoint: "",
+  priceLevel: 0,
   clientType: "MINORISTA",
   email: "",
   password: "",
@@ -188,7 +192,10 @@ export function ClientsWindow({ onClose, onRequestLogin, canAccess }) {
       lastName: draft.lastName.trim(),
       phone: draft.phone.trim() || undefined,
       address: draft.address.trim() || undefined,
+      neighborhood: draft.neighborhood.trim() || undefined,
+      referencePoint: draft.referencePoint.trim() || undefined,
       clientType: draft.clientType,
+      priceLevel: Number(draft.priceLevel ?? 0),
       email: draft.email.trim() || undefined,
       password: draft.password || undefined,
       isActive: Boolean(draft.isActive),
@@ -318,7 +325,7 @@ export function ClientsWindow({ onClose, onRequestLogin, canAccess }) {
           >
             <div className="provider-table-head" role="row">
               <span>Identificación</span>
-              <span>Descripción</span>
+              <span>Nombre</span>
             </div>
             {filteredClients.map((client) => (
               <button
@@ -368,7 +375,7 @@ export function ClientsWindow({ onClose, onRequestLogin, canAccess }) {
               error={fieldErrors.identification}
             />
             <SummaryField
-              label="Descripción"
+              label="Nombre"
               value={`${draft.firstName} ${draft.lastName}`}
             />
             <div className="summary-field summary-type">
@@ -562,6 +569,29 @@ function ClientMain({ client, editing, onChange, fieldErrors }) {
         wide
       />
       <EditableField
+        label="Barrio"
+        value={client.neighborhood}
+        editing={editing}
+        onChange={(value) => onChange("neighborhood", value)}
+        wide
+      />
+      <EditableField
+        label="Punto de referencia"
+        value={client.referencePoint}
+        editing={editing}
+        onChange={(value) => onChange("referencePoint", value)}
+        wide
+      />
+      <EditableField
+        label="Precio de venta predeterminado"
+        value={String(client.priceLevel ?? 0)}
+        editing={editing}
+        onChange={(value) => onChange("priceLevel", value)}
+        select
+        options={["0", "1", "2", "3"]}
+        optionLabels={["Precio 0", "Precio 1", "Precio 2", "Precio 3"]}
+      />
+      <EditableField
         label="Contraseña"
         value={client.password}
         editing={editing}
@@ -572,11 +602,7 @@ function ClientMain({ client, editing, onChange, fieldErrors }) {
         className="client-password-field"
         wide
       />
-      <EditableField
-        label="Código referido"
-        value={client.referralCode}
-        editing={false}
-      />
+      <ReferralLinkField code={client.referralCode} />
       <EditableField
         label="Nivel referido"
         value={String(client.referralLevel ?? 0)}
@@ -588,6 +614,28 @@ function ClientMain({ client, editing, onChange, fieldErrors }) {
           vacía para conservar la actual.
         </p>
       )}
+    </div>
+  );
+}
+
+function ReferralLinkField({ code }) {
+  const link = getReferralLink(code);
+
+  async function copyLink() {
+    if (!link || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(link);
+  }
+
+  return (
+    <div className="detail-field wide-field client-referral-link-field">
+      <label>Link de referido</label>
+      <div className="client-referral-link-control">
+        <input value={link} readOnly placeholder="Se genera al guardar el cliente" />
+        <button type="button" onClick={copyLink} disabled={!link} title="Copiar link de referido" aria-label="Copiar link de referido">
+          <Copy size={14} />
+        </button>
+      </div>
+      <small>Comparte este enlace para conservar la relación de referido al registrarse.</small>
     </div>
   );
 }
@@ -646,6 +694,7 @@ function EditableField({
   onChange,
   select = false,
   options = [],
+  optionLabels = options,
   wide = false,
   error = "",
   type = "text",
@@ -668,8 +717,10 @@ function EditableField({
             title={error || undefined}
             onChange={(event) => onChange(event.target.value)}
           >
-            {options.map((option) => (
-              <option key={option}>{option}</option>
+            {options.map((option, index) => (
+              <option key={option} value={option}>
+                {optionLabels[index] ?? option}
+              </option>
             ))}
           </select>
         ) : (
@@ -744,6 +795,12 @@ function SummaryField({ label, value }) {
   );
 }
 
+function getReferralLink(code) {
+  const normalizedCode = String(code ?? "").trim();
+  if (!normalizedCode) return "";
+  return `mundotiendaapp://registro?ref=${encodeURIComponent(normalizedCode)}`;
+}
+
 function toDraft(client) {
   return {
     ...emptyClient,
@@ -768,6 +825,9 @@ function hasClientDraftChanges(draft, selectedClient) {
     "lastName",
     "phone",
     "address",
+    "neighborhood",
+    "referencePoint",
+    "priceLevel",
     "clientType",
     "email",
     "password",

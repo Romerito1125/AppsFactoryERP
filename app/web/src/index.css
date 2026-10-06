@@ -1287,6 +1287,21 @@ button {
   color: #fff;
   background: #1972a4;
 }
+.provider-stock-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 700;
+}
+.provider-stock-signal > span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.provider-stock-signal.is-low { color: #b24343; }
+.provider-stock-signal.is-limit { color: #a26a17; }
+.provider-stock-signal.is-ok { color: #2d8a62; }
 
 .financial-panel {
   display: flex;
@@ -1353,7 +1368,7 @@ button {
   background: rgba(255, 255, 255, 0.15);
 }
 .product-window .primary-tabs {
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(3, 1fr);
 }
 .product-window .provider-table-head,
 .product-window .provider-table-row {
@@ -1546,6 +1561,106 @@ button {
 .product-window .prices-data-table-wrap .provider-data-table th {
   padding: 7px 6px;
   vertical-align: middle;
+}
+.product-main-composite {
+  display: grid;
+  flex: 1;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 1px 16px;
+}
+.product-main-composite > .product-main-details {
+  overflow: visible;
+  padding-bottom: 4px;
+}
+.product-price-bulk-wrap {
+  overflow-x: auto;
+  background: #fff;
+  border: 1px solid #9db1bf;
+  border-radius: 3px;
+}
+.product-price-bulk-table {
+  width: 100%;
+  min-width: 1040px;
+  table-layout: fixed;
+  border-collapse: collapse;
+  color: #314f63;
+  font-size: 10px;
+}
+.product-price-bulk-table th,
+.product-price-bulk-table td {
+  min-width: 0;
+  padding: 6px 5px;
+  border-right: 1px solid #d5e0e6;
+  border-bottom: 1px solid #d5e0e6;
+  vertical-align: middle;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.product-price-bulk-table th {
+  color: #2d536d;
+  background: #dce8ee;
+  font-weight: 700;
+  text-align: left;
+}
+.product-price-bulk-table tbody tr:nth-child(even) {
+  background: #f5f9fb;
+}
+.product-price-bulk-table input[type="text"],
+.product-price-bulk-table select {
+  width: 100%;
+  min-width: 0;
+  min-height: 27px;
+  padding: 4px 5px;
+  color: #294b60;
+  background: #fff;
+  border: 1px solid #8eafc0;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.product-price-bulk-table input[type="text"]:focus,
+.product-price-bulk-table select:focus {
+  border-color: #2f79ac;
+  outline: 0;
+  box-shadow: 0 0 0 2px rgba(47, 121, 172, 0.12);
+}
+.product-price-bulk-table .price-level-cell {
+  color: #1d536f;
+  font-weight: 700;
+}
+.product-price-bulk-table .price-input-preview {
+  display: grid;
+  gap: 2px;
+}
+.product-price-bulk-table .price-input-preview strong {
+  color: #245e7c;
+  font-size: 10px;
+}
+.product-price-bulk-table .price-input-preview small {
+  color: #718797;
+  font-size: 9px;
+}
+.product-price-bulk-table .price-default-cell {
+  text-align: center;
+}
+.product-price-bulk-table input[type="radio"] {
+  width: 15px;
+  height: 15px;
+  accent-color: #2f79ac;
+}
+.product-price-bulk-table .compact-check {
+  gap: 3px;
+  white-space: nowrap;
+}
+.product-price-bulk-table .compact-check input {
+  width: 14px;
+  height: 14px;
+}
+.price-bulk-hint {
+  margin-top: 0;
+  line-height: 1.35;
 }
 .product-window .detail-control.is-accent {
   color: #19445f;
@@ -2860,6 +2975,34 @@ button {
 .client-main-details .client-password-field {
   margin-top: 5px;
 }
+.client-referral-link-control {
+  display: flex;
+  gap: 5px;
+}
+.client-referral-link-control input {
+  min-width: 0;
+  flex: 1;
+}
+.client-referral-link-control button {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  color: #2d6e8d;
+  background: #e8f2f6;
+  border: 1px solid #9ab6c4;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.client-referral-link-control button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.client-referral-link-field small {
+  display: block;
+  margin-top: 3px;
+  color: #718894;
+  font-size: 9px;
+}
 .client-change-actions,
 .user-change-actions,
 .provider-change-actions,
@@ -3317,6 +3460,19 @@ button {
   .warehouse-review-backdrop { position: static; display: block; padding: 0; background: #fff; }
   .warehouse-review-dialog { width: 100%; max-height: none; border: 0; box-shadow: none; }
   .warehouse-review-dialog > footer { display: none; }
+}
+
+/* Facturación es el espacio operativo principal y usa todo el lienzo disponible. */
+.sales-window.sales-window-billing {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  transform: none !important;
+  border-radius: 0;
 }
 
 @media (max-width: 840px) {
@@ -6663,6 +6819,36 @@ button {
   color: #6d8592;
   font-size: 11px;
 }
+.inventory-operation-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 5px;
+  padding: 3px;
+  background: #dce8ee;
+  border: 1px solid #b8cbd5;
+  border-radius: 3px;
+}
+.inventory-operation-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 29px;
+  padding: 4px 9px;
+  color: #557181;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.inventory-operation-tabs button.is-active {
+  color: #185a79;
+  background: #fff;
+  border-color: #8eafbe;
+  box-shadow: 0 1px 2px rgba(29, 75, 99, .12);
+}
+.inventory-operation-tabs button:disabled { opacity: .6; cursor: wait; }
 .inventory-transfer-refresh,
 .inventory-transfer-submit,
 .inventory-transfer-view {
@@ -6786,6 +6972,56 @@ button {
   font-size: 9px;
   line-height: 1.35;
 }
+.inventory-transfer-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 29px;
+  color: #246984;
+  background: #e5f1f5;
+  border: 1px solid #94b8c7;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.inventory-transfer-add:disabled { opacity: .55; cursor: not-allowed; }
+.inventory-operation-items {
+  display: grid;
+  gap: 4px;
+  max-height: 126px;
+  overflow: auto;
+  padding: 7px;
+  background: #eef6f9;
+  border: 1px solid #b9d0da;
+  border-radius: 3px;
+}
+.inventory-operation-items > strong { color: #2e647b; font-size: 10px; }
+.inventory-operation-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 22px;
+  align-items: center;
+  gap: 5px;
+  min-height: 25px;
+  color: #496b7b;
+  font-size: 10px;
+}
+.inventory-operation-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inventory-operation-item b { color: #2a617c; }
+.inventory-operation-item button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: #9a4b4b;
+  background: #fff;
+  border: 1px solid #d1a6a6;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.inventory-transfer-stock-card.is-warning { background: #fff8e8; border-color: #e5ca8b; }
+.inventory-ticket-line { display: block; color: #8096a0; font-size: 8px; }
 .inventory-transfer-submit {
   margin-top: auto;
   min-height: 32px;

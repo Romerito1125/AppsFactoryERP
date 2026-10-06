@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  BadRequestException,
   Injectable,
   NotFoundException,
   UnauthorizedException,
@@ -27,6 +28,16 @@ export class AuthService {
     );
 
     const user = await this.prisma.$transaction(async (tx) => {
+      const normalizedReferralCode = registerDto.referralCode?.trim().toUpperCase();
+      const referrer = normalizedReferralCode
+        ? await tx.client.findUnique({
+            where: { referralCode: normalizedReferralCode },
+          })
+        : null;
+
+      if (normalizedReferralCode && (!referrer || !referrer.isActive)) {
+        throw new BadRequestException('El enlace de referido no es válido o está inactivo.');
+      }
       const client = await tx.client.create({
         data: {
           identification: registerDto.identification,
@@ -47,6 +58,16 @@ export class AuthService {
         where: { id: client.id },
         data: { referralCode, referralLevel: 0 },
       });
+
+      if (referrer) {
+        await tx.referral.create({
+          data: {
+            referrerClientId: referrer.id,
+            referredClientId: client.id,
+            codeUsed: normalizedReferralCode!,
+          },
+        });
+      }
 
       return tx.user.create({
         data: {

@@ -398,7 +398,7 @@ function BankAccountsPanel({
         <section className="bank-account-list">
           <div className="bank-tabs">
             <span className="is-active">Código</span>
-            <span>Descripción</span>
+            <span>Nombre</span>
           </div>
           <label className="bank-search-label" htmlFor="bank-account-search">
             Buscar
@@ -409,7 +409,7 @@ function BankAccountsPanel({
               id="bank-account-search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Código o descripción"
+              placeholder="Código o nombre"
             />
           </div>
           <div className="bank-table-scroll">
@@ -417,7 +417,7 @@ function BankAccountsPanel({
               <thead>
                 <tr>
                   <th>Código</th>
-                  <th>Descripción</th>
+                  <th>Nombre</th>
                 </tr>
               </thead>
               <tbody>
@@ -456,7 +456,7 @@ function BankAccountsPanel({
           </div>
           <div className="bank-form-grid">
             <label>
-              Descripción
+              Nombre
               <input
                 value={draft.name}
                 onChange={(event) => updateDraft("name", event.target.value)}

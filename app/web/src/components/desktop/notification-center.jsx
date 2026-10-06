@@ -187,7 +187,7 @@ function ActivityRow({ item, onOpen }) {
 }
 
 function activityTitle(item) {
-  const labels = { CREATE: "Registro creado", UPDATE: "Registro actualizado", DELETE: "Registro eliminado", ANULATE: "Documento anulado", ENTRY: "Entrada de inventario", EXIT: "Salida de inventario", APPROVE_TRANSFER: "Traslado aprobado" };
+  const labels = { CREATE: "Registro creado", UPDATE: "Registro actualizado", DELETE: "Registro eliminado", ANULATE: "Documento anulado", ENTRY: "Entrada de inventario", EXIT: "Salida de inventario", APPROVE_TRANSFER: "Traslado aprobado", APPROVE_TRANSFER_BATCH: "Traslado completo aprobado" };
   return labels[item.action] ?? item.action?.replaceAll("_", " ") ?? "Acción registrada";
 }
 

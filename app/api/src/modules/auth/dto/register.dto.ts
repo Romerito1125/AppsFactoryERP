@@ -25,6 +25,10 @@ export class RegisterDto {
   @IsString({ message: 'La dirección debe ser texto.' })
   address?: string;
 
+  @IsOptional()
+  @IsString({ message: 'El código de referido debe ser texto.' })
+  referralCode?: string;
+
   @IsEmail({}, { message: 'El correo no es válido.' })
   email: string;
 

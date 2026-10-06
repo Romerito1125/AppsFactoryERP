@@ -18,7 +18,6 @@ import {
   ScanLine,
   Search,
   Star,
-  Tag,
   Trash2,
   Upload,
   Warehouse,
@@ -85,13 +84,12 @@ function createEmptyProductDraft(productTypes = [], providers = [], warehouses =
     providerIds: [],
     warehouseId: defaultWarehouse?.id ?? "",
     warehouse: defaultWarehouse?.location ?? "",
+    prices: createInitialPriceDrafts(defaultProductType?.unit ?? "UND"),
   };
 }
 
 const productTabs = [
   { id: "main", label: "Datos principales", icon: Info },
-  { id: "prices", label: "Precios", icon: Tag },
-  { id: "units", label: "Unidades", icon: Package },
   { id: "inventory", label: "Inventario", icon: Warehouse },
   { id: "barcodes", label: "Códigos de barras", icon: ScanLine },
 ];
@@ -194,7 +192,7 @@ export function ProductsWindow({
         setProducts(next);
         setSelectedId(firstProduct?.recordId ?? null);
         if (firstProduct) {
-          setDraft({ ...firstProduct });
+            setDraft(toEditableProduct(firstProduct));
         } else {
           const nextProductTypes =
             typeResult.status === "fulfilled" ? typeResult.value : [];
@@ -318,7 +316,7 @@ export function ProductsWindow({
     setNotice("");
     const product = products.find((item) => item.recordId === recordId);
     if (product) {
-      setDraft({ ...product });
+      setDraft(toEditableProduct(product));
       setEditing(true);
     }
   }
@@ -444,6 +442,18 @@ export function ProductsWindow({
     }
     setSaving(true);
     const wasCreating = selectedId === null;
+    const priceChangeReason = wasCreating
+      ? ""
+      : requestBulkPriceChangeReason(
+          draft.prices,
+          selectedProduct?.prices,
+          draft.taxRate,
+        );
+    if (priceChangeReason === null) {
+      setSaving(false);
+      setError("El cambio de precio requiere una razón.");
+      return;
+    }
     const draftCode = draft.code.trim();
     const currentCode = selectedProduct?.code ?? "";
     const costValue = parseDecimalInput(draft.cost);
@@ -471,8 +481,8 @@ export function ProductsWindow({
           ? undefined
           : parseDecimalInput(draft.maximumStock),
       isActive: Boolean(draft.active),
-      ...(wasCreating && (draft.prices ?? []).length
-        ? { prices: draft.prices.map((price) => buildPriceBody(price)) }
+      ...(wasCreating && getConfiguredPriceBodies(draft.prices, draft.taxRate).length
+        ? { prices: getConfiguredPriceBodies(draft.prices, draft.taxRate) }
         : {}),
       ...(selectedId === null && draft.warehouseId
         ? {
@@ -504,6 +514,17 @@ export function ProductsWindow({
         ? await apiClient.patch(`/productos/${selectedId}`, body)
         : await apiClient.post("/productos", body);
       let normalized = mapProduct(saved);
+
+      if (!wasCreating) {
+        await syncProductPrices(
+          saved.id,
+          draft.prices,
+          selectedProduct?.prices ?? [],
+          draft.taxRate,
+          priceChangeReason,
+        );
+        normalized = mapProduct(await apiClient.get(`/productos/${saved.id}`));
+      }
 
       // Estas operaciones solo dependen del id creado y pueden ejecutarse
       // simultáneamente. Al final se hace una única lectura consolidada.
@@ -572,13 +593,13 @@ export function ProductsWindow({
       setPendingImage(null);
       if (wasCreating) {
         setSelectedId(normalized.recordId);
-        setDraft({ ...normalized });
+        setDraft(toEditableProduct(normalized));
         setEditing(true);
-        setActiveTab("prices");
-        setNotice("Producto creado. Agrega ahora sus precios generales.");
+        setActiveTab("main");
+        setNotice("Producto creado. Los cuatro precios quedan disponibles en la misma ficha.");
       } else {
         setSelectedId(normalized.recordId);
-        setDraft({ ...normalized });
+        setDraft(toEditableProduct(normalized));
         setEditing(false);
         setActiveTab("main");
         setNotice("Cambios guardados. Puedes continuar con el siguiente producto.");
@@ -615,7 +636,7 @@ export function ProductsWindow({
       setSelectedId(nextProduct?.recordId ?? null);
       setDraft(
         nextProduct
-          ? { ...nextProduct }
+          ? toEditableProduct(nextProduct)
           : createEmptyProductDraft(productTypes, providers, warehouses),
       );
       setEditing(true);
@@ -640,7 +661,7 @@ export function ProductsWindow({
           setSelectedId(nextProduct?.recordId ?? null);
           setDraft(
             nextProduct
-              ? { ...nextProduct }
+              ? toEditableProduct(nextProduct)
               : createEmptyProductDraft(productTypes, providers, warehouses),
           );
           setEditing(true);
@@ -717,7 +738,9 @@ export function ProductsWindow({
       current.map((item) => (item.recordId === recordId ? refreshed : item)),
     );
     if (recordId === selectedId)
-      setDraft((current) => (current ? { ...current, ...refreshed } : current));
+      setDraft((current) =>
+        current ? toEditableProduct({ ...current, ...refreshed }) : current,
+      );
     await loadProductProfit(recordId);
   }
 
@@ -816,7 +839,10 @@ export function ProductsWindow({
       setError("La cantidad debe ser un número mayor que cero.");
       return;
     }
-    const body = buildPriceBody({ ...priceEditor, priceLevel });
+    const body = buildPriceBody(
+      { ...priceEditor, priceLevel },
+      shownProduct?.taxRate,
+    );
     setActionLoading("price");
     setError("");
     try {
@@ -1198,11 +1224,11 @@ export function ProductsWindow({
               error={fieldErrors?.code}
             />
             <EditableSummaryField
-              label="Descripción"
-              value={shownProduct?.description ?? ""}
+              label="Nombre"
+              value={shownProduct?.name ?? ""}
               editing={editing && canEdit}
-              onChange={(value) => updateDraft("description", value)}
-              error={fieldErrors?.description}
+              onChange={(value) => updateDraft("name", value)}
+              error={fieldErrors?.name}
             />
             <div className="summary-field summary-type">
               <label>Estado</label>
@@ -1319,7 +1345,7 @@ export function ProductsWindow({
                 type="button"
                 onClick={() => {
                   setFieldErrors({});
-                if (selectedProduct) setDraft({ ...selectedProduct });
+                if (selectedProduct) setDraft(toEditableProduct(selectedProduct));
                   else {
                     setSelectedId(null);
                     setDraft(
@@ -1437,18 +1463,6 @@ function ProductDetails({
   onRemoveImage,
   ...actions
 }) {
-  if (activeTab === "prices")
-    return (
-      <PricesPanel
-        product={product}
-        editing={editing}
-        onChange={onChange}
-        fieldErrors={fieldErrors}
-        {...actions}
-      />
-    );
-  if (activeTab === "units")
-    return <UnitsPanel product={product} {...actions} />;
   if (activeTab === "inventory")
     return (
       <InventoryPanel
@@ -1468,7 +1482,8 @@ function ProductDetails({
   if (activeTab === "barcodes")
     return <BarcodePanel product={product} {...actions} />;
   return (
-    <div className="provider-main-details product-main-details">
+    <div className="product-main-composite">
+      <div className="provider-main-details product-main-details">
       <ProductImage
         product={product}
         editing={editing}
@@ -1523,7 +1538,7 @@ function ProductDetails({
         wide
       />
       <ProductField
-        label="Descripción"
+        label="Descripción (opcional)"
         value={product.description}
         editing={editing}
         onChange={(value) => onChange("description", value)}
@@ -1622,7 +1637,7 @@ function ProductDetails({
         computed
       />
       <ProductField
-        label="Costo adquisición (IVA incluido)"
+        label="Costo adquisición (sin IVA)"
         type="text"
         inputMode="decimal"
         value={String(product.cost ?? 0)}
@@ -1633,7 +1648,7 @@ function ProductDetails({
         accent
       />
       <ProductField
-        label="Inventario total (IVA incluido)"
+        label="Inventario total (sin IVA)"
         value={formatCurrency(Number(product.cost ?? 0) * Number(product.stock ?? 0))}
         accent
       />
@@ -1674,6 +1689,25 @@ function ProductDetails({
         error={fieldErrors?.warehouseId}
         select
       />
+      </div>
+      <PricesPanel
+        product={product}
+        productProfit={actions.productProfit}
+        editing={editing}
+        onChange={onChange}
+        fieldErrors={fieldErrors}
+        canEdit={actions.canEdit}
+        actionLoading={actions.actionLoading}
+      />
+      <UnitsPanel
+        product={product}
+        unitsEditor={actions.unitsEditor}
+        onChangeUnits={actions.onChangeUnits}
+        onSaveUnits={actions.onSaveUnits}
+        onCancelUnits={actions.onCancelUnits}
+        canEdit={actions.canEdit}
+        actionLoading={actions.actionLoading}
+      />
     </div>
   );
 }
@@ -1698,7 +1732,7 @@ function InventoryPanel({
     <div className="provider-tab-panel data-panel inventory-panel">
       <PanelHeading
         title="Inventario por bodega"
-        description="Usa el costo de adquisición con IVA incluido."
+        description="Usa el costo de adquisición sin IVA."
         action={
           <div className="product-panel-heading-actions">
             <button
@@ -1739,8 +1773,8 @@ function InventoryPanel({
                 <th>Stock</th>
                 <th>Mínimo</th>
                 <th>Máximo</th>
-                <th>Costo adquisición</th>
-                <th>Inventario total</th>
+                <th>Costo adquisición (sin IVA)</th>
+                <th>Inventario total (sin IVA)</th>
               </tr>
             </thead>
             <tbody>
@@ -1872,51 +1906,77 @@ function InventoryPanel({
 function PricesPanel({
   product,
   productProfit,
-  priceEditor,
-  onOpenPrice,
-  onEditPrice,
-  onChangePrice,
-  onSavePrice,
-  onCancelPrice,
-  onDeletePrice,
-  onDefaultPrice,
   canEdit = true,
   actionLoading = "",
   editing = false,
   onChange,
   fieldErrors,
 }) {
-  const canManagePrices = canEdit && Boolean(product.recordId);
   const allPrices = product.prices ?? [];
-  const priceRows = PRICE_LEVELS.map((level) => ({
-    level,
-    price: allPrices.find((candidate) => getPriceLevel(candidate) === level),
-  }));
-  const activePriceCount = priceRows.filter(
-    ({ price }) => price && isCurrentPrice(price),
+  const hasDefault = allPrices.some((price) => Boolean(price.isDefault));
+  const taxRate = parseDecimalInput(product.taxRate);
+  const priceRows = PRICE_LEVELS.map((level) => {
+    const existing = allPrices.find(
+      (candidate) => getPriceLevel(candidate) === level,
+    );
+    return {
+      level,
+      price: existing ?? {
+        id: null,
+        name: priceLabel(level),
+        priceLevel: level,
+        price: "",
+        unit: product.unit ?? "UND",
+        quantity: "1",
+        isDefault: !hasDefault && level === 0,
+        isActive: true,
+      },
+    };
+  });
+
+  function updatePrice(level, changes) {
+    const current = allPrices.find(
+      (candidate) => getPriceLevel(candidate) === level,
+    );
+    const nextPrice = {
+      ...(current ?? {
+        id: null,
+        name: priceLabel(level),
+        priceLevel: level,
+        unit: product.unit ?? "UND",
+        quantity: "1",
+        isDefault: false,
+        isActive: true,
+      }),
+      ...changes,
+      priceLevel: level,
+      name: priceLabel(level),
+    };
+    const nextPrices = current
+      ? allPrices.map((price) =>
+          getPriceLevel(price) === level ? nextPrice : price,
+        )
+      : [...allPrices, nextPrice];
+    onChange?.(
+      "prices",
+      changes.isDefault
+        ? nextPrices.map((price) => ({
+            ...price,
+            isDefault: getPriceLevel(price) === level,
+          }))
+        : nextPrices,
+    );
+  }
+
+  const configuredCount = priceRows.filter(
+    ({ price }) => parseDecimalInput(price.price) > 0,
   ).length;
   return (
     <div className="provider-tab-panel data-panel">
       <PanelHeading
         title="Costos y precios"
-        description="Configura aquí los cuatro precios generales y el IVA de venta."
-        action={
-          <button
-            type="button"
-            className="inline-action"
-            onClick={() => onOpenPrice()}
-            disabled={!canManagePrices || Boolean(actionLoading)}
-          >
-            <Plus size={14} /> Agregar precio
-          </button>
-        }
+        description="Captura los cuatro precios generales en una sola ficha."
       />
-      {!product.recordId && (
-        <p className="table-hint">
-          Guarda primero el producto. Después quedará seleccionado aquí para
-          agregar Precio 0, Precio 1, Precio 2 y Precio 3.
-        </p>
-      )}
       <div className="price-tax-setting">
         <ProductField
           label="IVA de venta (%)"
@@ -1927,13 +1987,13 @@ function PricesPanel({
           error={fieldErrors?.taxRate}
         />
         <p>
-          El precio guardado es antes de IVA. El sistema calcula el impuesto y
-          el total final con este porcentaje.
+          Escribe el precio final que verá el cliente, con IVA incluido. El
+          sistema calcula el valor antes de IVA y el IVA cobrado.
         </p>
       </div>
       <div className="cost-summary">
         <CostMetric
-          label="Costo adquisición (IVA incluido)"
+          label="Costo adquisición (sin IVA)"
           value={product.cost}
         />
         <CostMetric label="Costo promedio" value={averageCost(product.costs)} />
@@ -1942,60 +2002,111 @@ function PricesPanel({
           value={previousCost(product.costs, product.cost)}
         />
       </div>
-      <ProductDataTable
-        className="prices-data-table-wrap"
-        caption={`Precios de ${product.name} · ${activePriceCount} activos de 4 niveles`}
-        columns={[
-          "Precio general",
-          "Antes IVA",
-          "Después IVA",
-          "Unidad",
-          "Cantidad",
-          "Ganancia sin IVA",
-          "Margen sin IVA",
-          "Ganancia con IVA",
-          "Margen con IVA",
-          "Principal",
-          "Estado",
-        ]}
-        rows={priceRows.map(({ level, price }) => {
-          if (!price) {
-            return [priceLabel(level), "—", "—", "—", "—", "—", "—", "—", "—", "—", "No configurado"];
-          }
-          const profit = productProfit?.prices?.find(
-            (item) => Number(item.priceId) === Number(price.id),
-          );
-          return [
-            priceLabel(level),
-            formatCurrency(Number(profit?.priceBeforeTax ?? price.price)),
-            formatCurrency(
-              Number(
-                profit?.priceAfterTax ??
-                  Number(price.price) * (1 + Number(product.taxRate ?? 0) / 100),
-              ),
-            ),
-            price.unit,
-            String(price.quantity ?? 1),
-            profit?.profitAmount == null
-              ? "—"
-              : formatCurrency(Number(profit.profitAmount)),
-            profit?.profitPercentage == null
-              ? "—"
-              : `${profit.profitPercentage}%`,
-            profit?.profitAfterTax == null
-              ? "—"
-              : formatCurrency(Number(profit.profitAfterTax)),
-            profit?.marginAfterTax == null
-              ? "—"
-              : `${profit.marginAfterTax}%`,
-            price.isDefault ? "Sí" : "No",
-            isCurrentPrice(price) ? "Activo" : "Inactivo",
-          ];
-        })}
-        rowKeys={priceRows.map(({ level }) => level)}
-        onRowDoubleClick={(index) => priceRows[index].price && onEditPrice(priceRows[index].price)}
-        empty="No hay niveles de precio configurados."
-        />
+      <p className="table-hint price-bulk-hint">
+        Puedes completar Precio 0, Precio 1, Precio 2 y Precio 3 antes de
+        guardar. Los campos se guardan juntos con el producto.
+      </p>
+      <div className="product-price-bulk-wrap">
+        <table className="product-price-bulk-table">
+          <thead>
+            <tr>
+              <th>Precio general</th>
+              <th>Precio de venta (IVA incluido)</th>
+              <th>Precio antes de IVA</th>
+              <th>IVA cobrado</th>
+              <th>Unidad</th>
+              <th>Cantidad</th>
+              <th>Ganancia sin IVA</th>
+              <th>Margen sin IVA</th>
+              <th>Principal</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {priceRows.map(({ level, price }) => {
+              const metrics = calculatePricePreview(price, product, productProfit, taxRate);
+              const disabled = !canEdit || Boolean(actionLoading);
+              return (
+                <tr key={level}>
+                  <td className="price-level-cell">{priceLabel(level)}</td>
+                  <td>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={price.price ?? ""}
+                      placeholder="0"
+                      disabled={disabled}
+                      onChange={(event) =>
+                        updatePrice(level, { price: event.target.value })
+                      }
+                      aria-label={`${priceLabel(level)} precio de venta con IVA`}
+                    />
+                  </td>
+                  <td>
+                    <div className="price-input-preview">
+                      <strong>{metrics.net == null ? "—" : formatCurrency(metrics.net)}</strong>
+                      <small>Calculado automáticamente</small>
+                    </div>
+                  </td>
+                  <td>{metrics.tax == null ? "—" : formatCurrency(metrics.tax)}</td>
+                  <td>
+                    <select
+                      value={price.unit ?? product.unit ?? "UND"}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        updatePrice(level, { unit: event.target.value })
+                      }
+                    >
+                      {units.map((unit) => (
+                        <option key={unit} value={unit}>
+                          {unit}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={price.quantity ?? "1"}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        updatePrice(level, { quantity: event.target.value })
+                      }
+                      aria-label={`${priceLabel(level)} cantidad`}
+                    />
+                  </td>
+                  <td>{metrics.profit == null ? "—" : formatCurrency(metrics.profit)}</td>
+                  <td>{metrics.margin == null ? "—" : `${formatDecimal(metrics.margin)}%`}</td>
+                  <td className="price-default-cell">
+                    <input
+                      type="radio"
+                      name="product-default-price"
+                      checked={Boolean(price.isDefault)}
+                      disabled={disabled || metrics.gross == null}
+                      onChange={() => updatePrice(level, { isDefault: true })}
+                      aria-label={`Usar ${priceLabel(level)} como principal`}
+                    />
+                  </td>
+                  <td>
+                    <label className="inline-check compact-check">
+                      <input
+                        type="checkbox"
+                        checked={price.isActive !== false}
+                        disabled={disabled}
+                        onChange={(event) =>
+                          updatePrice(level, { isActive: event.target.checked })
+                        }
+                      />
+                      Activo
+                    </label>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       {productProfit?.prices?.some((price) => price.warning) && (
         <p className="table-hint product-margin-warning">
           {productProfit.prices.find((price) => price.warning)?.warning}
@@ -2004,153 +2115,10 @@ function PricesPanel({
       {productProfit?.warning && (
         <p className="table-hint">{productProfit.warning}</p>
       )}
-      <p className="table-hint">Sin IVA es la utilidad comercial real para comparar contra el costo. Con IVA muestra el valor cobrado antes de entregar ese impuesto. Solo existen Precio 0, Precio 1, Precio 2 y Precio 3.</p>
-      {priceEditor && (
-        <PriceEditor
-          editor={priceEditor}
-          onChange={onChangePrice}
-          onSave={onSavePrice}
-          onCancel={onCancelPrice}
-          onDelete={onDeletePrice}
-          onDefault={onDefaultPrice}
-          taxRate={product.taxRate}
-          canEdit={canEdit}
-          actionLoading={actionLoading}
-        />
-      )}
-    </div>
-  );
-}
-function PriceEditor({
-  editor,
-  onChange,
-  onSave,
-  onCancel,
-  onDelete,
-  onDefault,
-  canEdit = true,
-  actionLoading = "",
-  taxRate = 0,
-}) {
-  const isSaving = actionLoading === "price";
-  const isDeleting = actionLoading === "price-delete";
-  const isMarkingDefault = actionLoading === "price-default";
-  const isBusy = Boolean(actionLoading);
-  return (
-    <div className="inline-editor">
-      <div className="inline-editor-title">
-        <strong>{editor.id ? "Modificar precio" : "Nuevo precio"}</strong>
-        <button
-          type="button"
-          aria-label="Cerrar editor de precio"
-          onClick={onCancel}
-        >
-          <X size={14} />
-        </button>
-      </div>
-      <div className="inline-editor-grid">
-        <EditorSelect
-          label="Nivel global"
-          value={editor.priceLevel}
-          options={PRICE_LEVELS.map((level) => ({ value: level, label: priceLabel(level) }))}
-          disabled={isBusy}
-          onChange={(value) =>
-            onChange((current) => ({ ...current, priceLevel: Number(value) }))
-          }
-        />
-        <EditorField
-          label="Precio antes de IVA"
-          type="text"
-          inputMode="decimal"
-          value={editor.price}
-          disabled={isBusy}
-          onChange={(value) =>
-            onChange((current) => ({ ...current, price: value }))
-          }
-        />
-        <EditorSelect
-          label="Unidad"
-          value={editor.unit}
-          options={units}
-          disabled={isBusy}
-          onChange={(value) =>
-            onChange((current) => ({ ...current, unit: value }))
-          }
-        />
-        <EditorField
-          label="Cantidad"
-          type="text"
-          inputMode="decimal"
-          value={editor.quantity}
-          disabled={isBusy}
-          onChange={(value) =>
-            onChange((current) => ({ ...current, quantity: value }))
-          }
-        />
-      </div>
-      <div className="price-tax-preview">
-        <span>IVA venta ({formatDecimal(taxRate)}%) <strong>{formatCurrency(parseDecimalInput(editor.price) * parseDecimalInput(taxRate) / 100)}</strong></span>
-        <span>Precio final con IVA <strong>{formatCurrency(parseDecimalInput(editor.price) * (1 + parseDecimalInput(taxRate) / 100))}</strong></span>
-      </div>
-      <label className="inline-check">
-        <input
-          type="checkbox"
-          checked={editor.isDefault}
-          disabled={isBusy}
-          onChange={(event) =>
-            onChange((current) => ({
-              ...current,
-              isDefault: event.target.checked,
-            }))
-          }
-        />{" "}
-        Precio principal
-      </label>
-      <div className="inline-editor-actions">
-        <button type="button" onClick={onCancel}>
-          Cancelar
-        </button>
-        {editor.id && (
-          <button
-            type="button"
-            onClick={() => onDelete(editor)}
-            className="danger-action"
-            disabled={!canEdit || isBusy}
-          >
-            {isDeleting ? (
-              <LoaderCircle className="button-spinner" size={13} />
-            ) : (
-              <Trash2 size={13} />
-            )}
-            {isDeleting ? "Desactivando…" : "Desactivar"}
-          </button>
-        )}
-        {editor.id && !editor.isDefault && (
-          <button
-            type="button"
-            onClick={() => onDefault(editor)}
-            disabled={!canEdit || isBusy}
-          >
-            {isMarkingDefault && (
-              <LoaderCircle className="button-spinner" size={13} />
-            )}
-            {isMarkingDefault ? "Guardando…" : "Marcar principal"}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onSave}
-          className="primary-action"
-          disabled={!canEdit || isBusy}
-        >
-          {isSaving ? (
-            <LoaderCircle className="button-spinner" size={13} />
-          ) : (
-            <Check size={13} />
-          )}
-          {isSaving ? "Guardando…" : "Guardar precio"}
-        </button>
-      </div>
+      <p className="table-hint">
+        {configuredCount} de 4 precios configurados. La ganancia sin IVA
+        compara el precio antes de IVA contra el costo de adquisición sin IVA.
+      </p>
     </div>
   );
 }
@@ -3261,6 +3229,59 @@ function mapProduct(product) {
   };
 }
 
+function createInitialPriceDrafts(unit = "UND") {
+  return PRICE_LEVELS.map((level) => ({
+    id: null,
+    name: priceLabel(level),
+    priceLevel: level,
+    price: "",
+    unit,
+    quantity: "1",
+    isDefault: level === 0,
+    isActive: true,
+  }));
+}
+
+function toEditableProduct(product) {
+  if (!product) return product;
+  return {
+    ...product,
+    prices: toEditablePrices(product.prices, product.taxRate),
+  };
+}
+
+function toEditablePrices(prices, taxRate) {
+  return (prices ?? []).map((price) => ({
+    ...toPriceDraft(price),
+    price:
+      price.price == null
+        ? ""
+        : formatInputAmount(grossPriceFromNet(Number(price.price), taxRate)),
+  }));
+}
+
+function grossPriceFromNet(value, taxRate) {
+  const net = Number(value);
+  const rate = Number(taxRate) || 0;
+  if (!Number.isFinite(net)) return 0;
+  return roundMoney(net * (1 + rate / 100));
+}
+
+function netPriceFromGross(value, taxRate) {
+  const gross = Number(value);
+  const rate = Number(taxRate) || 0;
+  if (!Number.isFinite(gross)) return 0;
+  return roundMoney(gross / (1 + rate / 100));
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function formatInputAmount(value) {
+  return Number.isFinite(Number(value)) ? String(roundMoney(value)) : "";
+}
+
 function toPriceDraft(price) {
   return {
     ...price,
@@ -3273,13 +3294,6 @@ function toPriceDraft(price) {
     isDefault: Boolean(price.isDefault),
     isActive: price.isActive !== false,
   };
-}
-function isCurrentPrice(price, now = new Date()) {
-  return (
-    price?.isActive !== false &&
-    (!price?.startsAt || new Date(price.startsAt) <= now) &&
-    (!price?.endsAt || new Date(price.endsAt) >= now)
-  );
 }
 function createPriceDraft(product) {
   const usedLevels = new Set(
@@ -3299,12 +3313,12 @@ function createPriceDraft(product) {
     isActive: true,
   };
 }
-function buildPriceBody(editor) {
+function buildPriceBody(editor, taxRate = 0) {
   const priceLevel = Number(editor.priceLevel);
   return {
     name: priceLabel(priceLevel),
     priceLevel,
-    price: parseDecimalInput(editor.price),
+    price: netPriceFromGross(parseDecimalInput(editor.price), taxRate),
     unit: editor.unit,
     quantity: parseDecimalInput(editor.quantity) || 1,
     isDefault: Boolean(editor.isDefault),
@@ -3313,6 +3327,101 @@ function buildPriceBody(editor) {
     endsAt: null,
   };
 }
+function getConfiguredPriceBodies(prices, taxRate) {
+  return (prices ?? [])
+    .filter((price) => parseDecimalInput(price.price) > 0)
+    .map((price) => buildPriceBody(price, taxRate));
+}
+
+function requestBulkPriceChangeReason(draftPrices, currentPrices, taxRate) {
+  const currentByLevel = new Map(
+    (currentPrices ?? []).map((price) => [getPriceLevel(price), price]),
+  );
+  const changed = (draftPrices ?? []).some((price) => {
+    const current = currentByLevel.get(getPriceLevel(price));
+    const nextGross = parseDecimalInput(price.price);
+    return (
+      current &&
+      nextGross > 0 &&
+      Math.abs(
+        netPriceFromGross(nextGross, taxRate) - Number(current.price ?? 0),
+      ) > 0.005
+    );
+  });
+  if (!changed) return "";
+  const reason = window.prompt(
+    "Escribe la razón del cambio de precio para guardarlo en el historial:",
+    "",
+  );
+  return reason?.trim() || null;
+}
+
+async function syncProductPrices(
+  productId,
+  draftPrices,
+  currentPrices,
+  taxRate,
+  priceChangeReason,
+) {
+  const currentByLevel = new Map(
+    (currentPrices ?? []).map((price) => [getPriceLevel(price), price]),
+  );
+  const requests = (draftPrices ?? [])
+    .filter((price) => parseDecimalInput(price.price) > 0)
+    .map((price) => {
+      const body = buildPriceBody(price, taxRate);
+      const current = currentByLevel.get(getPriceLevel(price));
+      if (!current)
+        return apiClient.post(`/productos/${productId}/precios`, body);
+      const amountChanged =
+        Math.abs(Number(current.price ?? 0) - body.price) > 0.005;
+      const changed =
+        amountChanged ||
+        String(current.unit ?? "") !== String(body.unit ?? "") ||
+        Number(current.quantity ?? 1) !== Number(body.quantity ?? 1) ||
+        Boolean(current.isDefault) !== Boolean(body.isDefault) ||
+        (current.isActive !== false) !== (body.isActive !== false);
+      if (!changed) return null;
+      const updateBody = { ...body };
+      delete updateBody.startsAt;
+      delete updateBody.endsAt;
+      return apiClient.patch(`/precios-producto/${current.id}`, {
+        ...updateBody,
+        ...(amountChanged && priceChangeReason
+          ? { reason: priceChangeReason }
+          : {}),
+      });
+    })
+    .filter(Boolean);
+  if (requests.length) await Promise.all(requests);
+}
+
+function calculatePricePreview(price, product, productProfit, taxRate) {
+  const gross = parseDecimalInput(price.price);
+  if (!Number.isFinite(gross) || gross <= 0)
+    return { gross: null, net: null, tax: null, profit: null, margin: null };
+  const net = netPriceFromGross(gross, taxRate);
+  const tax = roundMoney(gross - net);
+  const quantity = parseDecimalInput(price.quantity) || 1;
+  const cost = Number(product.cost ?? 0) * quantity;
+  const fallbackProfit = productProfit?.prices?.find(
+    (item) => Number(item.priceId) === Number(price.id),
+  );
+  const profit =
+    Number.isFinite(cost) && cost > 0
+      ? roundMoney(net - cost)
+      : fallbackProfit?.profitAmount == null
+        ? null
+        : Number(fallbackProfit.profitAmount);
+  const margin =
+    profit == null || net <= 0
+      ? fallbackProfit?.profitPercentage == null
+        ? null
+        : Number(fallbackProfit.profitPercentage)
+      : (profit / net) * 100;
+  return { gross, net, tax, profit, margin };
+}
+
 function getPriceLevel(price) {
   if (price?.priceLevel !== null && price?.priceLevel !== undefined)
     return Number(price.priceLevel);
@@ -3360,19 +3469,22 @@ function hasProductDraftChanges(draft, product) {
   if (draftProviders.join(",") !== productProviders.join(",")) return true;
   if ((draft.tagIds ?? []).map(String).sort().join(",") !==
     (product.tagIds ?? []).map(String).sort().join(",")) return true;
-  const normalizePrices = (prices) =>
+  const normalizePrices = (prices, taxRate, isDraft = false) =>
     (prices ?? [])
+      .filter((price) => !isDraft || parseDecimalInput(price.price) > 0)
       .map((price) => ({
         level: getPriceLevel(price),
-        price: Number(price.price),
+        price: isDraft
+          ? netPriceFromGross(parseDecimalInput(price.price), taxRate)
+          : Number(price.price),
         unit: price.unit,
         quantity: Number(price.quantity ?? 1),
         isDefault: Boolean(price.isDefault),
         isActive: price.isActive !== false,
       }))
       .sort(comparePriceDrafts);
-  return JSON.stringify(normalizePrices(draft.prices)) !==
-    JSON.stringify(normalizePrices(product.prices));
+  return JSON.stringify(normalizePrices(draft.prices, draft.taxRate, true)) !==
+    JSON.stringify(normalizePrices(product.prices, product.taxRate));
 }
 function validateProductDraft(product) {
   const errors = {};

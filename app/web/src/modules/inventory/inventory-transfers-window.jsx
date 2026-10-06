@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeftRight,
+  ArrowDownToLine,
+  ArrowUpFromLine,
   ClipboardCheck,
   Eye,
   LoaderCircle,
   Package,
+  Plus,
   RefreshCw,
+  SlidersHorizontal,
+  Trash2,
   X,
 } from "lucide-react";
 
@@ -17,6 +22,8 @@ export function InventoryTransfersWindow({ onClose, onRequestLogin }) {
   const [warehouses, setWarehouses] = useState([]);
   const [products, setProducts] = useState([]);
   const [tickets, setTickets] = useState([]);
+  const [operationType, setOperationType] = useState("transfer");
+  const [operationItems, setOperationItems] = useState([]);
   const [productId, setProductId] = useState("");
   const [fromWarehouseId, setFromWarehouseId] = useState("");
   const [toWarehouseId, setToWarehouseId] = useState("");
@@ -56,58 +63,94 @@ export function InventoryTransfersWindow({ onClose, onRequestLogin }) {
   }, [onRequestLogin]);
 
   useEffect(() => {
-    loadData();
+    const timer = window.setTimeout(() => void loadData(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadData]);
 
   const selectedProduct = products.find((product) => String(product.id) === String(productId));
   const selectedSource = warehouses.find((warehouse) => String(warehouse.id) === String(fromWarehouseId));
   const selectedDestination = warehouses.find((warehouse) => String(warehouse.id) === String(toWarehouseId));
-  const unitOptions = getTransferUnitOptions(selectedProduct);
+  const unitOptions = useMemo(
+    () => getTransferUnitOptions(selectedProduct),
+    [selectedProduct],
+  );
+  const activeUnit = unitOptions.includes(unit) ? unit : unitOptions[0] ?? "UND";
   const availableBase = getWarehouseStock(selectedProduct, fromWarehouseId);
-  const transferBase = convertToBase(quantity, unit, selectedProduct);
+  const transferBase = convertToBase(quantity, activeUnit, selectedProduct);
 
-  useEffect(() => {
-    if (!unitOptions.includes(unit)) setUnit(unitOptions[0] ?? "UND");
-  }, [unit, unitOptions]);
+  function addOperationItem() {
+    setError("");
+    if (!selectedProduct) {
+      setError("Selecciona un producto.");
+      return;
+    }
+    const parsedQuantity = parseDecimal(quantity);
+    if (operationType === "adjustment" ? parsedQuantity === null || parsedQuantity < 0 : parsedQuantity === null || parsedQuantity <= 0) {
+      setError(operationType === "adjustment" ? "La cantidad objetivo no puede ser negativa." : "La cantidad debe ser mayor que cero.");
+      return;
+    }
+    if (["transfer", "exit"].includes(operationType) && transferBase > availableBase) {
+      setError(`Existencia insuficiente. Disponible: ${formatQuantity(availableBase)} UND.`);
+      return;
+    }
+    setOperationItems((current) => {
+      const index = current.findIndex((item) => String(item.productId) === String(productId));
+      if (index < 0) return [...current, { productId: Number(productId), quantity: parsedQuantity, unit: activeUnit }];
+      return current.map((item, itemIndex) => itemIndex === index
+        ? { ...item, quantity: operationType === "adjustment" ? parsedQuantity : Number(item.quantity) + parsedQuantity, unit: activeUnit }
+        : item);
+    });
+    setQuantity(operationType === "adjustment" ? "0" : "1");
+  }
 
-  async function submitTransfer(event) {
+  async function submitOperation(event) {
     event.preventDefault();
     setError("");
     setNotice("");
-    if (!selectedProduct || !fromWarehouseId || !toWarehouseId) {
-      setError("Selecciona producto, bodega origen y bodega destino.");
+    if (!operationItems.length) {
+      setError("Agrega al menos un producto a la operación.");
       return;
     }
-    if (String(fromWarehouseId) === String(toWarehouseId)) {
+    if (operationType === "transfer" && (!fromWarehouseId || !toWarehouseId)) {
+      setError("Selecciona bodega origen y bodega destino.");
+      return;
+    }
+    if (operationType === "transfer" && String(fromWarehouseId) === String(toWarehouseId)) {
       setError("La bodega origen y destino deben ser diferentes.");
       return;
     }
-    if (!Number.isInteger(Number(quantity)) || Number(quantity) <= 0) {
-      setError("La cantidad debe ser un número entero mayor que cero.");
-      return;
-    }
-    if (transferBase > availableBase) {
-      setError(`Existencia insuficiente. Disponible: ${formatQuantity(availableBase)} UND.`);
+    if (["entry", "exit", "adjustment"].includes(operationType) && !fromWarehouseId) {
+      setError("Selecciona la bodega de la operación.");
       return;
     }
 
     setSaving(true);
     try {
-      const result = await apiClient.post("/inventario/traslado", {
-        productId: Number(productId),
-        fromWarehouseId: Number(fromWarehouseId),
-        toWarehouseId: Number(toWarehouseId),
-        quantity: Number(quantity),
-        unit,
-        supportNote: supportNote.trim() || undefined,
-        reason: supportNote.trim() || "Traslado entre bodegas",
-      });
-      const ticketNumber = result?.transferTicket?.ticketNumber ?? "ticket generado";
-      setNotice(`Traslado registrado correctamente · ${ticketNumber}`);
+      let result;
+      if (operationType === "transfer") {
+        result = await apiClient.post("/inventario/traslado-multiple", {
+          fromWarehouseId: Number(fromWarehouseId),
+          toWarehouseId: Number(toWarehouseId),
+          items: operationItems,
+          supportNote: supportNote.trim() || undefined,
+        });
+        setNotice(`Traslado completo registrado · ${result?.batchNumber ?? "grupo generado"}`);
+      } else {
+        const endpoint = { entry: "entrada", exit: "salida", adjustment: "ajuste" }[operationType];
+        for (const item of operationItems) {
+          await apiClient.post(`/inventario/${endpoint}`, operationType === "entry"
+            ? { ...item, productId: Number(item.productId), toWarehouseId: Number(fromWarehouseId), reason: supportNote.trim() || "Entrada de inventario" }
+            : operationType === "exit"
+              ? { ...item, productId: Number(item.productId), fromWarehouseId: Number(fromWarehouseId), reason: supportNote.trim() || "Salida de inventario" }
+              : { ...item, productId: Number(item.productId), warehouseId: Number(fromWarehouseId), reason: supportNote.trim() || "Ajuste de inventario" });
+        }
+        setNotice(`${operationLabel(operationType)} registrada para ${operationItems.length} producto(s).`);
+      }
       setSupportNote("");
+      setOperationItems([]);
       await loadData();
     } catch (requestError) {
-      setError(requestError.message ?? "No se pudo registrar el traslado.");
+      setError(requestError.message ?? "No se pudo registrar la operación.");
       if (isAuthError(requestError)) onRequestLogin?.();
     } finally {
       setSaving(false);
@@ -128,12 +171,12 @@ export function InventoryTransfersWindow({ onClose, onRequestLogin }) {
   return (
     <section
       className={`provider-window inventory-transfer-window ${isDragging ? "is-dragging" : ""}`}
-      aria-label="Ventana de traslados de inventario"
+      aria-label="Ventana de operaciones de inventario"
       style={windowStyle}
     >
       <header className="provider-titlebar drag-handle inventory-transfer-titlebar" onPointerDown={handlePointerDown}>
         <div className="provider-title-mark"><ArrowLeftRight size={14} /></div>
-        <strong>TRASLADOS DE INVENTARIO</strong>
+        <strong>OPERACIONES DE INVENTARIO</strong>
         <span className="inventory-transfer-mode">ADMINISTRATIVO · INVENTARIO</span>
         <button type="button" className="provider-close" aria-label="Cerrar traslados" onClick={onClose}><X size={17} /></button>
       </header>
@@ -142,26 +185,39 @@ export function InventoryTransfersWindow({ onClose, onRequestLogin }) {
         <div className="inventory-transfer-heading">
           <div>
             <span>OPERACIÓN DE INVENTARIO</span>
-            <h2>Trasladar existencias entre bodegas</h2>
-            <p>Registra cantidades exactas y conserva un ticket para la trazabilidad.</p>
+            <h2>{operationLabel(operationType)}</h2>
+            <p>Agrega todos los productos de la operación y registra la trazabilidad en un solo paso.</p>
           </div>
           <button type="button" className="inventory-transfer-refresh" onClick={loadData} disabled={loading || saving}>
             <RefreshCw size={14} className={loading ? "is-spinning" : ""} /> Actualizar
           </button>
         </div>
 
+        <div className="inventory-operation-tabs" role="tablist" aria-label="Tipo de operación">
+          {[
+            ["transfer", "Traslados", ArrowLeftRight],
+            ["entry", "Cargos / entradas", ArrowDownToLine],
+            ["exit", "Descargos / salidas", ArrowUpFromLine],
+            ["adjustment", "Ajustes", SlidersHorizontal],
+          ].map(([type, label, Icon]) => (
+            <button key={type} type="button" role="tab" aria-selected={operationType === type} className={operationType === type ? "is-active" : ""} onClick={() => { setOperationType(type); setOperationItems([]); setError(""); }} disabled={saving}>
+              <Icon size={14} /> {label}
+            </button>
+          ))}
+        </div>
+
         {error && <TransientMessage className="window-error" role="alert" onDismiss={() => setError("")}>{error}</TransientMessage>}
         {notice && <TransientMessage className="window-notice" role="status" onDismiss={() => setNotice("")}>{notice}</TransientMessage>}
 
         <div className="inventory-transfer-grid">
-          <form className="inventory-transfer-form" onSubmit={submitTransfer}>
-            <div className="inventory-transfer-section-title"><Package size={15} /> Nueva operación</div>
+          <form className="inventory-transfer-form" onSubmit={submitOperation}>
+            <div className="inventory-transfer-section-title"><Package size={15} /> Agregar producto</div>
             <label>Producto
               <select value={productId} onChange={(event) => setProductId(event.target.value)} disabled={loading || saving}>
                 {products.map((product) => <option value={product.id} key={product.id}>{productCode(product)} · {productName(product)}</option>)}
               </select>
             </label>
-            <div className="inventory-transfer-fields-two">
+            {operationType === "transfer" ? <div className="inventory-transfer-fields-two">
               <label>Bodega origen
                 <select value={fromWarehouseId} onChange={(event) => setFromWarehouseId(event.target.value)} disabled={loading || saving}>
                   {warehouses.map((warehouse) => <option value={warehouse.id} key={warehouse.id}>{warehouseName(warehouse)}</option>)}
@@ -172,27 +228,49 @@ export function InventoryTransfersWindow({ onClose, onRequestLogin }) {
                   {warehouses.map((warehouse) => <option value={warehouse.id} key={warehouse.id}>{warehouseName(warehouse)}</option>)}
                 </select>
               </label>
-            </div>
+            </div> : <label>Bodega
+              <select value={fromWarehouseId} onChange={(event) => setFromWarehouseId(event.target.value)} disabled={loading || saving}>
+                {warehouses.map((warehouse) => <option value={warehouse.id} key={warehouse.id}>{warehouseName(warehouse)}</option>)}
+              </select>
+            </label>}
             <div className="inventory-transfer-fields-two">
-              <label>Cantidad
-                <input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} disabled={loading || saving} />
+              <label>{operationType === "adjustment" ? "Cantidad objetivo" : "Cantidad"}
+                <input type="text" inputMode="decimal" value={quantity} onChange={(event) => setQuantity(event.target.value)} disabled={loading || saving} placeholder="Ej. 1,5" />
               </label>
               <label>Unidad
-                <select value={unit} onChange={(event) => setUnit(event.target.value)} disabled={loading || saving}>
+                <select value={activeUnit} onChange={(event) => setUnit(event.target.value)} disabled={loading || saving}>
                   {unitOptions.map((option) => <option value={option} key={option}>{transferUnitLabel(option)}</option>)}
                 </select>
               </label>
             </div>
-            <div className="inventory-transfer-stock-card">
+            {operationType === "transfer" && <div className="inventory-transfer-stock-card">
               <span>Disponible en {warehouseName(selectedSource)}</span>
               <strong>{formatQuantity(availableBase)} UND</strong>
               <small>El traslado descontará {formatQuantity(transferBase)} UND y recibirá esa cantidad en {warehouseName(selectedDestination)}.</small>
-            </div>
+            </div>}
+            {operationType === "exit" && <div className="inventory-transfer-stock-card is-warning">
+              <span>Disponible en {warehouseName(selectedSource)}</span>
+              <strong>{formatQuantity(availableBase)} UND</strong>
+            </div>}
+            <button type="button" className="inventory-transfer-add" onClick={addOperationItem} disabled={loading || saving || !selectedProduct}>
+              <Plus size={14} /> Agregar a la operación
+            </button>
+            {operationItems.length > 0 && <div className="inventory-operation-items" aria-label="Productos agregados">
+              <strong>{operationItems.length} producto(s) agregado(s)</strong>
+              {operationItems.map((item) => {
+                const product = products.find((row) => Number(row.id) === Number(item.productId));
+                return <div className="inventory-operation-item" key={item.productId}>
+                  <span><b>{productCode(product)}</b> {productName(product)}</span>
+                  <strong>{formatQuantity(item.quantity)} {item.unit}</strong>
+                  <button type="button" onClick={() => setOperationItems((current) => current.filter((row) => row.productId !== item.productId))} aria-label={`Quitar ${productName(product)}`}><Trash2 size={13} /></button>
+                </div>;
+              })}
+            </div>}
             <label>Motivo / referencia
               <input value={supportNote} onChange={(event) => setSupportNote(event.target.value)} placeholder="Ej. Reposición de Bodega B" disabled={loading || saving} />
             </label>
-            <button type="submit" className="inventory-transfer-submit" disabled={loading || saving || !products.length || !warehouses.length}>
-              {saving ? <LoaderCircle size={14} className="is-spinning" /> : <ClipboardCheck size={14} />} {saving ? "Registrando…" : "Registrar traslado"}
+            <button type="submit" className="inventory-transfer-submit" disabled={loading || saving || !products.length || !warehouses.length || !operationItems.length}>
+              {saving ? <LoaderCircle size={14} className="is-spinning" /> : <ClipboardCheck size={14} />} {saving ? "Registrando…" : `Registrar ${operationLabel(operationType).toLowerCase()}`}
             </button>
           </form>
 
@@ -222,7 +300,7 @@ export function InventoryTransfersWindow({ onClose, onRequestLogin }) {
 function TransferTicketRow({ ticket, onOpen }) {
   const movement = ticket.movement ?? {};
   return <tr>
-    <td><strong>{ticket.ticketNumber}</strong></td>
+    <td><strong>{ticket.batchNumber ?? ticket.ticketNumber}</strong><small className="inventory-ticket-line">{ticket.batchNumber ? ticket.ticketNumber : ""}</small></td>
     <td>{productName(movement.product)}</td>
     <td>{warehouseName(movement.fromWarehouse)} → {warehouseName(movement.toWarehouse)}</td>
     <td>{formatQuantity(movement.quantity)} UND</td>
@@ -237,7 +315,7 @@ function TransferTicketDetail({ ticket, onClose }) {
     <div className="inventory-transfer-detail" role="dialog" aria-modal="true" aria-label="Detalle del ticket de traslado">
       <header><strong>Detalle del traslado</strong><button type="button" onClick={onClose} aria-label="Cerrar detalle"><X size={16} /></button></header>
       <dl>
-        <dt>Ticket</dt><dd>{ticket.ticketNumber}</dd>
+        <dt>Grupo / ticket</dt><dd>{ticket.batchNumber ?? ticket.ticketNumber}{ticket.batchNumber && ` · ${ticket.ticketNumber}`}</dd>
         <dt>Producto</dt><dd>{productName(movement.product)}</dd>
         <dt>Origen</dt><dd>{warehouseName(movement.fromWarehouse)}</dd>
         <dt>Destino</dt><dd>{warehouseName(movement.toWarehouse)}</dd>
@@ -297,6 +375,22 @@ function transferUnitLabel(unit) {
 function formatQuantity(value) {
   const amount = Number(value ?? 0);
   return Number.isInteger(amount) ? String(amount) : amount.toFixed(3);
+}
+
+function parseDecimal(value) {
+  const normalized = String(value ?? "").trim().replace(",", ".");
+  if (!normalized || !/^\d+(\.\d{1,3})?$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function operationLabel(type) {
+  return {
+    transfer: "Traslado completo",
+    entry: "Cargo / entrada",
+    exit: "Descargo / salida",
+    adjustment: "Ajuste de inventario",
+  }[type] ?? "Operación de inventario";
 }
 
 function formatDate(value) {

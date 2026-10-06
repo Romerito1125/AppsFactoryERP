@@ -183,11 +183,9 @@ export function SalesWindow({
         if (clientsResult.status === "fulfilled") {
           const nextClients = clientsResult.value;
           setClients(nextClients);
-          setSelectedClientId(
-            String(
-              nextClients.find(isConsumerFinal)?.id ?? nextClients[0]?.id ?? "",
-            ),
-          );
+          const initialClient = nextClients.find(isConsumerFinal) ?? nextClients[0];
+          setSelectedClientId(String(initialClient?.id ?? ""));
+          setSelectedPriceLevel(String(initialClient?.priceLevel ?? 0));
         }
         if (productsResult.status === "fulfilled")
           setProducts(productsResult.value.filter(isActive));
@@ -265,7 +263,7 @@ export function SalesWindow({
     return () => {
       cancelled = true;
     };
-  }, [initialDocumentId, onRequestLogin]);
+  }, [initialDocumentId, onRequestLogin, session?.sub]);
 
   const activeProducts = useMemo(
     () =>
@@ -337,8 +335,10 @@ export function SalesWindow({
     const nextClient = clients.find(
       (client) => String(client.id) === String(nextClientId),
     );
+    const nextPriceLevel = String(nextClient?.priceLevel ?? 0);
     setSelectedClientId(String(nextClientId));
-    applyPriceSelection(nextClient);
+    setSelectedPriceLevel(nextPriceLevel);
+    applyPriceSelection(nextClient, nextPriceLevel);
   }
 
   function handlePriceLevelChange(nextPriceLevel) {
@@ -893,7 +893,7 @@ export function SalesWindow({
             saving={saving}
             actionLoading={actionLoading}
             quotes={quotes}
-            onClientChange={setSelectedClientId}
+          onClientChange={handleClientSelection}
             onDueDateChange={setCreditDueDate}
             onAddProduct={addProduct}
             onBarcode={addBarcodeToCart}
@@ -1629,7 +1629,7 @@ function CartTable({
           <thead>
             <tr>
               <th>Código</th>
-              <th>Descripción</th>
+              <th>Producto</th>
               <th>Cantidad</th>
               <th>Und</th>
               <th>Precio</th>
@@ -2723,12 +2723,12 @@ function getLookupTitle(type) {
 function getLookupHeaders(type) {
   return (
     {
-      clients: ["Código", "Descripción", "Id. Fiscal", "Saldo"],
-      products: ["Imagen", "Código", "Descripción", "Existencia", "Precio"],
-      warehouses: ["Código", "Descripción", "Estado"],
+      clients: ["Código", "Nombre", "Id. Fiscal", "Saldo"],
+      products: ["Imagen", "Código", "Producto", "Existencia", "Precio"],
+      warehouses: ["Código", "Nombre del depósito", "Estado"],
       invoices: ["Número", "Cliente", "Fecha", "Total", "Estado"],
       quotes: ["Número", "Cliente", "Vigente hasta", "Total", "Estado"],
-    }[type] ?? ["Código", "Descripción"]
+    }[type] ?? ["Código", "Nombre"]
   );
 }
 
@@ -3063,8 +3063,12 @@ function getDefaultPrice(product) {
     null
   );
 }
-function getPriceForClient(product, _client, priceLevel = "0") {
-  return getExactPriceForLevel(product, priceLevel) ?? null;
+function getPriceForClient(product, client, priceLevel) {
+  const effectivePriceLevel =
+    priceLevel === undefined || priceLevel === null
+      ? client?.priceLevel ?? 0
+      : priceLevel;
+  return getExactPriceForLevel(product, effectivePriceLevel) ?? getDefaultPrice(product);
 }
 function getExactPriceForLevel(product, priceLevel = "0") {
   return activePrices(product).find(

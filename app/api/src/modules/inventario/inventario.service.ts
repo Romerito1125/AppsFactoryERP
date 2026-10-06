@@ -23,6 +23,7 @@ import {
   InventoryEntryDto,
   InventoryExitDto,
   InventoryTransferDto,
+  InventoryTransferBatchDto,
 } from './dto/inventory-movement.dto';
 import { ListInventoryQueryDto } from './dto/list-inventory-query.dto';
 
@@ -372,6 +373,115 @@ export class InventarioService {
     return movement;
   }
 
+  async transferBatch(dto: InventoryTransferBatchDto, actor: AuthUser) {
+    if (dto.fromWarehouseId === dto.toWarehouseId) {
+      throw new BadRequestException(
+        'La bodega origen y destino no pueden ser iguales',
+      );
+    }
+    this.ensureActorWarehouseAccess(dto.fromWarehouseId, actor);
+    this.ensureActorWarehouseAccess(dto.toWarehouseId, actor);
+
+    const batchNumber = this.generateTransferBatchNumber();
+    const movements = await this.prisma.$transaction(async (tx) => {
+      await this.ensureActiveWarehouse(dto.fromWarehouseId, tx);
+      await this.ensureActiveWarehouse(dto.toWarehouseId, tx);
+
+      const created: number[] = [];
+      for (const [index, item] of dto.items.entries()) {
+        const product = await this.productResolver.resolve(item, tx, {
+          packagingProfile: true,
+        });
+        const stockQuantity = this.resolveStockQuantity(
+          item.quantity,
+          item.unit ?? product.unit,
+          product,
+        );
+        const packaging = buildPackagingBreakdown(
+          stockQuantity,
+          product.packagingProfile,
+        );
+
+        await this.decrementStock(
+          tx,
+          product.id,
+          dto.fromWarehouseId,
+          stockQuantity,
+        );
+        await tx.productWarehouse.upsert({
+          where: {
+            productId_warehouseId: {
+              productId: product.id,
+              warehouseId: dto.toWarehouseId,
+            },
+          },
+          update: { quantity: { increment: stockQuantity } },
+          create: {
+            productId: product.id,
+            warehouseId: dto.toWarehouseId,
+            quantity: stockQuantity,
+          },
+        });
+
+        const movement = await tx.inventoryMovement.create({
+          data: {
+            productId: product.id,
+            fromWarehouseId: dto.fromWarehouseId,
+            toWarehouseId: dto.toWarehouseId,
+            createdByUserId: actor.sub,
+            approvedByUserId: actor.sub,
+            quantity: stockQuantity,
+            movementType: InventoryMovementType.TRASLADO,
+            reason: dto.supportNote?.trim() || 'Traslado entre bodegas',
+            approvedAt: new Date(),
+            packagingBoxes: packaging?.boxes,
+            packagingPackages: packaging?.packages,
+            packagingUnits: packaging?.units,
+          },
+        });
+
+        await tx.inventoryTransferTicket.create({
+          data: {
+            movementId: movement.id,
+            ticketNumber: `${batchNumber}-${String(index + 1).padStart(3, '0')}`,
+            batchNumber,
+            status: 'APROBADO',
+            supportNote: dto.supportNote?.trim() || null,
+            createdByUserId: actor.sub,
+            approvedByUserId: actor.sub,
+            approvedAt: new Date(),
+          },
+        });
+
+        created.push(movement.id);
+      }
+
+      return tx.inventoryMovement.findMany({
+        where: { id: { in: created } },
+        include: this.movementInclude,
+        orderBy: { id: 'asc' },
+      });
+    });
+
+    await this.auditLogService.log({
+      actor,
+      module: 'INVENTARIO',
+      action: 'APPROVE_TRANSFER_BATCH',
+      entityType: 'InventoryTransferTicket',
+      entityId: movements[0]?.transferTicket?.id,
+      entityLabel: batchNumber,
+      description: `Aprobó un traslado de ${movements.length} producto(s)`,
+      metadata: {
+        batchNumber,
+        movementIds: movements.map((movement) => movement.id),
+        fromWarehouseId: dto.fromWarehouseId,
+        toWarehouseId: dto.toWarehouseId,
+      },
+    });
+
+    return { batchNumber, movements };
+  }
+
   async adjustment(dto: InventoryAdjustmentDto, actor: AuthUser) {
     const movement = await this.prisma.$transaction(async (tx) => {
       const product = await this.productResolver.resolve(dto, tx, {
@@ -556,6 +666,7 @@ export class InventarioService {
       select: {
         id: true,
         ticketNumber: true,
+        batchNumber: true,
         status: true,
         supportNote: true,
         approvedAt: true,
@@ -772,6 +883,7 @@ export class InventarioService {
     return {
       OR: [
         { ticketNumber: { contains: q, mode: 'insensitive' as const } },
+        { batchNumber: { contains: q, mode: 'insensitive' as const } },
         { supportNote: { contains: q, mode: 'insensitive' as const } },
         {
           movement: {
@@ -808,5 +920,9 @@ export class InventarioService {
     const suffix = Math.floor(Math.random() * 900 + 100);
 
     return `TRS-${datePart}-${timePart}-${suffix}`;
+  }
+
+  private generateTransferBatchNumber() {
+    return `${this.generateTransferTicketNumber()}-GRUPO`;
   }
 }

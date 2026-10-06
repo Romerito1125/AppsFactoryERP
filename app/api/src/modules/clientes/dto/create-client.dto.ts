@@ -3,8 +3,11 @@ import {
   IsBoolean,
   IsEmail,
   IsEnum,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
+  Min,
   MinLength,
 } from 'class-validator';
 
@@ -32,6 +35,20 @@ export class CreateClientDto {
   @IsOptional()
   @IsString({ message: 'La dirección debe ser texto.' })
   address?: string;
+
+  @IsOptional()
+  @IsString({ message: 'El barrio debe ser texto.' })
+  neighborhood?: string;
+
+  @IsOptional()
+  @IsString({ message: 'El punto de referencia debe ser texto.' })
+  referencePoint?: string;
+
+  @IsOptional()
+  @IsInt({ message: 'El precio predeterminado no es válido.' })
+  @Min(0)
+  @Max(3)
+  priceLevel?: number;
 
   @IsEnum(ClientType, { message: 'El tipo de cliente no es válido.' })
   clientType: ClientType;

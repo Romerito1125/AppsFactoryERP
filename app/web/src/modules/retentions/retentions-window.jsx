@@ -288,7 +288,7 @@ export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
           >
             <div className="provider-table-head" role="row">
               <span>Código</span>
-              <span>Descripción</span>
+              <span>Nombre</span>
             </div>
             {filteredRetentions.map((retention) => (
               <button
@@ -327,7 +327,7 @@ export function RetentionsWindow({ onClose, onRequestLogin, canAccess }) {
           <div className="provider-summary-form retention-summary-form">
             <SummaryField label="Código" value={shownRetention?.code ?? ""} />
             <SummaryField
-              label="Descripción"
+              label="Nombre"
               value={shownRetention?.description ?? ""}
             />
           </div>
@@ -483,7 +483,7 @@ function RetentionMain({ retention, editing, onChange, fieldErrors }) {
           error={fieldErrors?.code}
         />
         <RetentionTextField
-          label="Descripción"
+          label="Nombre"
           value={retention.description}
           editing={editing}
           onChange={(value) => onChange("description", value)}
@@ -739,9 +739,9 @@ function validateRetentionDraft(retention) {
   const errors = {};
   if (!retention.code?.trim()) errors.code = "El código es obligatorio.";
   if (!retention.description?.trim())
-    errors.description = "La descripción es obligatoria.";
+    errors.description = "El nombre es obligatorio.";
   else if (retention.description.trim().length < 2)
-    errors.description = "La descripción debe tener al menos 2 caracteres.";
+    errors.description = "El nombre debe tener al menos 2 caracteres.";
   for (const [field, label] of [
     ["subtracting", "El sustraendo"],
     ["minimumBase", "La base mínima"],
