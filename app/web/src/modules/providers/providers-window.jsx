@@ -132,6 +132,7 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
   const [deleting, setDeleting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState({});
   const [providerProducts, setProviderProducts] = useState([]);
+  const [providerProductsLoaded, setProviderProductsLoaded] = useState(false);
   const [nestedProductId, setNestedProductId] = useState(null);
   const {
     handlePointerDown,
@@ -201,7 +202,9 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
     setFieldErrors({});
     setNestedProductId(null);
     setProviderProducts([]);
-    if (activeTab === "products") loadProviderProducts(recordId);
+    if (activeTab === "products" || activeTab === "statistics") {
+      loadProviderProducts(recordId);
+    }
   }
   function handleAdd() {
     if (!canEdit) return;
@@ -322,8 +325,10 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
     if (next) selectProvider(next.recordId);
   }
   async function loadProviderProducts(recordId) {
+    setProviderProductsLoaded(false);
     if (recordId === null || recordId === undefined) {
       setProviderProducts([]);
+      setProviderProductsLoaded(true);
       return;
     }
     try {
@@ -333,11 +338,13 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
       setProviderProducts(items);
     } catch (requestError) {
       setError(requestError.message);
+    } finally {
+      setProviderProductsLoaded(true);
     }
   }
 
   return (
-    <div className="provider-window-host" style={windowStyle}>
+    <div className="provider-window-host providers-window-host" style={windowStyle}>
       <section
         className={`provider-window ${isDragging ? "is-dragging" : ""}`}
         aria-label="Ventana de proveedores"
@@ -493,7 +500,7 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
                     key={tab.id}
                     onClick={() => {
                       setActiveTab(tab.id);
-                      if (tab.id === "products")
+                      if (tab.id === "products" || tab.id === "statistics")
                         loadProviderProducts(selectedId);
                     }}
                   >
@@ -537,6 +544,7 @@ export function ProvidersWindow({ onClose, onRequestLogin, canAccess }) {
               loading={loading}
               fieldErrors={fieldErrors}
               providerProducts={providerProducts}
+              providerProductsLoaded={providerProductsLoaded}
               onOpenProduct={setNestedProductId}
             />
             {editing && hasChanges && activeTab !== "statistics" && activeTab !== "products" && (
@@ -651,6 +659,7 @@ function ProviderDetails({
   loading,
   fieldErrors,
   providerProducts,
+  providerProductsLoaded,
   onOpenProduct,
 }) {
   if (!provider)
@@ -663,7 +672,12 @@ function ProviderDetails({
     );
   if (activeTab === "statistics") {
     return (
-      <div className="provider-tab-panel data-panel">
+      <div className="provider-tab-panel data-panel provider-overview-panel">
+        <ProviderInsightCards
+          provider={provider}
+          products={providerProducts}
+          productsLoaded={providerProductsLoaded}
+        />
         <ProviderDataTable
           caption="Compras acumuladas por período"
           columns={[
@@ -683,28 +697,46 @@ function ProviderDetails({
 
   if (activeTab === "products") {
     return (
-      <div className="provider-tab-panel data-panel">
-        <ProviderDataTable
-          caption={`Productos asociados a ${provider.name || provider.description}`}
-          columns={["Código", "Producto", "Stock", "Mínimo", "Máximo", "Semáforo"]}
-          rows={providerProducts.map((row) => [
-            row.barcodes?.find((barcode) => barcode.isPrimary)?.code ??
-              String(row.id),
-            row.name,
-            formatProviderStock(row.totalStock ?? row.stock),
-            formatProviderStock(row.minimumStock),
-            row.maximumStock === null || row.maximumStock === undefined
-              ? "—"
-              : formatProviderStock(row.maximumStock),
-            <span className={`provider-stock-signal ${providerStockTone(row)}`}>
-              <span aria-hidden="true" /> {providerStockLabel(row)}
-            </span>,
-          ])}
-          rowKeys={providerProducts.map((row) => row.id)}
-          onRowDoubleClick={(index) =>
-            onOpenProduct?.(providerProducts[index]?.id)
-          }
+      <div className="provider-tab-panel data-panel provider-products-panel">
+        <ProviderInsightCards
+          provider={provider}
+          products={providerProducts}
+          productsLoaded={providerProductsLoaded}
         />
+        <div className="provider-stock-toolbar">
+          <strong>Control de inventario</strong>
+          <span>Haz doble clic en un producto para abrir su ficha y ajustar sus límites.</span>
+          <div className="provider-stock-legend" aria-label="Estados del semáforo">
+            <span className="provider-stock-signal is-low"><span aria-hidden="true" /> Bajo</span>
+            <span className="provider-stock-signal is-ok"><span aria-hidden="true" /> Normal</span>
+            <span className="provider-stock-signal is-limit"><span aria-hidden="true" /> Límite</span>
+          </div>
+        </div>
+        {providerProductsLoaded ? (
+          <ProviderDataTable
+            caption={`Productos asociados a ${provider.name || provider.description}`}
+            columns={["Código", "Producto", "Stock", "Mínimo", "Máximo", "Semáforo"]}
+            rows={providerProducts.map((row) => [
+              row.barcodes?.find((barcode) => barcode.isPrimary)?.code ??
+                String(row.id),
+              row.name,
+              formatProviderStock(row.totalStock ?? row.stock),
+              formatProviderStock(row.minimumStock),
+              row.maximumStock === null || row.maximumStock === undefined
+                ? "—"
+                : formatProviderStock(row.maximumStock),
+              <span className={`provider-stock-signal ${providerStockTone(row)}`}>
+                <span aria-hidden="true" /> {providerStockLabel(row)}
+              </span>,
+            ])}
+            rowKeys={providerProducts.map((row) => row.id)}
+            onRowDoubleClick={(index) =>
+              onOpenProduct?.(providerProducts[index]?.id)
+            }
+          />
+        ) : (
+          <div className="provider-products-loading">Cargando inventario del proveedor…</div>
+        )}
       </div>
     );
   }
@@ -937,6 +969,86 @@ function ProviderDetails({
   );
 }
 
+function ProviderInsightCards({ provider, products, productsLoaded }) {
+  const productCount = productsLoaded
+    ? products.length
+    : Number(provider.productCount ?? 0);
+  const stockTotal = productsLoaded
+    ? products.reduce((total, product) => total + providerStockValue(product), 0)
+    : null;
+  const lowStockCount = productsLoaded
+    ? products.filter((product) => providerStockTone(product) === "is-low").length
+    : null;
+  const limitStockCount = productsLoaded
+    ? products.filter((product) => providerStockTone(product) === "is-limit").length
+    : null;
+  const inventoryValue = productsLoaded
+    ? products.reduce(
+        (total, product) => total + providerInventoryValue(product),
+        0,
+      )
+    : null;
+
+  return (
+    <div className="provider-insights" aria-label="Resumen operativo del proveedor">
+      <ProviderInsightCard
+        label="Productos asociados"
+        value={productCount}
+        detail="Referencias activas"
+      />
+      <ProviderInsightCard
+        label="Stock total"
+        value={stockTotal === null ? "—" : formatProviderStock(stockTotal)}
+        detail="Unidades en bodegas"
+      />
+      <ProviderInsightCard
+        label="Bajo mínimo"
+        value={lowStockCount === null ? "—" : lowStockCount}
+        detail="Requieren reposición"
+        tone="is-low"
+      />
+      <ProviderInsightCard
+        label="En límite"
+        value={limitStockCount === null ? "—" : limitStockCount}
+        detail="Revisar capacidad"
+        tone="is-limit"
+      />
+      <ProviderInsightCard
+        label="Valor inventario"
+        value={
+          inventoryValue === null
+            ? "—"
+            : formatProviderCurrency(inventoryValue)
+        }
+        detail="Costo estimado"
+      />
+      <ProviderInsightCard
+        label="Compras registradas"
+        value={provider.purchaseCount ?? 0}
+        detail="Órdenes asociadas"
+      />
+    </div>
+  );
+}
+
+function ProviderInsightCard({ label, value, detail, tone = "" }) {
+  return (
+    <div className={`provider-insight-card ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </div>
+  );
+}
+
+function formatProviderCurrency(value) {
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 0,
+  }).format(Number(value ?? 0));
+}
+
 function formatProviderStock(value) {
   const amount = Number(value ?? 0);
   return Number.isInteger(amount) ? String(amount) : amount.toFixed(3);
@@ -947,6 +1059,13 @@ function providerStockValue(product) {
     (sum, row) => sum + Number(row.quantity ?? 0),
     0,
   ));
+}
+
+function providerInventoryValue(product) {
+  if (product?.inventoryValue !== null && product?.inventoryValue !== undefined) {
+    return Number(product.inventoryValue);
+  }
+  return providerStockValue(product) * Number(product?.cost ?? 0);
 }
 
 function providerStockTone(product) {

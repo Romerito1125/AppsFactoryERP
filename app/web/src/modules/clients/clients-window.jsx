@@ -6,6 +6,7 @@ import {
   CircleX,
   Copy,
   FileText,
+  Link2,
   LoaderCircle,
   Plus,
   Search,
@@ -620,22 +621,40 @@ function ClientMain({ client, editing, onChange, fieldErrors }) {
 
 function ReferralLinkField({ code }) {
   const link = getReferralLink(code);
+  const [copied, setCopied] = useState(false);
 
   async function copyLink() {
     if (!link || !navigator.clipboard) return;
-    await navigator.clipboard.writeText(link);
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
   }
 
   return (
     <div className="detail-field wide-field client-referral-link-field">
-      <label>Link de referido</label>
-      <div className="client-referral-link-control">
-        <input value={link} readOnly placeholder="Se genera al guardar el cliente" />
-        <button type="button" onClick={copyLink} disabled={!link} title="Copiar link de referido" aria-label="Copiar link de referido">
-          <Copy size={14} />
-        </button>
+      <div className="client-referral-link-card">
+        <div className="client-referral-link-heading">
+          <div>
+            <strong>Link de referido</strong>
+            <span>Enlace público de MundoTienda</span>
+          </div>
+          <Link2 size={17} aria-hidden="true" />
+        </div>
+        <div className="client-referral-link-control">
+          <input value={link} readOnly placeholder="Se genera al guardar el cliente" aria-label="Link de referido" />
+          <button type="button" onClick={copyLink} disabled={!link} title="Copiar link de referido">
+            <Copy size={14} /> {copied ? "Copiado" : "Copiar enlace"}
+          </button>
+        </div>
+        <div className="client-referral-link-note">
+          <Check size={14} aria-hidden="true" />
+          <span>Comparte este enlace para conservar la relación de referido al registrarse.</span>
+        </div>
       </div>
-      <small>Comparte este enlace para conservar la relación de referido al registrarse.</small>
     </div>
   );
 }
@@ -798,7 +817,13 @@ function SummaryField({ label, value }) {
 function getReferralLink(code) {
   const normalizedCode = String(code ?? "").trim();
   if (!normalizedCode) return "";
-  return `mundotiendaapp://registro?ref=${encodeURIComponent(normalizedCode)}`;
+  const publicUrl = String(
+    import.meta.env.VITE_MUNDOTIENDA_WEB_URL ??
+      "https://mundotienda.appsfactory.com.co",
+  ).replace(/\/+$/, "");
+  const link = new URL(`${publicUrl}/registro`);
+  link.searchParams.set("ref", normalizedCode);
+  return link.toString();
 }
 
 function toDraft(client) {

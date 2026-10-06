@@ -80,7 +80,7 @@ export const toolbarItems = [
     permission: "PRODUCTS_VIEW",
   },
   {
-    label: "Traslados",
+    label: "Inventario",
     icon: ArrowLeftRight,
     tone: "orange",
     action: "inventory-transfers",
