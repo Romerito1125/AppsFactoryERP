@@ -1144,7 +1144,7 @@ export function ProductsWindow({
             </div>
           </div>
           <div
-            className="provider-table product-list-table"
+            className={`provider-table product-list-table ${productView === "grid" ? "is-grid-view" : "is-list-view"}`}
             role="table"
             aria-label="Listado de productos"
           >
@@ -1166,50 +1166,50 @@ export function ProductsWindow({
                     favoriteLoading={favoriteLoadingId === String(product.recordId)}
                   />
                 ))}
+                {loading && <div className="window-state">Cargando productos…</div>}
+                {!loading && !filteredProducts.length && (
+                  <div className="window-state">No hay productos para mostrar.</div>
+                )}
               </div>
             ) : (
-              filteredProducts.map((product) => (
-                <div
-                  className={
-                    product.recordId === selectedId
-                      ? "product-list-row is-selected"
-                      : "product-list-row"
-                  }
-                  role="row"
-                  key={product.recordId}
-                >
-                  <button
+              <div className="product-list-items" role="rowgroup">
+                {filteredProducts.map((product) => (
+                  <div
                     className={
                       product.recordId === selectedId
-                        ? "provider-table-row is-selected"
-                        : "provider-table-row"
+                        ? "product-list-row is-selected"
+                        : "product-list-row"
                     }
-                    type="button"
-                    onClick={() => selectProduct(product.recordId)}
+                    role="row"
+                    key={product.recordId}
                   >
-                    <span>{product.code}</span>
-                    <span>{product.name}</span>
-                  </button>
-                  <FavoriteButton
-                    product={product}
-                    favorite={favoriteSet.has(String(product.recordId))}
-                    onToggle={toggleFavorite}
-                    loading={favoriteLoadingId === String(product.recordId)}
-                  />
-                </div>
-              ))
-            )}
-            {loading && <div className="window-state">Cargando productos…</div>}
-            {!loading && !filteredProducts.length && (
-              <div className="window-state">No hay productos para mostrar.</div>
-            )}
-            {productView === "list" && (
-              <div className="provider-empty-rows" aria-hidden="true">
-                {Array.from({
-                  length: Math.max(0, 9 - filteredProducts.length),
-                }).map((_, index) => (
-                  <span key={index} />
+                    <button
+                      className={
+                        product.recordId === selectedId
+                          ? "provider-table-row is-selected"
+                          : "provider-table-row"
+                      }
+                      type="button"
+                      onClick={() => selectProduct(product.recordId)}
+                    >
+                      <span>{product.code}</span>
+                      <span className="product-list-name">
+                        <strong>{product.name}</strong>
+                        <small>Marca: {product.brand || "Sin marca"}</small>
+                      </span>
+                    </button>
+                    <FavoriteButton
+                      product={product}
+                      favorite={favoriteSet.has(String(product.recordId))}
+                      onToggle={toggleFavorite}
+                      loading={favoriteLoadingId === String(product.recordId)}
+                    />
+                  </div>
                 ))}
+                {loading && <div className="window-state">Cargando productos…</div>}
+                {!loading && !filteredProducts.length && (
+                  <div className="window-state">No hay productos para mostrar.</div>
+                )}
               </div>
             )}
           </div>
@@ -2609,6 +2609,7 @@ function ProductCard({
         <ProductThumbnail product={product} />
         <span className="product-card-copy">
           <strong>{product.name || "Producto sin nombre"}</strong>
+          <span className="product-card-brand">{product.brand || "Sin marca"}</span>
           <span>{product.code}</span>
           <small>
             Stock {product.stock ?? 0} · {formatCurrency(product.cost)}
@@ -2986,31 +2987,83 @@ function ProductField({
 function BrandField({ label, value, editing, onChange, brands = [], error = "" }) {
   const inputId = "product-brand-input";
   const listId = "product-brand-options";
+  const [open, setOpen] = useState(false);
+  const normalizedValue = String(value ?? "").trim().toLocaleLowerCase("es");
+  const matchingBrands = brands.filter((brand) =>
+    !normalizedValue || brand.toLocaleLowerCase("es").includes(normalizedValue),
+  );
+
   return (
-    <div className={`detail-field ${error ? "has-error" : ""}`}>
+    <div className={`detail-field brand-field ${error ? "has-error" : ""}`}>
       <label htmlFor={inputId}>{label}</label>
       {editing ? (
-        <input
-          id={inputId}
-          list={listId}
-          className={`detail-input ${error ? "is-invalid" : ""}`}
-          value={value ?? ""}
-          placeholder="Selecciona o escribe una marca"
-          aria-invalid={Boolean(error)}
-          title={error || undefined}
-          onChange={(event) => onChange?.(event.target.value)}
-        />
+        <div className={`brand-field-control ${open ? "is-open" : ""}`}>
+          <input
+            id={inputId}
+            className={`detail-input ${error ? "is-invalid" : ""}`}
+            value={value ?? ""}
+            placeholder="Selecciona o escribe una marca"
+            autoComplete="off"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={open}
+            aria-controls={listId}
+            aria-invalid={Boolean(error)}
+            title={error || undefined}
+            onFocus={() => setOpen(true)}
+            onBlur={() => setOpen(false)}
+            onChange={(event) => {
+              onChange?.(event.target.value);
+              setOpen(true);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setOpen(false);
+              if (event.key === "Enter" && open && matchingBrands.length) {
+                event.preventDefault();
+                onChange?.(matchingBrands[0]);
+                setOpen(false);
+              }
+            }}
+          />
+          {open && (
+            <div id={listId} className="brand-options" role="listbox" aria-label="Marcas disponibles">
+              {matchingBrands.map((brand) => (
+                <button
+                  key={brand}
+                  type="button"
+                  role="option"
+                  aria-selected={brand === value}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    onChange?.(brand);
+                    setOpen(false);
+                  }}
+                >
+                  {brand}
+                </button>
+              ))}
+              {normalizedValue && !brands.some((brand) => brand.toLocaleLowerCase("es") === normalizedValue) && (
+                <button
+                  type="button"
+                  className="brand-option-create"
+                  role="option"
+                  aria-selected="false"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => setOpen(false)}
+                >
+                  Usar “{value.trim()}” como marca nueva
+                </button>
+              )}
+              {!matchingBrands.length && !normalizedValue && (
+                <span className="brand-options-empty">Escribe para agregar una marca nueva.</span>
+              )}
+            </div>
+          )}
+        </div>
       ) : (
         <div className="detail-control">
           <span>{value || " "}</span>
         </div>
-      )}
-      {editing && (
-        <datalist id={listId}>
-          {brands.map((brand) => (
-            <option key={brand} value={brand} />
-          ))}
-        </datalist>
       )}
       {error && <span className="field-error">{error}</span>}
     </div>

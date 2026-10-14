@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsDateString,
   IsEnum,
   IsInt,
   IsNumber,
@@ -46,6 +47,12 @@ export class CreateInvoiceDto {
   @IsOptional()
   @IsEnum(SaleMode)
   saleMode?: SaleMode;
+
+  @IsOptional()
+  @IsDateString({}, {
+    message: 'La fecha de vencimiento del crédito no es válida.',
+  })
+  creditDueDate?: string;
 
   @IsOptional()
   @Type(() => Number)

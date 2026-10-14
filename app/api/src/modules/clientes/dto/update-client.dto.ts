@@ -1,9 +1,11 @@
+import { Type } from 'class-transformer';
 import { ClientType } from '@prisma/client';
 import {
   IsBoolean,
   IsEmail,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -56,6 +58,21 @@ export class UpdateClientDto {
   @Min(0)
   @Max(3)
   priceLevel?: number;
+
+  @IsOptional()
+  @IsBoolean({
+    message: 'La configuración de crédito debe ser verdadera o falsa.',
+  })
+  hasCredit?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'El límite de crédito debe ser un valor válido.' },
+  )
+  @Min(0, { message: 'El límite de crédito no puede ser negativo.' })
+  maxCredit?: number;
 
   @IsOptional()
   @IsEmail({}, { message: 'El correo no es válido.' })

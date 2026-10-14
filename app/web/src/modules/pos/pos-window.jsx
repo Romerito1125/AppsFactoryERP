@@ -230,6 +230,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
 
   function handleClientChange(nextClientId) {
     const nextClient = clients.find((client) => String(client.id) === String(nextClientId));
+    if (!hasCreditCapacity(nextClient)) setSaleMode("CONTADO");
     setOfferPricingLoading(products.some((product) => priceForClient(product, nextClient, selectedPriceLevel)));
     setOfferPrices({});
     setSelectedClientId(String(nextClientId));
@@ -364,6 +365,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
     if (!cart.length) return setError("Agrega al menos un producto para facturar.");
     if (!selectedSellerId) return setError("Selecciona quién realiza la venta.");
     if (saleMode === "CONTADO" && !selectedAccountId) return setError("Selecciona una cuenta de recaudo.");
+    if (saleMode === "CREDITO" && !hasCreditCapacity(selectedClient)) return setError("Configura el crédito y su límite en la ficha del cliente para vender a crédito.");
     if (saleMode === "CREDITO" && !creditDueDate) return setError("Selecciona la fecha de vencimiento.");
     setSaving(true);
     setError("");
@@ -374,13 +376,12 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
         warehouseId: selectedWarehouseId ? Number(selectedWarehouseId) : undefined,
         source: "POS",
         saleMode,
+        ...(saleMode === "CREDITO" ? { creditDueDate: new Date(`${creditDueDate}T00:00:00`).toISOString() } : {}),
         priceLevel: Number(selectedPriceLevel),
         items: cart.map((item) => ({ productId: item.productId, productPriceId: item.productPriceId, warehouseId: selectedWarehouseId ? Number(selectedWarehouseId) : undefined, quantity: item.quantity })),
       });
       if (saleMode === "CONTADO") {
         await apiClient.post("/movimientos-bancarios/ingreso", { bankAccountId: Number(selectedAccountId), amount: Number(invoice.total), invoiceId: invoice.id, description: `Recaudo venta ${invoice.consecutive}` });
-      } else {
-        await apiClient.post(`/facturas/${invoice.id}/credito`, { dueDate: new Date(`${creditDueDate}T00:00:00`).toISOString() });
       }
       const soldLines = cart.map((item) => ({
         productId: item.productId,
@@ -609,8 +610,9 @@ function BillingView({
         <div className="new-pos-ticket-lines">{cart.length ? cart.map((item) => <CartLine key={item.productId} item={item} onUpdateQuantity={onUpdateQuantity} selectedPriceLevel={selectedPriceLevel} />) : <EmptyState icon={<ShoppingCart size={26} />} title="Ticket vacío" detail="Agrega productos desde la búsqueda o escanea un código." />}</div>
         <div className="new-pos-ticket-bottom">
           <div className="new-pos-total-lines"><span>Subtotal <b>{formatCurrency(totals.subtotal)}</b></span><span>IVA <b>{formatCurrency(totals.taxes)}</b></span><span className="is-total">Total <strong>{formatCurrency(totals.total)}</strong></span></div>
-          <div className="new-pos-payment-heading"><span>Forma de pago</span><div className="new-pos-payment-switch"><button type="button" className={saleMode === "CONTADO" ? "is-active" : ""} onClick={() => onSaleModeChange("CONTADO")}>Contado</button><button type="button" className={saleMode === "CREDITO" ? "is-active" : ""} onClick={() => onSaleModeChange("CREDITO")}>Crédito</button></div></div>
-          {saleMode === "CONTADO" ? <label className="new-pos-field"><span>Cuenta de recaudo</span><select value={selectedAccountId} onChange={(event) => onAccountChange(event.target.value)}><option value="">Selecciona una cuenta</option>{bankAccounts.map((account) => <option value={account.id} key={account.id}>{account.name} · {account.bankName}</option>)}</select></label> : <label className="new-pos-field"><span>Vencimiento</span><input type="date" value={creditDueDate} onChange={(event) => onDueDateChange(event.target.value)} /></label>}
+          <div className="new-pos-payment-heading"><span>Forma de pago</span><div className="new-pos-payment-switch"><button type="button" className={saleMode === "CONTADO" ? "is-active" : ""} onClick={() => onSaleModeChange("CONTADO")}>Contado</button><button type="button" className={saleMode === "CREDITO" ? "is-active" : ""} disabled={!hasCreditCapacity(selectedClient)} onClick={() => onSaleModeChange("CREDITO")}>Crédito</button></div></div>
+          {!hasCreditCapacity(selectedClient) && <small className="new-pos-credit-hint">El cliente no tiene crédito configurado.</small>}
+          {saleMode === "CONTADO" ? <label className="new-pos-field"><span>Cuenta de recaudo</span><select value={selectedAccountId} onChange={(event) => onAccountChange(event.target.value)}><option value="">Selecciona una cuenta</option>{bankAccounts.map((account) => <option value={account.id} key={account.id}>{account.name} · {account.bankName}</option>)}</select></label> : <div className="new-pos-credit-fields"><label className="new-pos-field"><span>Vencimiento</span><input type="date" value={creditDueDate} onChange={(event) => onDueDateChange(event.target.value)} /></label><small>Límite asignado: {formatCurrency(selectedClient?.maxCredit)}</small></div>}
           <div className="new-pos-ticket-actions"><button type="button" className="new-pos-primary-button" disabled={saving || !cart.length} onClick={onSaveInvoice}>{saving ? <LoaderCircle size={15} className="is-spinning" /> : <Check size={15} />} {saving ? "Procesando…" : "Emitir factura"}</button></div>
           {saleConfirmation?.consecutive && (
             <TransientMessage
@@ -905,6 +907,10 @@ function defaultDueDate() {
 
 function formatCurrency(value) {
   return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(Number(value ?? 0));
+}
+
+function hasCreditCapacity(client) {
+  return Boolean(client?.hasCredit && Number(client.maxCredit) > 0);
 }
 
 function isAuthError(error) {

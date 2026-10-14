@@ -338,6 +338,7 @@ export function SalesWindow({
     const nextPriceLevel = String(nextClient?.priceLevel ?? 0);
     setSelectedClientId(String(nextClientId));
     setSelectedPriceLevel(nextPriceLevel);
+    if (!hasCreditCapacity(nextClient)) setSaleMode("CONTADO");
     applyPriceSelection(nextClient, nextPriceLevel);
   }
 
@@ -540,6 +541,10 @@ export function SalesWindow({
       setError("Selecciona una cuenta bancaria para registrar el recaudo.");
       return;
     }
+    if (saleMode === "CREDITO" && !hasCreditCapacity(selectedClient)) {
+      setError("Configura el crédito y su límite en la ficha del cliente para vender a crédito.");
+      return;
+    }
     if (saleMode === "CREDITO" && !creditDueDate) {
       setError("Selecciona la fecha de vencimiento del crédito.");
       return;
@@ -555,6 +560,9 @@ export function SalesWindow({
           : undefined,
         source: "POS",
         saleMode,
+        ...(saleMode === "CREDITO"
+          ? { creditDueDate: new Date(`${creditDueDate}T00:00:00`).toISOString() }
+          : {}),
         priceLevel: Number(selectedPriceLevel),
         items: cart.map((item) => ({
           productId: item.productId,
@@ -575,10 +583,6 @@ export function SalesWindow({
           amount: Number(invoice.total),
           invoiceId: invoice.id,
           description: `Recaudo venta ${invoice.consecutive}`,
-        });
-      } else {
-        await apiClient.post(`/facturas/${invoice.id}/credito`, {
-          dueDate: new Date(`${creditDueDate}T00:00:00`).toISOString(),
         });
       }
 
@@ -1438,6 +1442,8 @@ function TicketPanel({
           />
           <SalesPaymentBox
             bankAccounts={bankAccounts}
+            creditEnabled={hasCreditCapacity(selectedClient)}
+            creditLimit={selectedClient?.maxCredit}
             selectedAccountId={selectedAccountId}
             saleMode={saleMode}
             creditDueDate={creditDueDate}
@@ -1492,6 +1498,8 @@ function TicketPanel({
 
 function SalesPaymentBox({
   bankAccounts,
+  creditEnabled,
+  creditLimit,
   selectedAccountId,
   saleMode,
   creditDueDate,
@@ -1515,15 +1523,23 @@ function SalesPaymentBox({
           />
           <span>Contado</span>
         </label>
-        <label className={saleMode === "CREDITO" ? "is-selected" : ""}>
+        <label
+          className={`${saleMode === "CREDITO" ? "is-selected" : ""} ${creditEnabled ? "" : "is-disabled"}`}
+        >
           <input
             type="radio"
             checked={saleMode === "CREDITO"}
+            disabled={!creditEnabled}
             onChange={() => onSaleModeChange("CREDITO")}
           />
           <span>Crédito</span>
         </label>
       </div>
+      {!creditEnabled && (
+        <small className="sales-credit-hint">
+          El cliente seleccionado no tiene crédito configurado.
+        </small>
+      )}
       {saleMode === "CONTADO" ? (
         <label>
           <span>Cuenta de recaudo</span>
@@ -1540,14 +1556,17 @@ function SalesPaymentBox({
           </select>
         </label>
       ) : (
-        <label>
-          <span>Vencimiento del crédito</span>
-          <input
-            type="date"
-            value={creditDueDate}
-            onChange={(event) => onDueDateChange(event.target.value)}
-          />
-        </label>
+        <div className="sales-credit-fields">
+          <label>
+            <span>Vencimiento del crédito</span>
+            <input
+              type="date"
+              value={creditDueDate}
+              onChange={(event) => onDueDateChange(event.target.value)}
+            />
+          </label>
+          <small>Límite asignado: {formatCurrency(creditLimit)}</small>
+        </div>
       )}
     </div>
   );
@@ -3152,6 +3171,9 @@ function defaultDueDate() {
   const due = new Date();
   due.setDate(due.getDate() + 15);
   return due.toISOString().slice(0, 10);
+}
+function hasCreditCapacity(client) {
+  return Boolean(client?.hasCredit && Number(client.maxCredit) > 0);
 }
 function formatCurrency(value) {
   return new Intl.NumberFormat("es-CO", {

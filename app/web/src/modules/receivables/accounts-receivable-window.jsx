@@ -91,11 +91,18 @@ export function AccountsReceivableWindow({
           bankAccountsResult.status === "fulfilled"
             ? bankAccountsResult.value
             : [];
-        const nextClients = clientItems.map(mapClient);
-        setClients(nextClients);
+        const mappedClients = clientItems.map(mapClient);
         setProducts(productItems.filter(isActiveProduct));
         setWarehouses(warehouseItems.filter(isActive));
         const nextCredits = creditItems.map(mapCredit);
+        const nextClients = mappedClients.filter(
+          (client) =>
+            client.hasCredit ||
+            nextCredits.some(
+              (credit) => credit.clientId === client.id && credit.balance > 0,
+            ),
+        );
+        setClients(nextClients);
         setCredits(nextCredits);
         setBankAccounts(bankItems);
         const firstClientWithBalance = nextClients.find((client) =>
@@ -189,20 +196,6 @@ export function AccountsReceivableWindow({
     setSelectedClientId(id);
     setSelectedCreditId(null);
     setEditor(null);
-    setError("");
-    setNotice("");
-  }
-
-  function startCredit() {
-    if (!canEdit) return;
-    const firstProduct = products.find((product) => getDefaultPrice(product));
-    setEditor({
-      type: "credit",
-      clientId: String(selectedClientId ?? ""),
-      warehouseId: String(warehouses[0]?.id ?? ""),
-      items: [createReceivableItem(firstProduct)],
-      dueDate: todayValue(),
-    });
     setError("");
     setNotice("");
   }
@@ -450,7 +443,7 @@ export function AccountsReceivableWindow({
             ))}
             {loading && <div className="window-state">Cargando cuentas…</div>}
             {!loading && !filteredClients.length && (
-              <div className="window-state">No hay clientes para mostrar.</div>
+              <div className="window-state">No hay clientes con crédito configurado.</div>
             )}
             <div className="provider-empty-rows" aria-hidden="true">
               {Array.from({
@@ -503,7 +496,6 @@ export function AccountsReceivableWindow({
           {activeTab === "operations" && (
             <ReceivableOperations
               credits={clientCredits}
-              onNewCredit={startCredit}
               onPayment={() => startPayment()}
               onStatement={() => setActiveTab("statement")}
               canEdit={canEdit}
@@ -575,13 +567,6 @@ export function AccountsReceivableWindow({
         <div className="provider-crud-actions">
           <button
             type="button"
-            onClick={startCredit}
-            disabled={!canEdit}
-          >
-            <Plus size={14} /> Nueva venta a crédito
-          </button>
-          <button
-            type="button"
             onClick={() => startPayment()}
             disabled={!openCredits.length || !canEdit}
           >
@@ -616,7 +601,6 @@ export function AccountsReceivableWindow({
 
 function ReceivableOperations({
   credits,
-  onNewCredit,
   onPayment,
   onStatement,
   canEdit,
@@ -640,13 +624,6 @@ function ReceivableOperations({
       Banknote,
       onPayment,
       "Registrar un abono del cliente.",
-      true,
-    ],
-    [
-      "Nueva venta a crédito",
-      Plus,
-      onNewCredit,
-      "Crear una factura con uno o varios productos.",
       true,
     ],
   ];
@@ -1207,9 +1184,6 @@ function dueBucket(credit) {
   )
     return "overdue";
   return "upcoming";
-}
-function todayValue() {
-  return new Date().toISOString().slice(0, 10);
 }
 function formatCurrency(value) {
   return new Intl.NumberFormat("es-CO", {

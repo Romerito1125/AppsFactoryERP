@@ -62,6 +62,10 @@ export class ClientesService {
 
   async create(createClientDto: CreateClientDto, actor?: AuthUser) {
     const { email, password, ...clientData } = createClientDto;
+    this.validateCreditTerms(
+      clientData.hasCredit ?? false,
+      clientData.maxCredit ?? 0,
+    );
     const credentials = this.resolveCreateCredentials(email, password);
     const existingClient = await this.prisma.client.findUnique({
       where: { identification: createClientDto.identification },
@@ -132,6 +136,10 @@ export class ClientesService {
     this.ensurePositiveId(id);
     const current = await this.findOne(id);
     const { email, password, ...clientData } = updateClientDto;
+    this.validateCreditTerms(
+      updateClientDto.hasCredit ?? current.hasCredit,
+      updateClientDto.maxCredit ?? Number(current.maxCredit),
+    );
     const normalizedEmail = email?.trim().toLowerCase() || undefined;
     const hasPassword = Boolean(password);
 
@@ -438,6 +446,20 @@ export class ClientesService {
         { referralCode: { contains: q, mode: 'insensitive' as const } },
       ],
     };
+  }
+
+  private validateCreditTerms(hasCredit: boolean, maxCredit: number) {
+    const limit = Number(maxCredit);
+    if (!Number.isFinite(limit) || limit < 0) {
+      throw new BadRequestException(
+        'El límite de crédito debe ser cero o mayor',
+      );
+    }
+    if (hasCredit && limit <= 0) {
+      throw new BadRequestException(
+        'Ingresa un límite mayor que cero para habilitar el crédito',
+      );
+    }
   }
 
   private ensurePositiveId(id: number) {

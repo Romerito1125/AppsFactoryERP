@@ -29,6 +29,8 @@ const emptyClient = {
   neighborhood: "",
   referencePoint: "",
   priceLevel: 0,
+  hasCredit: false,
+  maxCredit: "0",
   clientType: "MINORISTA",
   email: "",
   password: "",
@@ -197,6 +199,8 @@ export function ClientsWindow({ onClose, onRequestLogin, canAccess }) {
       referencePoint: draft.referencePoint.trim() || undefined,
       clientType: draft.clientType,
       priceLevel: Number(draft.priceLevel ?? 0),
+      hasCredit: Boolean(draft.hasCredit),
+      maxCredit: parseCreditAmount(draft.maxCredit),
       email: draft.email.trim() || undefined,
       password: draft.password || undefined,
       isActive: Boolean(draft.isActive),
@@ -592,6 +596,23 @@ function ClientMain({ client, editing, onChange, fieldErrors }) {
         options={["0", "1", "2", "3"]}
         optionLabels={["Precio 0", "Precio 1", "Precio 2", "Precio 3"]}
       />
+      <BooleanField
+        label="Tiene crédito"
+        checked={client.hasCredit}
+        editing={editing}
+        onChange={(value) => onChange("hasCredit", value)}
+      />
+      <EditableField
+        label="Límite de crédito"
+        value={String(client.maxCredit ?? "0")}
+        displayValue={formatCreditLimit(client.maxCredit)}
+        editing={editing}
+        onChange={(value) => onChange("maxCredit", value)}
+        error={fieldErrors.maxCredit}
+        disabled={!client.hasCredit}
+        inputMode="decimal"
+        type="text"
+      />
       <EditableField
         label="Contraseña"
         value={client.password}
@@ -718,6 +739,9 @@ function EditableField({
   error = "",
   type = "text",
   autoComplete,
+  inputMode,
+  disabled = false,
+  displayValue,
   className = "",
 }) {
   return (
@@ -747,7 +771,9 @@ function EditableField({
             className={`detail-input ${error ? "is-invalid" : ""}`}
             type={type}
             autoComplete={autoComplete}
+            inputMode={inputMode}
             value={value ?? ""}
+            disabled={disabled}
             aria-invalid={Boolean(error)}
             title={error || undefined}
             onChange={(event) => onChange(event.target.value)}
@@ -755,7 +781,7 @@ function EditableField({
         )
       ) : (
         <div className="detail-control">
-          <span>{value || " "}</span>
+          <span>{displayValue ?? (value || " ")}</span>
         </div>
       )}
       {error && <span className="field-error">{error}</span>}
@@ -853,6 +879,8 @@ function hasClientDraftChanges(draft, selectedClient) {
     "neighborhood",
     "referencePoint",
     "priceLevel",
+    "hasCredit",
+    "maxCredit",
     "clientType",
     "email",
     "password",
@@ -867,6 +895,7 @@ function validateClientDraft(client, hasExistingAccess = false) {
   const lastName = client.lastName.trim();
   const email = client.email.trim();
   const password = client.password ?? "";
+  const maxCredit = parseCreditAmount(client.maxCredit);
 
   if (!identification) {
     errors.identification = "La identificación es obligatoria.";
@@ -876,6 +905,9 @@ function validateClientDraft(client, hasExistingAccess = false) {
   if (!firstName) errors.firstName = "Los nombres son obligatorios.";
   if (!lastName) errors.lastName = "Los apellidos son obligatorios.";
   if (!client.clientType) errors.clientType = "Selecciona el tipo de cliente.";
+  if (client.hasCredit && (!Number.isFinite(maxCredit) || maxCredit <= 0)) {
+    errors.maxCredit = "Indica un límite de crédito mayor que cero.";
+  }
   if (email && !/^\S+@\S+\.\S+$/.test(email)) {
     errors.email = "Escribe un correo válido.";
   }
@@ -903,5 +935,32 @@ function getClientFieldErrors(requestError) {
   if (/nombre|firstName/i.test(message)) errors.firstName = message;
   if (/apellido|lastName/i.test(message)) errors.lastName = message;
   if (/tipo de cliente|clientType/i.test(message)) errors.clientType = message;
+  if (/l[ií]mite de cr[eé]dito|maxCredit/i.test(message)) {
+    errors.maxCredit = message;
+  }
   return errors;
+}
+
+function parseCreditAmount(value) {
+  const raw = String(value ?? "0").trim().replace(/\s/g, "");
+  if (!raw) return 0;
+  const normalized = raw.includes(",")
+    ? raw.includes(".")
+      ? raw.lastIndexOf(",") > raw.lastIndexOf(".")
+        ? raw.replace(/\./g, "").replace(",", ".")
+        : raw.replace(/,/g, "")
+      : raw.replace(",", ".")
+    : raw;
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? amount : Number.NaN;
+}
+
+function formatCreditLimit(value) {
+  const amount = Number(value ?? 0);
+  if (!Number.isFinite(amount)) return "";
+  return new Intl.NumberFormat("es-CO", {
+    style: "currency",
+    currency: "COP",
+    maximumFractionDigits: 2,
+  }).format(amount);
 }

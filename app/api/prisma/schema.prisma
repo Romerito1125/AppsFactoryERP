@@ -78,6 +78,8 @@ model Client {
   neighborhood   String?
   referencePoint String?
   priceLevel     Int           @default(0)
+  hasCredit      Boolean       @default(false)
+  maxCredit      Decimal       @default(0) @db.Decimal(14, 2)
   isActive       Boolean       @default(true)
   deletedAt      DateTime?
   createdAt      DateTime      @default(now())

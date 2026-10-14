@@ -9,6 +9,7 @@ import {
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { assertClientCreditCapacity } from './credit-limit.util';
 import {
   CreateCreditPaymentDto,
   CreateInvoiceCreditDto,
@@ -28,6 +29,7 @@ export class CreditosService {
     if (!dto.totalAmount) {
       throw new BadRequestException('Ingresa el monto total del credito');
     }
+    const amount = Number(dto.totalAmount);
 
     const client = await this.prisma.client.findUnique({
       where: { id: dto.clientId },
@@ -36,39 +38,54 @@ export class CreditosService {
     if (!client.isActive)
       throw new BadRequestException('El cliente esta inactivo');
 
-    return this.prisma.invoiceCredit.create({
-      data: {
-        clientId: dto.clientId,
-        dueDate: new Date(dto.dueDate),
-        totalAmount: dto.totalAmount,
-        paidAmount: 0,
-        balance: dto.totalAmount,
-        status: CreditStatus.PENDIENTE,
-      },
-      include: this.include,
+    return this.prisma.$transaction(async (tx) => {
+      await assertClientCreditCapacity(tx, dto.clientId!, amount);
+      return tx.invoiceCredit.create({
+        data: {
+          clientId: dto.clientId!,
+          dueDate: new Date(dto.dueDate),
+          totalAmount: amount,
+          paidAmount: 0,
+          balance: amount,
+          status: CreditStatus.PENDIENTE,
+        },
+        include: this.include,
+      });
     });
   }
 
   async createForInvoice(invoiceId: number, dto: CreateInvoiceCreditDto) {
-    const invoice = await this.prisma.invoice.findUnique({
-      where: { id: invoiceId },
-    });
-    if (!invoice) throw new NotFoundException('Factura no encontrada');
-    if (invoice.status === InvoiceStatus.ANULADA)
-      throw new BadRequestException(
-        'No se permite crédito sobre factura anulada',
+    return this.prisma.$transaction(async (tx) => {
+      const invoice = await tx.invoice.findUnique({ where: { id: invoiceId } });
+      if (!invoice) throw new NotFoundException('Factura no encontrada');
+      if (invoice.status === InvoiceStatus.ANULADA)
+        throw new BadRequestException(
+          'No se permite crédito sobre factura anulada',
+        );
+
+      const existingCredit = await tx.invoiceCredit.findUnique({
+        where: { invoiceId },
+        include: this.include,
+      });
+      if (existingCredit) return existingCredit;
+
+      await assertClientCreditCapacity(
+        tx,
+        invoice.clientId,
+        Number(invoice.total),
       );
-    return this.prisma.invoiceCredit.create({
-      data: {
-        invoiceId,
-        clientId: invoice.clientId,
-        dueDate: new Date(dto.dueDate),
-        totalAmount: invoice.total,
-        paidAmount: 0,
-        balance: invoice.total,
-        status: CreditStatus.PENDIENTE,
-      },
-      include: this.include,
+      return tx.invoiceCredit.create({
+        data: {
+          invoiceId,
+          clientId: invoice.clientId,
+          dueDate: new Date(dto.dueDate),
+          totalAmount: invoice.total,
+          paidAmount: 0,
+          balance: invoice.total,
+          status: CreditStatus.PENDIENTE,
+        },
+        include: this.include,
+      });
     });
   }
 

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CreditStatus,
   InvoiceSource,
   Prisma,
   Product,
@@ -12,6 +13,7 @@ import {
   ProductPrice,
   ReferralBenefitStatus,
   Role as PrismaRole,
+  SaleMode,
 } from '@prisma/client';
 import { InvoiceStatus } from '../../common/enums/invoice-status.enum';
 import { convertProductQuantityToBase } from '../../common/utils/product-quantity.util';
@@ -28,6 +30,7 @@ import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { ListInvoicesQueryDto } from './dto/list-invoices-query.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { resolveOfferPricing } from '../ofertas/offer-pricing.util';
+import { assertClientCreditCapacity } from '../creditos/credit-limit.util';
 
 type ResolvedInvoiceProduct = Product & {
   prices: ProductPrice[];
@@ -119,6 +122,21 @@ export class FacturasService {
   ) {
     const invoice = await this.prisma.$transaction(async (tx) => {
       const source = createInvoiceDto.source ?? InvoiceSource.ADMIN;
+      const saleMode = createInvoiceDto.saleMode ?? SaleMode.CONTADO;
+      const creditDueDate =
+        saleMode === SaleMode.CREDITO && createInvoiceDto.creditDueDate
+          ? new Date(createInvoiceDto.creditDueDate)
+          : null;
+      if (saleMode === SaleMode.CREDITO && !creditDueDate) {
+        throw new BadRequestException(
+          'Selecciona la fecha de vencimiento del crédito',
+        );
+      }
+      if (creditDueDate && Number.isNaN(creditDueDate.getTime())) {
+        throw new BadRequestException(
+          'La fecha de vencimiento del crédito no es válida',
+        );
+      }
       const actorWarehouseId = this.resolveActorWarehouse(authUser);
       const requestedWarehouseId =
         createInvoiceDto.warehouseId ?? actorWarehouseId;
@@ -453,6 +471,9 @@ export class FacturasService {
       const total = this.roundMoney(
         invoiceItems.reduce((sum, item) => sum + item.total, 0),
       );
+      if (saleMode === SaleMode.CREDITO) {
+        await assertClientCreditCapacity(tx, client.id, total);
+      }
       const baseProfit = this.roundMoney(
         Math.max(
           0,
@@ -516,7 +537,7 @@ export class FacturasService {
           createdByRole: creatorRole,
           createdByUsername: creatorUsername,
           source,
-          saleMode: createInvoiceDto.saleMode ?? 'CONTADO',
+          saleMode,
           zone: createInvoiceDto.zone?.trim() || null,
           city: createInvoiceDto.city?.trim() || null,
           station: createInvoiceDto.station?.trim() || null,
@@ -542,6 +563,20 @@ export class FacturasService {
         },
         include: this.invoiceInclude,
       });
+
+      if (saleMode === SaleMode.CREDITO && creditDueDate) {
+        await tx.invoiceCredit.create({
+          data: {
+            invoiceId: invoice.id,
+            clientId: client.id,
+            dueDate: creditDueDate,
+            totalAmount: invoice.total,
+            paidAmount: 0,
+            balance: invoice.total,
+            status: CreditStatus.PENDIENTE,
+          },
+        });
+      }
 
       await this.consumeReferralBenefits(
         tx,
