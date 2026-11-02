@@ -1,8 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { PriceUpdateDialog } from "@/components/pricing/price-update-dialog";
 import {
+  grossFromNet,
+  marginPercent,
+  netFromGross,
+  priceForExactLevel,
+} from "@/lib/commercial-pricing";
+import { advanceFrom, handleEnterAdvance } from "@/lib/enter-advance";
+import {
+  Clock,
   ClipboardList,
+  BarChart3,
+  CalendarDays,
+  Download,
   Eye,
+  FileSpreadsheet,
   FileText,
+  Filter,
   Image as ImageIcon,
   LoaderCircle,
   PackageSearch,
@@ -14,11 +28,16 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
+import { PurchaseTotalDialog } from "./purchase-total-dialog";
+import { DraftsDialog, saveDraft } from "@/components/drafts/drafts-dialog";
+import { downloadPdf } from "@/lib/simple-pdf";
+import "./purchases-reports.css";
 
 const viewLabels = {
   purchases: "Compras",
@@ -53,7 +72,18 @@ function invalidatePurchasesDataCache() {
 }
 
 function loadPurchasesData() {
-  if (purchasesDataSnapshot) return Promise.resolve(purchasesDataSnapshot);
+  if (purchasesDataSnapshot) {
+    // Los precios se editan en Productos: nunca reutilizar productos en caché.
+    return apiClient
+      .getAllPages("/productos", { estado: "activos" })
+      .then(
+        (value) => ({
+          ...purchasesDataSnapshot,
+          productsResult: { status: "fulfilled", value },
+        }),
+        () => purchasesDataSnapshot,
+      );
+  }
   if (!purchasesDataPromise) {
     purchasesDataPromise = Promise.allSettled([
       apiClient.getAllPages("/proveedores", { estado: "activos" }),
@@ -105,6 +135,11 @@ export function PurchasesWindow({
   const [externalReference, setExternalReference] = useState("");
   const [expectedAt, setExpectedAt] = useState("");
   const [lookupLoadingId, setLookupLoadingId] = useState("");
+  const [priceDialog, setPriceDialog] = useState(null);
+  const [totalOpen, setTotalOpen] = useState(false);
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  const [draftId, setDraftId] = useState(null);
+  const [suggestion, setSuggestion] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -192,6 +227,34 @@ export function PurchasesWindow({
     return () => window.removeEventListener("keydown", handleShortcuts);
   }, [lookupType]);
 
+  const lastProductId = cart[cart.length - 1]?.productId;
+  useEffect(() => {
+    if (!lastProductId || editingPurchaseId) {
+      setSuggestion(null);
+      return undefined;
+    }
+    let cancelled = false;
+    apiClient
+      .get("/compras/proveedor-sugerido", { productId: lastProductId })
+      .then((result) => {
+        if (cancelled || !result?.providerId) {
+          if (!cancelled) setSuggestion(null);
+          return;
+        }
+        const product = cart.find((item) => String(item.productId) === String(lastProductId))?.product;
+        setSuggestion({
+          ...result,
+          productName: product?.name ?? "el producto",
+          alreadySelected: String(result.providerId) === String(selectedProviderId),
+        });
+      })
+      .catch(() => !cancelled && setSuggestion(null));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastProductId, editingPurchaseId, selectedProviderId]);
+
   const selectedProvider = providers.find(
     (provider) => String(provider.id) === String(selectedProviderId),
   );
@@ -227,6 +290,7 @@ export function PurchasesWindow({
   function startNewPurchase() {
     setView("purchases");
     setEditingPurchaseId("");
+    setDraftId(null);
     setExternalReference("");
     setExpectedAt("");
     setCart([]);
@@ -235,10 +299,31 @@ export function PurchasesWindow({
     setNotice("");
   }
 
+  async function refreshProducts() {
+    try {
+      const fresh = (await apiClient.getAllPages("/productos", { estado: "activos" })).filter(isActive);
+      setProducts(fresh);
+      // Las líneas ya cargadas conservan los precios editados en esta compra.
+      setCart((current) =>
+        current.map((item) => {
+          const updated = fresh.find((product) => String(product.id) === String(item.productId));
+          return updated ? { ...item, product: updated } : item;
+        }),
+      );
+    } catch {
+      // Se conserva la lista actual si no hay conexión.
+    }
+  }
+
   function openLookup(type) {
     setError("");
     setLookupType(type);
   }
+
+  // Cualquier apertura de la consulta de productos (F5, Enter, botón) trae precios frescos.
+  useEffect(() => {
+    if (lookupType === "products") void refreshProducts();
+  }, [lookupType]);
 
   async function selectLookupItem(item) {
     if (lookupType === "providers") setSelectedProviderId(String(item.id));
@@ -441,6 +526,106 @@ export function PurchasesWindow({
     );
   }
 
+  function updatePriceEdit(productId, level, gross) {
+    setCart((current) =>
+      current.map((item) => {
+        if (String(item.productId) !== String(productId)) return item;
+        const edits = { ...(item.priceEdits ?? {}) };
+        const catalog = priceForExactLevel(item.product, level);
+        const catalogGross = catalog
+          ? grossFromNet(Number(catalog.price), item.product?.taxRate)
+          : 0;
+        if (gross > 0 && Math.abs(gross - catalogGross) >= 0.005) {
+          edits[level] = gross;
+        } else {
+          delete edits[level];
+        }
+        return { ...item, priceEdits: edits };
+      }),
+    );
+  }
+
+  function openPriceDialog(productId, element) {
+    setPriceDialog({ productId, element: element ?? null });
+  }
+
+  function closePriceDialog(changes, newCost) {
+    const current = priceDialog;
+    setPriceDialog(null);
+    if (!current) return;
+    setCart((items) =>
+      items.map((item) => {
+        if (String(item.productId) !== String(current.productId)) return item;
+        const edits = { ...(item.priceEdits ?? {}) };
+        Object.entries(changes ?? {}).forEach(([rawLevel, gross]) => {
+          const level = Number(rawLevel);
+          const catalog = priceForExactLevel(item.product, level);
+          const catalogGross = catalog
+            ? grossFromNet(Number(catalog.price), item.product?.taxRate)
+            : 0;
+          if (gross > 0 && Math.abs(gross - catalogGross) >= 0.005) {
+            edits[level] = gross;
+          } else {
+            delete edits[level];
+          }
+        });
+        return {
+          ...item,
+          ...(newCost > 0 ? { unitCost: newCost } : {}),
+          priceEdits: edits,
+        };
+      }),
+    );
+    // El foco vuelve al campo de costo y pasa al siguiente recuadro.
+    setTimeout(() => {
+      if (current.element?.isConnected) {
+        advanceFrom(current.element, {
+          onLast: () => setLookupType("products"),
+        });
+      }
+    }, 0);
+  }
+
+  async function applyPriceEdits(items) {
+    const requests = items.flatMap((item) => {
+      const taxRate = item.product?.taxRate;
+      return Object.entries(item.priceEdits ?? {})
+        .map(([rawLevel, gross]) => {
+          const level = Number(rawLevel);
+          const net = netFromGross(Number(gross), taxRate);
+          if (!(net > 0)) return null;
+          const catalog = priceForExactLevel(item.product, level);
+          return { item, level, net, catalog };
+        })
+        .filter(Boolean);
+    });
+
+    const results = await Promise.all(
+      requests.map(async ({ item, level, net, catalog }) => {
+        try {
+          if (catalog) {
+            await apiClient.patch(`/precios-producto/${catalog.id}`, {
+              price: net,
+              reason: "Actualización desde compra",
+            });
+          } else {
+            await apiClient.post(`/productos/${item.productId}/precios`, {
+              name: `Precio ${level}`,
+              priceLevel: level,
+              price: net,
+              unit: item.product?.unit ?? "UND",
+              quantity: 1,
+            });
+          }
+          return null;
+        } catch (priceError) {
+          return `${productName(item.product)} (Precio ${level}): ${priceError.message}`;
+        }
+      }),
+    );
+    return results.filter(Boolean);
+  }
+
   async function savePurchase() {
     if (view !== "purchases") {
       setNotice(
@@ -461,10 +646,62 @@ export function PurchasesWindow({
       setError("Cada producto debe tener cantidad y costo mayor que cero.");
       return;
     }
-   setSaving(true);
-   setError("");
+    setError("");
     setNotice("");
-   try {
+    setTotalOpen(true);
+  }
+
+  async function holdPurchase() {
+    if (saving) return;
+    if (!selectedProviderId || !selectedWarehouseId || !cart.length) {
+      setError("Selecciona proveedor, depósito y al menos un producto antes de guardar en espera.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await saveDraft({
+        id: draftId,
+        kind: "COMPRA",
+        title: `${selectedProvider?.name ?? "Compra"} · ${cart.length} renglón(es)`,
+        payload: {
+          providerId: selectedProviderId,
+          warehouseId: selectedWarehouseId,
+          externalReference,
+          expectedAt,
+          documentAttachment,
+          cart,
+        },
+      });
+      startNewPurchase();
+      setNotice("Compra guardada en espera. Pulsa Borradores para verla y Retomar para continuar.");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function resumePurchase(draft) {
+    const data = draft.payload ?? {};
+    setView("purchases");
+    setSelectedProviderId(String(data.providerId ?? ""));
+    setSelectedWarehouseId(String(data.warehouseId ?? ""));
+    setExternalReference(data.externalReference ?? "");
+    setExpectedAt(data.expectedAt ?? "");
+    setDocumentAttachment(data.documentAttachment ?? null);
+    setCart(data.cart ?? []);
+    setEditingPurchaseId("");
+    setDraftId(draft.id);
+    setDraftsOpen(false);
+    setNotice("Borrador cargado.");
+  }
+
+  async function confirmPurchase(result) {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
       const body = {
        providerId: numberOrValue(selectedProviderId),
        warehouseId: numberOrValue(selectedWarehouseId),
@@ -494,22 +731,71 @@ export function PurchasesWindow({
          unit: item.unit,
          unitCost: Number(item.unitCost),
        })),
+        discount1Percent: result.discount1Percent,
+        discount2Percent: result.discount2Percent,
+        freight: result.freight,
+        retentionBase: result.retentionBase,
+        retentionBaseEdited: result.retentionBaseEdited,
+        retentionBaseReason: result.retentionBaseReason,
+        retentionRate: result.retentionRate,
+        paymentCondition: result.paymentCondition,
+        invoiceDate: result.invoiceDate,
+        dueDate: result.dueDate,
+        operationType: result.operationType,
+        purchaseOrderRef: result.purchaseOrderRef,
+        ...(result.notes ? { notes: result.notes } : {}),
       };
-      const saved = editingPurchaseId
+      let saved = editingPurchaseId
         ? await apiClient.patch("/compras/" + editingPurchaseId, body)
         : await apiClient.post("/compras", body);
+      // Las compras solo registran pagos contra una cuenta bancaria/caja.
+      const paidNow = Number(result.pay?.cash) || 0;
+      const priceUpdatePromise = result.savePrices
+        ? applyPriceEdits(
+            cart.filter((item) => Object.keys(item.priceEdits ?? {}).length),
+          )
+        : Promise.resolve([]);
+      if (paidNow > 0) {
+        if (saved.status === "BORRADOR") saved = await apiClient.post(`/compras/${saved.id}/ordenar`, {});
+        if (saved.status === "ORDENADA") saved = await apiClient.post(`/compras/${saved.id}/recibir`, {});
+        await apiClient.post(`/compras/${saved.id}/pagos`, {
+          amount: paidNow,
+          bankAccountId: result.pay.accountId,
+          notes: `Efectivo ${paidNow}`,
+        });
+      }
+      if (draftId) {
+        apiClient.delete(`/borradores/${draftId}`).catch(() => {});
+        setDraftId(null);
+      }
       setOrders((current) =>
         editingPurchaseId
           ? current.map((item) => (item.id === saved.id ? saved : item))
           : [saved, ...current],
       );
+      const priceFailures = await priceUpdatePromise;
+      if (result.savePrices) {
+        window.dispatchEvent(
+          new CustomEvent("catalog:changed", {
+            detail: {
+              productIds: cart
+                .filter((item) => Object.keys(item.priceEdits ?? {}).length)
+                .map((item) => item.productId),
+            },
+          }),
+        );
+      }
+      setTotalOpen(false);
       invalidatePurchasesDataCache();
      setCart([]);
       setNotice(
         "Compra " +
           orderNumber(saved) +
           (editingPurchaseId ? " actualizada" : " guardada") +
-          " correctamente.",
+          " correctamente." +
+          (priceFailures.length
+            ? ` No se pudieron actualizar precios: ${priceFailures.join("; ")}`
+            : ""),
       );
       setEditingPurchaseId("");
       setExternalReference("");
@@ -588,7 +874,7 @@ export function PurchasesWindow({
             selectedProviderId={selectedProviderId}
             selectedWarehouseId={selectedWarehouseId}
             cart={cart}
-            totals={cartTotals}
+            totals={{ ...cartTotals, number: externalReference }}
             saving={saving}
             editingPurchaseId={editingPurchaseId}
             externalReference={externalReference}
@@ -619,8 +905,13 @@ export function PurchasesWindow({
               }
             }}
             onUpdateItem={updateCartItem}
+            onUpdatePriceEdit={updatePriceEdit}
+            onOpenPriceDialog={openPriceDialog}
             onRemoveItem={removeCartItem}
             onSave={savePurchase}
+            onHold={holdPurchase}
+            onDrafts={() => setDraftsOpen(true)}
+            suggestion={suggestion}
           />
        ) : view === "orders" ? (
           <PurchaseOrdersPanel
@@ -634,7 +925,12 @@ export function PurchasesWindow({
             saving={saving}
           />
         ) : view === "reports" ? (
-          <PurchaseReportsPanel orders={orders} />
+          <PurchaseReportsPanel
+            orders={orders}
+            providers={providers}
+            warehouses={warehouses}
+            onViewPdf={openPurchasePdf}
+          />
         ) : (
           <div className="module-loading">Selecciona una operación de compras.</div>
         )}
@@ -650,6 +946,22 @@ export function PurchasesWindow({
         </TransientMessage>
       )}
 
+      {totalOpen && (
+        <PurchaseTotalDialog
+          totals={cartTotals}
+          provider={selectedProvider}
+          initialReference={externalReference}
+          hasPriceEdits={cart.some((item) => Object.keys(item.priceEdits ?? {}).length)}
+          editing={Boolean(editingPurchaseId)}
+          saving={saving}
+          error={error}
+          onAccept={confirmPurchase}
+          onCancel={() => setTotalOpen(false)}
+        />
+      )}
+      {draftsOpen && (
+        <DraftsDialog kind="COMPRA" onLoad={resumePurchase} onClose={() => setDraftsOpen(false)} />
+      )}
       {lookupType && (
         <PurchaseLookupDialog
           type={lookupType}
@@ -663,6 +975,22 @@ export function PurchasesWindow({
          onClose={() => setLookupType(null)}
        />
      )}
+      {priceDialog &&
+        (() => {
+          const item = cart.find(
+            (entry) => String(entry.productId) === String(priceDialog.productId),
+          );
+          return item ? (
+            <PriceUpdateDialog
+              product={item.product}
+              previousCost={defaultCostForUnit(item.product, item.unit)}
+              newCost={Number(item.unitCost) || 0}
+              pendingPrices={item.priceEdits}
+              onAccept={closePriceDialog}
+              onCancel={() => closePriceDialog(null)}
+            />
+          ) : null;
+        })()}
       {purchasePreview && (
         <PurchasePdfPreview
           order={purchasePreview}
@@ -736,13 +1064,46 @@ function PurchaseDocumentPanel({
   documentAttachment,
   onDocumentChange,
   onUpdateItem,
+  onUpdatePriceEdit,
+  onOpenPriceDialog,
   onRemoveItem,
   onSave,
+  onHold,
+  onDrafts,
+  suggestion,
 }) {
   const isOrder = view === "orders";
+  const [activeItemId, setActiveItemId] = useState(null);
+  const [infoItemId, setInfoItemId] = useState(null);
+  const activeItem =
+    cart.find((item) => String(item.productId) === String(activeItemId)) ??
+    cart[cart.length - 1] ??
+    null;
+  const infoItem = cart.find((item) => String(item.productId) === String(infoItemId)) ?? null;
   const rows = Math.max(15, cart.length + 5);
+  const columnCount = isOrder ? 12 : 11;
   return (
-    <div className="purchase-document-shell">
+    <div
+      className="purchase-document-shell"
+      data-enter-scope
+      onKeyDown={(event) => {
+        if (
+          ["F1", "F2"].includes(event.key) &&
+          event.target.closest?.(".purchase-table")
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!activeItem) return;
+          if (event.key === "F1") setInfoItemId(activeItem.productId);
+          if (event.key === "F2") onOpenPriceDialog(activeItem.productId, null);
+          return;
+        }
+        handleEnterAdvance(event, {
+          // Tras el último recuadro se abre la consulta de productos (siguiente renglón).
+          onLast: () => onOpenLookup("products"),
+        });
+      }}
+    >
       <div className="purchase-document-top">
         <div className="purchase-document-fields">
           <div className="purchase-field-row">
@@ -809,7 +1170,7 @@ function PurchaseDocumentPanel({
             </div>
           )}
           <div className="purchase-field-row">
-            <label htmlFor="purchase-expected-at">Entrega prevista</label>
+            <label htmlFor="purchase-expected-at">Entrega prevista del proveedor</label>
             <input
               id="purchase-expected-at"
               type="date"
@@ -823,6 +1184,13 @@ function PurchaseDocumentPanel({
         </div>
         <PurchaseTotalsPanel title={viewLabels[view]} totals={totals} />
       </div>
+      {suggestion && (
+        <p className="purchase-suggestion" role="status">
+          Proveedor sugerido para {suggestion.productName}: <strong>{suggestion.name}</strong>{" "}
+          ({suggestion.source === "HISTORIAL" ? "último proveedor de compra" : suggestion.source === "MARCA" ? "proveedor de la marca" : "proveedor principal"}).
+          {suggestion.alreadySelected ? "" : " Cámbialo con F1 si aplica."}
+        </p>
+      )}
 
       <div className="purchase-shortcuts">
         <button
@@ -845,6 +1213,12 @@ function PurchaseDocumentPanel({
           onClick={onCreateProduct}
         >
           <Plus size={13} /> Nuevo producto
+        </button>
+        <button type="button" className="purchase-shortcut" onClick={onHold} disabled={saving} title="Guardar esta compra sin confirmarla">
+          <Clock size={13} /> Guardar en espera
+        </button>
+        <button type="button" className="purchase-shortcut" onClick={onDrafts}>
+          <FileText size={13} /> Borradores
         </button>
         <button
           type="button"
@@ -876,18 +1250,22 @@ function PurchaseDocumentPanel({
           <thead>
             <tr>
               <th>Código</th>
-              <th>Producto</th>
+              <th>Descripción</th>
               {isOrder && <th>Existencia</th>}
               <th>Cantidad</th>
               <th>Und</th>
-              <th>Costo unitario (IVA incluido)</th>
+              <th>Costo</th>
+              <th>Precio 0</th>
+              <th>Precio 1</th>
+              <th>Precio 2</th>
+              <th>Precio 3</th>
               <th>Total</th>
               <th aria-label="Acciones" />
             </tr>
           </thead>
           <tbody>
             {cart.map((item) => (
-              <tr key={item.productId}>
+              <tr key={item.productId} onFocusCapture={() => setActiveItemId(item.productId)}>
                 <td>{productCode(item.product)}</td>
                 <td className="purchase-product-description">
                   {productName(item.product)}
@@ -943,12 +1321,42 @@ function PurchaseDocumentPanel({
                         event.target.value,
                       )
                     }
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" || event.shiftKey) return;
+                      const previous = defaultCostForUnit(item.product, item.unit);
+                      // Costo distinto del anterior: primero se revisan los precios.
+                      if (
+                        Number(item.unitCost) > 0 &&
+                        Math.abs(Number(item.unitCost) - previous) >= 0.005
+                      ) {
+                        event.preventDefault();
+                        onOpenPriceDialog(item.productId, event.target);
+                      }
+                    }}
                   />
                 </td>
+                {[0, 1, 2, 3].map((level) => (
+                  <PurchasePriceCell
+                    key={level}
+                    item={item}
+                    level={level}
+                    onChange={onUpdatePriceEdit}
+                  />
+                ))}
                 <td className="number-cell">
                   {formatCurrency(lineTotal(item))}
                 </td>
                 <td>
+                  <button
+                    type="button"
+                    className="row-prices"
+                    tabIndex={-1}
+                    title="Revisar precios y utilidad"
+                    aria-label={`Precios de ${productName(item.product)}`}
+                    onClick={() => onOpenPriceDialog(item.productId, null)}
+                  >
+                    %
+                  </button>
                   <button
                     type="button"
                     className="row-remove"
@@ -968,7 +1376,7 @@ function PurchaseDocumentPanel({
                   onClick={() => onOpenLookup("products")}
                   title="Haga clic para consultar productos"
                 >
-                  <td colSpan={isOrder ? 8 : 7}>&nbsp;</td>
+                  <td colSpan={columnCount}>&nbsp;</td>
                 </tr>
               ),
             )}
@@ -977,17 +1385,6 @@ function PurchaseDocumentPanel({
       </div>
 
       <div className="purchase-document-footer">
-        <button
-          type="button"
-          className="purchase-add-product"
-          onClick={() => onOpenLookup("products")}
-        >
-          <Plus size={14} /> Agregar producto
-        </button>
-        <span className="purchase-footer-hint">
-          La tabla permanece visible mientras agregas productos · F5 consulta
-          productos
-        </span>
         <button
           type="button"
           className="purchase-save-button"
@@ -1001,37 +1398,139 @@ function PurchaseDocumentPanel({
               : "Guardar compra"}
         </button>
       </div>
+      {infoItem && (
+        <div className="module-dialog-backdrop">
+          <section className="module-dialog purchase-info-dialog" role="dialog" aria-modal="true">
+            <header className="module-dialog-titlebar">
+              <strong>INFORMACIÓN DEL PRODUCTO</strong>
+              <button type="button" aria-label="Cerrar" onClick={() => setInfoItemId(null)}>
+                <X size={17} />
+              </button>
+            </header>
+            <dl className="purchase-info-list">
+              <dt>Código</dt><dd>{productCode(infoItem.product)}</dd>
+              <dt>Descripción</dt><dd>{productName(infoItem.product)}</dd>
+              <dt>IVA</dt><dd>{formatQuantity(infoItem.product?.taxRate ?? 0)} %</dd>
+              <dt>Existencia</dt><dd>{formatQuantity(productStock(infoItem.product))}</dd>
+              <dt>Costo anterior</dt>
+              <dd>{formatCurrency(defaultCostForUnit(infoItem.product, infoItem.unit))}</dd>
+              {[0, 1, 2, 3].map((level) => (
+                <Fragment key={level}>
+                  <dt>Precio {level}</dt>
+                  <dd>{formatCurrency(levelGross(infoItem, level))}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
 
+function levelGross(item, level) {
+  const pending = Number(item.priceEdits?.[level] ?? 0);
+  if (pending > 0) return pending;
+  const catalog = priceForExactLevel(item.product, level);
+  return catalog ? grossFromNet(Number(catalog.price), item.product?.taxRate) : 0;
+}
+
 function PurchaseTotalsPanel({ title, totals }) {
+  // Panel de totales como la captura C23 de Saint: Compra · N° · Total cantidad o pieza ·
+  // Total renglones · Impuestos · Total.
+  const hasRetention = totals.retentionAmount > 0;
   return (
     <aside className="purchase-totals-panel">
-      <h2>{title}</h2>
+      <h2>{title === "Compras" ? "Compra" : title}</h2>
       <div className="purchase-number-row">
-        <span>Nº</span>
+        <span>N°</span>
         <strong>{totals.number ?? ""}</strong>
       </div>
       <div className="purchase-number-row">
-        <span>Total cantidad o piezas</span>
+        <span>Total cantidad o pieza</span>
         <strong>{totals.quantity}</strong>
       </div>
       <div className="purchase-number-row">
-        <span>Subtotal adquisición</span>
-        <strong>{formatCurrency(totals.subtotal)}</strong>
+        <span>Total renglones</span>
+        <strong>{formatCurrency(totals.lines)}</strong>
       </div>
-      {totals.retentionAmount > 0 && (
-        <div className="purchase-number-row">
-          <span>Retención ({formatQuantity(totals.retentionRate)}%)</span>
-          <strong>-{formatCurrency(totals.retentionAmount)}</strong>
-        </div>
-      )}
+      <div className="purchase-number-row">
+        <span>Impuestos</span>
+        <strong>{formatCurrency(totals.taxes)}</strong>
+      </div>
       <div className="purchase-number-row purchase-grand-total">
-        <span>Total a pagar</span>
-        <strong>{formatCurrency(totals.payableTotal ?? totals.total)}</strong>
+        <span>Total</span>
+        <strong>{formatCurrency(totals.total)}</strong>
       </div>
+      {hasRetention && (
+        <>
+          <div className="purchase-number-row">
+            <span>Retención ({formatQuantity(totals.retentionRate)}%)</span>
+            <strong>-{formatCurrency(totals.retentionAmount)}</strong>
+          </div>
+          <div className="purchase-number-row">
+            <span>Total a pagar</span>
+            <strong>{formatCurrency(totals.payableTotal ?? totals.total)}</strong>
+          </div>
+        </>
+      )}
     </aside>
+  );
+}
+
+// Precio de venta (IVA incluido) editable en la misma línea de la compra,
+// con la utilidad calculada contra el costo unitario actual.
+function PurchasePriceCell({ item, level, onChange }) {
+  const taxRate = item.product?.taxRate;
+  const pending = Number(item.priceEdits?.[level] ?? 0);
+  const catalog = priceForExactLevel(item.product, level);
+  const gross =
+    pending > 0
+      ? pending
+      : catalog
+        ? grossFromNet(Number(catalog.price), taxRate)
+        : 0;
+  const [draft, setDraft] = useState(gross > 0 ? String(gross) : "");
+  useEffect(() => {
+    setDraft(gross > 0 ? String(gross) : "");
+  }, [gross]);
+  const margin =
+    gross > 0
+      ? marginPercent(
+          netFromGross(Number(item.unitCost) || 0, taxRate),
+          netFromGross(gross, taxRate),
+        )
+      : null;
+
+  function commit() {
+    const parsed = Number(String(draft).trim().replace(",", "."));
+    if (!draft.trim() || !Number.isFinite(parsed) || parsed <= 0) {
+      setDraft(gross > 0 ? String(gross) : "");
+      return;
+    }
+    onChange(item.productId, level, Math.round(parsed * 100) / 100);
+  }
+
+  return (
+    <td className={`number-cell purchase-price-cell ${pending > 0 ? "is-edited" : ""}`}>
+      <input
+        className="table-number-input"
+        inputMode="decimal"
+        value={draft}
+        placeholder="—"
+        aria-label={`Precio ${level} con IVA de ${productName(item.product)}`}
+        onChange={(event) => {
+          if (/^\d*([.,]\d{0,2})?$/.test(event.target.value)) setDraft(event.target.value);
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+        }}
+      />
+      <small className="purchase-price-margin">
+        {margin === null ? "sin precio" : `${margin}% util.`}
+      </small>
+    </td>
   );
 }
 
@@ -1171,69 +1670,87 @@ function PurchaseOrdersPanel({
   );
 }
 
-function PurchaseReportsPanel({ orders }) {
-  const total = orders.reduce(
-    (sum, order) => sum + Number(order.total ?? 0),
-    0,
-  );
-  const pending = orders.filter((order) =>
-    ["BORRADOR", "ORDENADA"].includes(order.status),
-  ).length;
-  return (
-    <div className="purchase-report-shell">
-      <div className="purchase-list-heading">
-        <div>
-          <span className="purchase-section-kicker">MÓDULO DE COMPRAS</span>
-          <h2>REPORTES</h2>
-        </div>
-      </div>
-      <div className="purchase-report-cards">
-        <MetricCard label="Compras registradas" value={orders.length} />
-        <MetricCard label="Pendientes de recibir" value={pending} />
-        <MetricCard label="Valor acumulado" value={formatCurrency(total)} />
-      </div>
-      <div className="purchase-report-table-wrap">
-        <table className="purchase-table">
-          <thead>
-            <tr>
-              <th>Estado</th>
-              <th>Operaciones</th>
-              <th>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.keys(statusLabels).map((status) => {
-              const rows = orders.filter((order) => order.status === status);
-              return (
-                <tr key={status}>
-                  <td>{statusLabels[status]}</td>
-                  <td>{rows.length}</td>
-                  <td className="number-cell">
-                    {formatCurrency(
-                      rows.reduce(
-                        (sum, order) => sum + Number(order.total ?? 0),
-                        0,
-                      ),
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
+function PurchaseReportsPanel({ orders, providers = [], warehouses = [], onViewPdf }) {
+  const [period, setPeriod] = useState("30D");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [status, setStatus] = useState("ALL");
+  const [providerId, setProviderId] = useState("ALL");
+  const [warehouseId, setWarehouseId] = useState("ALL");
+  const [query, setQuery] = useState("");
+  const [activeTab, setActiveTab] = useState("summary");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+  const [summary, setSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const range = useMemo(() => purchaseReportRange(period, from, to), [from, period, to]);
+  const filteredOrders = useMemo(() => orders.filter((order) => {
+    const providerMatches = providerId === "ALL" || String(order.providerId ?? order.provider?.id ?? "") === String(providerId);
+    const warehouseMatches = warehouseId === "ALL" || String(order.warehouseId ?? order.warehouse?.id ?? "") === String(warehouseId);
+    const statusMatches = status === "ALL" || order.status === status;
+    const textMatches = !query.trim() || `${orderNumber(order)} ${order.provider?.name ?? ""} ${order.warehouse?.location ?? ""} ${order.status ?? ""}`.toLowerCase().includes(query.trim().toLowerCase());
+    return providerMatches && warehouseMatches && statusMatches && textMatches && inPurchaseRange(order.orderedAt ?? order.createdAt, range);
+  }).sort((left, right) => new Date(right.orderedAt ?? right.createdAt ?? 0).getTime() - new Date(left.orderedAt ?? left.createdAt ?? 0).getTime()), [orders, providerId, query, range, status, warehouseId]);
+  const totals = useMemo(() => {
+    const total = filteredOrders.reduce((sum, order) => sum + Number(order.total ?? 0), 0);
+    const subtotal = filteredOrders.reduce((sum, order) => sum + Number(order.subtotal ?? 0), 0);
+    const received = filteredOrders.filter((order) => order.status === "RECIBIDA");
+    const balance = filteredOrders.reduce((sum, order) => sum + Number(order.balance ?? order.payableTotal ?? 0), 0);
+    return { count: filteredOrders.length, total, subtotal, taxes: total - subtotal, pending: filteredOrders.filter((order) => ["BORRADOR", "ORDENADA"].includes(order.status)).length, received: received.length, balance };
+  }, [filteredOrders]);
+  const localProviders = useMemo(() => buildPurchaseProviderRows(filteredOrders), [filteredOrders]);
+  const localTimeline = useMemo(() => buildPurchaseTimeline(filteredOrders), [filteredOrders]);
+  const localStatus = useMemo(() => Object.keys(statusLabels).map((key) => ({ label: statusLabels[key], key, value: filteredOrders.filter((order) => order.status === key).reduce((sum, order) => sum + Number(order.total ?? 0), 0), count: filteredOrders.filter((order) => order.status === key).length })).filter((row) => row.value > 0), [filteredOrders]);
+  const providerRows = summary?.byProvider?.length ? summary.byProvider.map((row) => ({ name: row.provider?.name ?? "Sin proveedor", orders: Number(row.orders ?? 0), total: Number(row.total ?? 0), lead: Number(row.averageLeadDays ?? 0), onTime: row.onTimeRate })) : localProviders;
+  const timelineRows = summary?.timeline?.length ? summary.timeline.map((row) => ({ date: purchaseDayLabel(row.period), orders: Number(row.orders ?? 0), subtotal: Number(row.subtotal ?? 0), total: Number(row.total ?? 0), taxes: Number(row.total ?? 0) - Number(row.subtotal ?? 0) })) : localTimeline;
+  const topProducts = summary?.topProducts?.length ? summary.topProducts.map((row) => ({ name: row.product?.name ?? "Producto", quantity: Number(row.orderedQuantity ?? 0), received: Number(row.receivedQuantity ?? 0), total: Number(row.total ?? 0) })) : [];
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageRows = filteredOrders.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSummaryLoading(true);
+    const params = { granularity: period === "TODAY" || period === "7D" || period === "30D" || period === "90D" || period === "CUSTOM" ? "DIA" : "MES", topProducts: 20 };
+    if (range.start.getTime() > 0) params.dateFrom = range.start.toISOString();
+    if (period !== "ALL") params.dateTo = range.end.toISOString();
+    if (providerId !== "ALL") params.providerId = providerId;
+    if (warehouseId !== "ALL") params.warehouseId = warehouseId;
+    apiClient.get("/compras/reportes/resumen", params).then((result) => { if (!cancelled) setSummary(result); }).catch(() => { if (!cancelled) setSummary(null); }).finally(() => { if (!cancelled) setSummaryLoading(false); });
+    return () => { cancelled = true; };
+  }, [period, providerId, range.end, range.start, warehouseId]);
+
+  function updateFilter(setter, value) { setter(value); setPage(1); }
+  function exportCsv() { const rows = filteredOrders.map((order) => [formatDate(order.orderedAt ?? order.createdAt), orderNumber(order), order.provider?.name ?? "—", order.warehouse?.location ?? "—", statusLabels[order.status] ?? order.status ?? "—", Number(order.subtotal ?? 0).toFixed(2), (Number(order.total ?? 0) - Number(order.subtotal ?? 0)).toFixed(2), Number(order.total ?? 0).toFixed(2), Number(order.balance ?? order.payableTotal ?? 0).toFixed(2)]); downloadPurchaseReport([['Fecha', 'Compra', 'Proveedor', 'Bodega', 'Estado', 'Subtotal', 'Impuestos', 'Total', 'Saldo'], ...rows], `compras-${period.toLowerCase()}.csv`, "text/csv;charset=utf-8"); }
+  async function exportExcel() { const XLSX = await import("xlsx"); const workbook = XLSX.utils.book_new(); const appendSheet = (name, rows, widths) => { const sheet = XLSX.utils.json_to_sheet(rows); sheet["!cols"] = widths.map((wch) => ({ wch })); if (rows.length) sheet["!autofilter"] = { ref: XLSX.utils.encode_range(XLSX.utils.decode_range(sheet["!ref"])) }; XLSX.utils.book_append_sheet(workbook, sheet, name); }; appendSheet("Resumen", [{ Indicador: "Periodo", Valor: range.label }, { Indicador: "Compras", Valor: totals.count }, { Indicador: "Subtotal", Valor: totals.subtotal }, { Indicador: "Impuestos", Valor: totals.taxes }, { Indicador: "Total", Valor: totals.total }, { Indicador: "Pendientes", Valor: totals.pending }, { Indicador: "Recibidas", Valor: totals.received }, { Indicador: "Saldo", Valor: totals.balance }], [28, 24]); appendSheet("Compras", filteredOrders.map((order) => ({ Fecha: formatDate(order.orderedAt ?? order.createdAt), Compra: orderNumber(order), Proveedor: order.provider?.name ?? "—", Bodega: order.warehouse?.location ?? "—", Estado: statusLabels[order.status] ?? order.status ?? "—", Subtotal: Number(order.subtotal ?? 0), Impuestos: Number(order.total ?? 0) - Number(order.subtotal ?? 0), Total: Number(order.total ?? 0), Saldo: Number(order.balance ?? order.payableTotal ?? 0) })), [15, 20, 28, 24, 16, 16, 16, 16, 16]); appendSheet("Proveedores", providerRows.map((row) => ({ Proveedor: row.name, Compras: row.orders, Total: row.total, "Días promedio": row.lead, "Entrega a tiempo": row.onTime == null ? "—" : `${row.onTime}%` })), [30, 14, 18, 16, 20]); appendSheet("Productos", topProducts.map((row) => ({ Producto: row.name, Solicitadas: row.quantity, Recibidas: row.received, Total: row.total })), [34, 16, 16, 18]); appendSheet("Evolución", timelineRows.map((row) => ({ Periodo: row.date, Compras: row.orders, Subtotal: row.subtotal, Impuestos: row.taxes, Total: row.total })), [16, 14, 18, 18, 18]); XLSX.writeFile(workbook, `reporte-compras-${period.toLowerCase()}.xlsx`); }
+  async function exportPdf() { const { jsPDF } = await import("jspdf"); const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" }); const pageWidth = doc.internal.pageSize.getWidth(); const margin = 34; doc.setFillColor(31, 51, 77); doc.rect(0, 0, pageWidth, 76, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("MUNDO TIENDA", margin, 32); doc.setFontSize(10); doc.text("REPORTE DE COMPRAS", margin, 51); doc.setFont("helvetica", "normal"); doc.text(`Periodo: ${range.label}`, pageWidth - margin, 32, { align: "right" }); let y = 108; const cards = [["Compras", totals.count], ["Subtotal", formatCurrency(totals.subtotal)], ["Impuestos", formatCurrency(totals.taxes)], ["Total", formatCurrency(totals.total)], ["Pendientes", totals.pending]]; const gap = 9; const cardWidth = (pageWidth - margin * 2 - gap * 4) / 5; cards.forEach(([label, value], index) => { const x = margin + index * (cardWidth + gap); doc.setFillColor(246, 249, 252); doc.roundedRect(x, y, cardWidth, 52, 5, 5, "F"); doc.setTextColor(103, 119, 139); doc.setFontSize(8); doc.text(label, x + 10, y + 19); doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text(String(value), x + 10, y + 39); doc.setFont("helvetica", "normal"); }); y += 82; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("Detalle de compras", margin, y); y += 19; doc.setFillColor(43, 108, 176); doc.rect(margin, y - 12, pageWidth - margin * 2, 22, "F"); doc.setTextColor(255, 255, 255); doc.setFontSize(8); ["Fecha", "Compra", "Proveedor", "Estado", "Total"].forEach((header, index) => doc.text(header, [margin + 7, margin + 80, margin + 220, margin + 470, pageWidth - margin - 7][index], y + 2, { align: index === 4 ? "right" : "left" })); y += 22; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "normal"); doc.setFontSize(8); filteredOrders.slice(0, 75).forEach((order, index) => { if (y > 555) { doc.addPage(); y = 50; } if (index % 2 === 0) { doc.setFillColor(248, 250, 252); doc.rect(margin, y - 11, pageWidth - margin * 2, 19, "F"); } doc.text(formatDate(order.orderedAt ?? order.createdAt), margin + 7, y); doc.text(orderNumber(order), margin + 80, y); doc.text(String(order.provider?.name ?? "—").slice(0, 28), margin + 220, y); doc.text(statusLabels[order.status] ?? order.status ?? "—", margin + 470, y); doc.text(formatCurrency(order.total), pageWidth - margin - 7, y, { align: "right" }); y += 19; }); doc.save(`reporte-compras-${period.toLowerCase()}.pdf`); }
+
+  return <div className="purchase-report-shell purchase-report-dashboard">
+    <div className="purchase-report-hero"><div><span className="purchase-report-kicker">MÓDULO DE COMPRAS · ANALÍTICA</span><h2>Reportes de compras</h2><p>Controla inversión, proveedores, recepción, impuestos y saldos pendientes.</p></div><BarChart3 size={28} /></div>
+    <div className="purchase-report-cards"><PurchaseReportKpi label="Compras filtradas" value={totals.count} tone="blue" /><PurchaseReportKpi label="Subtotal" value={formatCurrency(totals.subtotal)} tone="navy" /><PurchaseReportKpi label="Impuestos" value={formatCurrency(totals.taxes)} tone="amber" /><PurchaseReportKpi label="Total" value={formatCurrency(totals.total)} tone="green" /><PurchaseReportKpi label="Saldo pendiente" value={formatCurrency(totals.balance)} tone="red" /></div>
+    <div className="purchase-report-quick-filters"><button type="button" className={period === "TODAY" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "TODAY")}>Hoy</button><button type="button" className={period === "7D" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "7D")}>7 días</button><button type="button" className={period === "30D" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "30D")}>30 días</button><button type="button" className={period === "90D" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "90D")}>90 días</button><button type="button" className={period === "ALL" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "ALL")}>Historial</button><button type="button" className={period === "CUSTOM" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "CUSTOM")}><CalendarDays size={13} /> Fechas</button></div>
+    <div className="purchase-report-toolbar"><label>Periodo<select value={period} onChange={(event) => updateFilter(setPeriod, event.target.value)}><option value="TODAY">Hoy</option><option value="7D">Últimos 7 días</option><option value="30D">Últimos 30 días</option><option value="90D">Últimos 90 días</option><option value="ALL">Todo el historial</option><option value="CUSTOM">Personalizado</option></select></label>{period === "CUSTOM" && <><label>Desde<input type="date" value={from} onChange={(event) => updateFilter(setFrom, event.target.value)} /></label><label>Hasta<input type="date" value={to} onChange={(event) => updateFilter(setTo, event.target.value)} /></label></>}<label>Proveedor<select value={providerId} onChange={(event) => updateFilter(setProviderId, event.target.value)}><option value="ALL">Todos</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label><label>Bodega<select value={warehouseId} onChange={(event) => updateFilter(setWarehouseId, event.target.value)}><option value="ALL">Todas</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.location ?? warehouse.name}</option>)}</select></label><label>Estado<select value={status} onChange={(event) => updateFilter(setStatus, event.target.value)}><option value="ALL">Todos</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label className="purchase-report-search"><Search size={14} /><input value={query} onChange={(event) => updateFilter(setQuery, event.target.value)} placeholder="Buscar compra, proveedor o bodega…" /></label><button type="button" className="purchase-report-export blue" onClick={exportPdf}><Printer size={14} /> PDF</button><button type="button" className="purchase-report-export green" onClick={() => void exportExcel()}><FileSpreadsheet size={14} /> Excel</button><button type="button" className="purchase-report-export amber" onClick={exportCsv}><Download size={14} /> CSV</button></div>
+    <div className="purchase-report-note"><Filter size={13} /> {filteredOrders.length} operación(es) · {range.label}{summaryLoading ? " · actualizando indicadores" : ""}</div>
+    <nav className="purchase-report-tabs" aria-label="Secciones de compras"><button type="button" className={activeTab === "summary" ? "is-active" : ""} onClick={() => setActiveTab("summary")}>Resumen</button><button type="button" className={activeTab === "providers" ? "is-active" : ""} onClick={() => setActiveTab("providers")}>Proveedores</button><button type="button" className={activeTab === "products" ? "is-active" : ""} onClick={() => setActiveTab("products")}>Productos</button><button type="button" className={activeTab === "detail" ? "is-active" : ""} onClick={() => setActiveTab("detail")}>Detalle</button></nav>
+    {activeTab === "summary" && <div className="purchase-report-chart-grid"><section className="purchase-report-card"><div className="purchase-report-card-title"><strong>Compras por periodo</strong><span>Subtotal, impuestos y total.</span></div><ResponsiveContainer width="100%" height={260}><BarChart data={timelineRows} margin={{ top: 10, right: 8, left: -14, bottom: 4 }}><CartesianGrid vertical={false} stroke="#e7edf3" /><XAxis dataKey="date" tick={{ fill: "#718096", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={purchaseShortMoney} /><Tooltip content={<PurchaseReportTooltip currency />} /><Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} /><Bar dataKey="subtotal" name="Subtotal" fill="#2b6cb0" radius={[4, 4, 0, 0]} /><Bar dataKey="taxes" name="Impuestos" fill="#d28a25" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></section><section className="purchase-report-card"><div className="purchase-report-card-title"><strong>Estado del proceso</strong><span>Valor según estado.</span></div><ResponsiveContainer width="100%" height={260}><PieChart><Pie data={localStatus} dataKey="value" nameKey="label" innerRadius="55%" outerRadius="78%" paddingAngle={3} stroke="none">{localStatus.map((row, index) => <Cell key={row.key} fill={["#d28a25", "#2b6cb0", "#31a56d", "#c45454"][index % 4]} />)}</Pie><Tooltip content={<PurchaseReportTooltip currency />} /><Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} /></PieChart></ResponsiveContainer></section><section className="purchase-report-card purchase-report-wide"><div className="purchase-report-card-title"><strong>Proveedores con mayor inversión</strong><span>Compras recibidas, promedio de entrega y cumplimiento.</span></div><ResponsiveContainer width="100%" height={250}><BarChart data={providerRows.slice(0, 8)} layout="vertical" margin={{ top: 5, right: 16, left: 10, bottom: 5 }}><CartesianGrid horizontal={false} stroke="#e7edf3" /><XAxis type="number" hide /><YAxis type="category" dataKey="name" width={150} tick={{ fill: "#596b82", fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip content={<PurchaseReportTooltip currency />} /><Bar dataKey="total" name="Total comprado" fill="#31a56d" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></section></div>}
+    {activeTab === "providers" && <PurchaseProviderTable rows={providerRows} />}
+    {activeTab === "products" && <PurchaseProductTable rows={topProducts} />}
+    {activeTab === "detail" && <section className="purchase-report-detail"><div className="purchase-report-detail-heading"><strong>Detalle de operaciones</strong><span>{pageRows.length} de {filteredOrders.length}</span></div><div className="purchase-report-table-scroll"><table className="purchase-table"><thead><tr><th>Fecha</th><th>Compra</th><th>Proveedor</th><th>Bodega</th><th>Estado</th><th>Subtotal</th><th>Impuestos</th><th>Total</th><th>Saldo</th><th>Acción</th></tr></thead><tbody>{pageRows.map((order) => <tr key={order.id} className="purchase-report-row" tabIndex="0" onDoubleClick={() => onViewPdf?.(order)} onKeyDown={(event) => { if (event.key === "Enter") onViewPdf?.(order); }}><td>{formatDate(order.orderedAt ?? order.createdAt)}</td><td><strong>{orderNumber(order)}</strong></td><td>{order.provider?.name ?? "—"}</td><td>{order.warehouse?.location ?? "—"}</td><td><span className={`purchase-report-status ${String(order.status ?? "").toLowerCase()}`}>{statusLabels[order.status] ?? order.status ?? "—"}</span></td><td className="number-cell">{formatCurrency(order.subtotal)}</td><td className="number-cell">{formatCurrency(Number(order.total ?? 0) - Number(order.subtotal ?? 0))}</td><td className="number-cell">{formatCurrency(order.total)}</td><td className="number-cell">{formatCurrency(order.balance ?? order.payableTotal ?? 0)}</td><td><button type="button" className="purchase-report-view" onClick={() => onViewPdf?.(order)}><Eye size={13} /> Ver</button></td></tr>)}{!pageRows.length && <tr><td colSpan="10">No hay compras para los filtros seleccionados.</td></tr>}</tbody></table></div>{filteredOrders.length > 0 && <div className="purchase-report-pagination"><span>Página {currentPage} de {totalPages}</span><label>Filas<select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value="15">15</option><option value="30">30</option><option value="50">50</option></select></label><button type="button" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</button><button type="button" disabled={currentPage >= totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Siguiente</button></div>}</section>}
+  </div>;
 }
 
-function MetricCard({ label, value }) {
-  return (
-    <div className="purchase-metric-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
+function PurchaseReportKpi({ label, value, tone }) { return <article className={`purchase-report-kpi ${tone}`}><span>{label}</span><strong>{value}</strong></article>; }
+function PurchaseProviderTable({ rows }) { return <section className="purchase-report-detail"><div className="purchase-report-detail-heading"><strong>Rendimiento por proveedor</strong><span>{rows.length} proveedor(es)</span></div><div className="purchase-report-table-scroll"><table className="purchase-table"><thead><tr><th>Proveedor</th><th>Compras</th><th>Total</th><th>Días promedio</th><th>Entrega a tiempo</th></tr></thead><tbody>{rows.map((row) => <tr key={row.name}><td><strong>{row.name}</strong></td><td>{row.orders}</td><td className="number-cell">{formatCurrency(row.total)}</td><td>{row.lead ? `${row.lead.toFixed(1)} días` : "—"}</td><td>{row.onTime == null ? "—" : `${row.onTime}%`}</td></tr>)}{!rows.length && <tr><td colSpan="5">No hay proveedores para este filtro.</td></tr>}</tbody></table></div></section>; }
+function PurchaseProductTable({ rows }) { return <section className="purchase-report-detail"><div className="purchase-report-detail-heading"><strong>Productos comprados</strong><span>{rows.length} producto(s)</span></div><div className="purchase-report-table-scroll"><table className="purchase-table"><thead><tr><th>Producto</th><th>Solicitadas</th><th>Recibidas</th><th>Pendientes</th><th>Total</th></tr></thead><tbody>{rows.map((row) => <tr key={row.name}><td><strong>{row.name}</strong></td><td>{row.quantity}</td><td>{row.received}</td><td>{Math.max(0, row.quantity - row.received)}</td><td className="number-cell">{formatCurrency(row.total)}</td></tr>)}{!rows.length && <tr><td colSpan="5">No hay productos recibidos en este periodo.</td></tr>}</tbody></table></div></section>; }
+function PurchaseReportTooltip({ active, payload, label, currency = false }) { if (!active || !payload?.length) return null; return <div className="purchase-report-tooltip"><strong>{label}</strong>{payload.map((row) => <div key={row.dataKey ?? row.name}><span>{row.name ?? row.dataKey}</span><b>{currency ? formatCurrency(row.value) : row.value}</b></div>)}</div>; }
+function purchaseReportRange(period, from, to) { const end = period === "CUSTOM" && to ? new Date(`${to}T23:59:59`) : new Date(); end.setHours(23, 59, 59, 999); if (period === "ALL") return { start: new Date(0), end, label: "Todo el historial" }; if (period === "CUSTOM") return { start: from ? new Date(`${from}T00:00:00`) : new Date(0), end, label: `${from || "inicio"} · ${to || "hoy"}` }; const days = { TODAY: 0, "7D": 6, "30D": 29, "90D": 89 }[period] ?? 29; const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - days); return { start, end, label: { TODAY: "Hoy", "7D": "Últimos 7 días", "30D": "Últimos 30 días", "90D": "Últimos 90 días" }[period] ?? "Periodo seleccionado" }; }
+function inPurchaseRange(value, range) { if (!value) return false; const dateValue = new Date(value); return dateValue >= range.start && dateValue <= range.end; }
+function purchaseDayLabel(value) { const dateValue = new Date(value); return Number.isNaN(dateValue.getTime()) ? String(value ?? "—") : new Intl.DateTimeFormat("es-CO", { day: "2-digit", month: "short" }).format(dateValue).replace(".", ""); }
+function purchaseDateKey(value) { const dateValue = new Date(value); return `${dateValue.getFullYear()}-${String(dateValue.getMonth() + 1).padStart(2, "0")}-${String(dateValue.getDate()).padStart(2, "0")}`; }
+function purchaseShortMoney(value) { const amount = Number(value ?? 0); return amount >= 1000000 ? `$${(amount / 1000000).toFixed(1)}M` : amount >= 1000 ? `$${Math.round(amount / 1000)}k` : `$${Math.round(amount)}`; }
+function buildPurchaseTimeline(orders) { const rows = new Map(); orders.forEach((order) => { const value = Number(order.total ?? 0); const subtotal = Number(order.subtotal ?? 0); const key = purchaseDateKey(order.receivedAt ?? order.orderedAt ?? order.createdAt); const row = rows.get(key) ?? { date: purchaseDayLabel(order.receivedAt ?? order.orderedAt ?? order.createdAt), orders: 0, subtotal: 0, total: 0, taxes: 0 }; row.orders += 1; row.subtotal += subtotal; row.total += value; row.taxes += value - subtotal; rows.set(key, row); }); return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).slice(-14).map(([, row]) => row); }
+function buildPurchaseProviderRows(orders) { const rows = new Map(); orders.forEach((order) => { const key = order.provider?.id ?? order.providerId ?? "none"; const current = rows.get(key) ?? { name: order.provider?.name ?? "Sin proveedor", orders: 0, total: 0, lead: 0, onTime: null }; current.orders += 1; current.total += Number(order.total ?? 0); rows.set(key, current); }); return [...rows.values()].sort((left, right) => right.total - left.total); }
+function downloadPurchaseReport(rows, filename, type) { const content = `\ufeff${rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n")}`; const url = URL.createObjectURL(new Blob([content], { type })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; document.body.appendChild(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
 function PurchaseLookupDialog({
   type,
@@ -1453,9 +1970,46 @@ function PurchasePdfPreview({ order, onClose }) {
     items.map((item) => ({
       quantity: item.quantity,
       unitCost: item.unitCost,
+      product: item.product,
     })),
     order.provider,
   );
+  const fmt = (value) => formatCurrency(Number(value ?? 0));
+  const payable = Number(order.payableTotal ?? 0) || totals.payableTotal;
+  const retention = Number(order.retentionAmount ?? totals.retentionAmount);
+  const paidTotal = Number(order.paidTotal ?? order.paidAmount ?? 0);
+  function downloadOrderPdf() {
+    const lines = [
+      "MUNDO TIENDA - " + (order.operationType || "Compra"),
+      `Documento: ${orderNumber(order)}   Estado: ${statusLabels[order.status] ?? order.status ?? "Borrador"}`,
+      `Proveedor: ${order.provider?.name ?? "-"}   NIT: ${order.provider?.nit ?? order.provider?.document ?? "-"}`,
+      `Deposito: ${warehouseName(order.warehouse)}   Fecha: ${formatDate(purchaseOrderDate(order))}`,
+      `Factura proveedor: ${order.externalReference ?? "-"}   Vence: ${order.dueDate ? formatDate(order.dueDate) : "-"}`,
+      `Condicion de pago: ${order.paymentCondition ?? "-"}`,
+      "",
+      "CODIGO      PRODUCTO                              CANT      COSTO (IVA incl.)      TOTAL",
+      ...items.map(
+        (item) =>
+          `${String(productCode(item.product)).padEnd(11)} ${String(productName(item.product)).slice(0, 36).padEnd(36)} ${String(item.quantity).padStart(6)}  ${fmt(item.unitCost).padStart(16)}  ${fmt(lineTotal(item)).padStart(14)}`,
+      ),
+      "",
+      `Total renglones (sin IVA): ${fmt(totals.lines)}`,
+      `IVA: ${fmt(totals.taxes)}`,
+      `Total operacion: ${fmt(totals.total)}`,
+      ...(Number(order.discount1Percent) > 0 ? [`Descuento 1: ${order.discount1Percent}%`] : []),
+      ...(Number(order.discount2Percent) > 0 ? [`Descuento 2: ${order.discount2Percent}%`] : []),
+      ...(Number(order.freight) > 0 ? [`Flete: ${fmt(order.freight)}`] : []),
+      ...(retention > 0
+        ? [
+            `Base retencion: ${fmt(order.retentionBase ?? totals.lines)}`,
+            `Retencion (${formatRate(order.retentionRate ?? totals.retentionRate)}%): -${fmt(retention)}`,
+          ]
+        : []),
+      `TOTAL A PAGAR: ${fmt(payable)}`,
+      `Pagado: ${fmt(paidTotal)}   Saldo: ${fmt(Math.max(0, payable - paidTotal))}`,
+    ];
+    downloadPdf(`compra-${orderNumber(order)}`, lines);
+  }
   function shareViaWhatsApp() {
     const message = [
       `Orden de compra ${orderNumber(order)}`,
@@ -1514,9 +2068,13 @@ function PurchasePdfPreview({ order, onClose }) {
           <div className="purchase-pdf-total">
             <span>Total a pagar</span><strong>{formatCurrency(Number(order.payableTotal ?? 0) || totals.payableTotal)}</strong>
           </div>
+          <div className="purchase-pdf-total">
+            <span>Total sin IVA / IVA</span>
+            <strong>{formatCurrency(totals.lines)} / {formatCurrency(totals.taxes)}</strong>
+          </div>
           {Number(order.retentionAmount ?? totals.retentionAmount) > 0 && (
             <div className="purchase-pdf-total purchase-pdf-retention">
-              <span>Retención ({formatQuantity(order.retentionRate ?? totals.retentionRate)}%)</span>
+              <span>Retención ({formatRate(order.retentionRate ?? totals.retentionRate)}%)</span>
               <strong>-{formatCurrency(order.retentionAmount ?? totals.retentionAmount)}</strong>
             </div>
           )}
@@ -1532,6 +2090,9 @@ function PurchasePdfPreview({ order, onClose }) {
           )}
           <button type="button" onClick={shareViaWhatsApp}>
             <Share2 size={13} /> Compartir por WhatsApp
+          </button>
+          <button type="button" onClick={downloadOrderPdf}>
+            <FileText size={13} /> Descargar PDF
           </button>
           <button type="button" className="purchase-action-pdf" onClick={() => window.print()}>
             <Printer size={13} /> Imprimir / Guardar PDF
@@ -1597,7 +2158,7 @@ function QuickPurchaseProductDialog({
     <div className="module-dialog-backdrop" role="presentation">
       <form className="module-dialog quick-purchase-product-dialog" role="dialog" aria-modal="true" onSubmit={submit}>
         <header className="module-dialog-titlebar">
-          <strong>NUEVO PRODUCTO EN LA COMPRA</strong>
+          <strong>INGRESO DE NUEVO PRODUCTO</strong>
           <button type="button" onClick={onClose} aria-label="Cerrar" disabled={saving}><X size={17} /></button>
         </header>
         <div className="quick-product-context">
@@ -1821,6 +2382,13 @@ export function PurchaseOperationDialog({ provider, onClose, onAccept }) {
 function calculateCartTotals(cart, provider) {
   const subtotal = cart.reduce((sum, item) => sum + lineTotal(item), 0);
   const total = subtotal;
+  // El costo unitario incluye IVA: total renglones = base sin IVA.
+  const lines = cart.reduce(
+    (sum, item) =>
+      sum + netFromGross(lineTotal(item), item.product?.taxRate),
+    0,
+  );
+  const taxes = Math.round((total - lines) * 100) / 100;
   const explicitRate = Number(provider?.withholdingRate ?? 0);
   const textRate = Number(
     String(provider?.withholdingType ?? "")
@@ -1840,6 +2408,8 @@ function calculateCartTotals(cart, provider) {
   return {
     quantity: cart.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
     subtotal,
+    lines: Math.round(lines * 100) / 100,
+    taxes,
     total,
     retentionRate: appliesRetention ? retentionRate : 0,
     retentionAmount,
@@ -1949,6 +2519,10 @@ function convertPurchaseQuantityToBase(quantity, unit, product) {
     return amount * unitsPerPackage * packagesPerBox;
   }
   return amount;
+}
+
+function formatRate(value) {
+  return String(Number(Number(value ?? 0).toFixed(2))).replace(".", ",");
 }
 
 function formatQuantity(value) {

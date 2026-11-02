@@ -154,13 +154,13 @@ export function OffersWindow({ onClose, onRequestLogin }) {
         <button type="button" className="provider-close" onClick={onClose} aria-label="Cerrar ofertas"><X size={17} /></button>
       </header>
       <div className="p1-heading">
-        <div><span>VENTAS · PRECIOS</span><h2>Ofertas que funcionan en POS y app</h2><p>Asigna un cliente o producto y define porcentaje, monto o precio final directo.</p></div>
+        <div><h2>Ofertas y precios especiales</h2></div>
         <button type="button" className="p1-secondary-button" onClick={() => void loadData()} disabled={loading}><RefreshCw size={14} className={loading ? "is-spinning" : ""} /> Actualizar</button>
       </div>
       {(error || notice) && <TransientMessage className={error ? "window-error" : "p1-success"} role={error ? "alert" : "status"} onDismiss={() => { setError(""); setNotice(""); }}>{error || notice}</TransientMessage>}
       <div className="p1-content-grid">
         <section className="p1-card">
-          <div className="p1-card-title"><div><strong>{editingId ? "Editar oferta" : "Nueva oferta"}</strong><span>El precio especial es el valor final por unidad.</span></div>{editingId && <button type="button" className="p1-link-button" onClick={startNew}>Nueva</button>}</div>
+          <div className="p1-card-title"><div><strong>{editingId ? "Editar oferta" : "Nueva oferta"}</strong></div>{editingId && <button type="button" className="p1-link-button" onClick={startNew}>Nueva</button>}</div>
           <form className="p1-form" onSubmit={saveOffer}>
             <label>Nombre<input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="Ej. Precio mayorista café" /></label>
             <label>Descripción<input value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} placeholder="Condición de la oferta" /></label>

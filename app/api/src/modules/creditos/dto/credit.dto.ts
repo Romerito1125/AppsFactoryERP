@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  MaxLength,
 } from 'class-validator';
 import { CreditStatus } from '@prisma/client';
 
@@ -34,6 +35,12 @@ export class CreateCreditPaymentDto {
   @IsPositive()
   bankAccountId?: number;
   @IsOptional() @IsString() notes?: string;
+  // Número de consignación/transferencia o recibo externo.
+  @IsOptional() @IsString() @MaxLength(120) reference?: string;
+  // Soporte persistente (imagen/PDF en data URL, máx. ~3 MB).
+  @IsOptional() @IsString() @MaxLength(4_200_000) supportData?: string;
+  @IsOptional() @IsString() @MaxLength(200) supportName?: string;
+  @IsOptional() @IsString() @MaxLength(100) supportMimeType?: string;
 }
 
 export class UpdateCreditStatusDto {

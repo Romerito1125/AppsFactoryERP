@@ -66,10 +66,12 @@ export class MovimientosBancariosService {
   expense(bankAccountId: number, dto: BankAmountDto) {
     return this.prisma.$transaction(async (tx) => {
       const account = await this.ensureActiveAccount(tx, bankAccountId);
+      // Cuenta con 4x1000 automático: el cargo se aplica salvo que se indique lo contrario.
+      const appliesGmf = dto.appliesGmf ?? account.autoGmf;
       const amounts = this.buildMovementAmounts(
         BankMovementType.EGRESO,
         dto.amount,
-        dto.appliesGmf,
+        appliesGmf,
         account.gmfRate,
       );
       await this.ensureBalance(tx, bankAccountId, Number(amounts.totalAmount));
@@ -80,7 +82,7 @@ export class MovimientosBancariosService {
         dto.amount,
         dto.description,
         dto.invoiceId,
-        dto.appliesGmf,
+        appliesGmf,
       );
     });
   }
@@ -89,10 +91,11 @@ export class MovimientosBancariosService {
       throw new BadRequestException('Las cuentas deben ser diferentes');
     return this.prisma.$transaction(async (tx) => {
       const originAccount = await this.ensureActiveAccount(tx, dto.fromBankAccountId);
+      const appliesGmf = dto.appliesGmf ?? originAccount.autoGmf;
       const outgoing = this.buildMovementAmounts(
         BankMovementType.TRANSFERENCIA_SALIENTE,
         dto.amount,
-        dto.appliesGmf,
+        appliesGmf,
         originAccount.gmfRate,
       );
       await this.ensureBalance(
@@ -107,7 +110,7 @@ export class MovimientosBancariosService {
         dto.amount,
         dto.description,
         undefined,
-        dto.appliesGmf,
+        appliesGmf,
         originAccount.gmfRate,
       );
       return this.createMovement(

@@ -8,12 +8,16 @@ import {
   IsNumber,
   IsOptional,
   IsPositive,
+  IsString,
+  Matches,
   Max,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
 import { InvoiceSource, SaleMode } from '@prisma/client';
 import { CreateInvoiceItemDto } from './create-invoice-item.dto';
+import { CreateInvoicePaymentDto } from './create-invoice-payment.dto';
 
 export class CreateInvoiceDto {
   @IsOptional()
@@ -27,6 +31,20 @@ export class CreateInvoiceDto {
   @IsInt()
   @IsPositive()
   createdByUserId?: number;
+
+  // Preventa/cotización que se factura (conversión única).
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  quoteId?: number;
+
+  // Vendedor de la venta (el cajero es el usuario que registra la factura).
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  sellerUserId?: number;
 
   @IsOptional()
   @Type(() => Number)
@@ -60,6 +78,35 @@ export class CreateInvoiceDto {
   @Min(0)
   @Max(3)
   priceLevel?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreateInvoicePaymentDto)
+  payments?: CreateInvoicePaymentDto[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  paymentNotes?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  paymentSupportName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  paymentSupportMimeType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(4_200_000)
+  @Matches(/^data:(image\/[a-z0-9.+-]+|application\/pdf);base64,/i, {
+    message: 'El soporte debe ser una imagen o un PDF',
+  })
+  paymentSupportData?: string;
 
   @IsOptional()
   zone?: string;

@@ -4,6 +4,7 @@ import {
   IsArray,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -22,11 +23,15 @@ export class QuoteItemDto {
   @IsPositive()
   productPriceId?: number;
   @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @IsPositive() quantity: number;
+  // Bodega que surte esta línea (preventa).
+  @IsOptional() @Type(() => Number) @IsInt() @IsPositive() warehouseId?: number;
 }
 
 export class CreateQuoteDto {
   @Type(() => Number) @IsInt() @IsPositive() clientId: number;
   @IsOptional() @IsDateString() expiresAt?: string;
+  // PREVENTA: la crea el vendedor, la revisa la caja y avisa a cada bodega por sus líneas.
+  @IsOptional() @IsIn(['COTIZACION', 'PREVENTA']) kind?: string;
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -53,4 +58,8 @@ export class SendQuoteToWarehouseDto {
   @IsInt()
   @IsPositive()
   userId: number;
+}
+
+export class UpdateLineFulfillmentDto {
+  @IsIn(['ATENDIDO', 'SURTIDO']) status: string;
 }

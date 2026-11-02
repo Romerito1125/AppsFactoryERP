@@ -12,10 +12,6 @@ export function WindowTitlebar({ activeModule = "administrative", notificationCo
       <h1>Mundo Tienda ERP módulo {moduleLabel}.</h1>
       <div className="window-actions">
         {notificationControl}
-        <div className="window-controls" aria-hidden="true">
-          <span className="window-minimize">−</span>
-          <span className="window-close">×</span>
-        </div>
       </div>
     </header>
   );

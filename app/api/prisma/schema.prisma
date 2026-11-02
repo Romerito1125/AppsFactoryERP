@@ -94,6 +94,8 @@ model Client {
   referralLevel  Int           @default(0)
   quotes         Quote[]
   credits        InvoiceCredit[]
+  advances       ClientAdvance[]
+  saleReturns    SaleReturn[]
   referralBenefits ReferralBenefit[] @relation("BenefitRecipient")
   generatedReferralBenefits ReferralBenefit[] @relation("BenefitBuyer")
   socialContributions ReferralSocialContribution[] @relation("SocialContributionBuyer")
@@ -484,6 +486,8 @@ model Invoice {
   validationStatus  InvoiceValidationStatus @default(VALIDADA)
   validatedAt       DateTime?
   validatedByUserId Int?
+  sellerUserId      Int?
+  sellerUsername    String?
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @default(now()) @updatedAt
   client            Client        @relation(fields: [clientId], references: [id])
@@ -497,6 +501,8 @@ model Invoice {
   delivery      Delivery?
   bankMovement  BankAccountMovement[]
   credit        InvoiceCredit?
+  saleReturns   SaleReturn[]
+  paymentSupport InvoicePaymentSupport?
   notifications Notification[]
   generatedReferralBenefits ReferralBenefit[]
   benefitRedemptions ReferralBenefitRedemption[]
@@ -579,12 +585,24 @@ model CreditPayment {
   amount          Decimal  @db.Decimal(12, 2)
   paidAt          DateTime @default(now())
   notes           String?
+  receiptNumber   String?  @unique
+  reference       String?
+  supportName     String?
+  supportMimeType String?
+  supportData     String?
+  createdByUserId Int?
+  advanceId       Int?
+  receiptId       Int?
+  retention       Decimal  @default(0) @db.Decimal(12, 2)
 
+  receipt       PaymentReceipt?      @relation(fields: [receiptId], references: [id])
   invoiceCredit InvoiceCredit        @relation(fields: [invoiceCreditId], references: [id])
   bankMovement  BankAccountMovement? @relation(fields: [bankMovementId], references: [id])
 
   @@index([invoiceCreditId])
   @@index([bankMovementId])
+  @@index([advanceId])
+  @@index([receiptId])
   @@index([paidAt])
 }
 
@@ -631,6 +649,7 @@ model InvoiceItem {
   product      Product       @relation(fields: [productId], references: [id])
   productPrice ProductPrice? @relation(fields: [productPriceId], references: [id])
   warehouse    Warehouse?    @relation(fields: [warehouseId], references: [id])
+  returnItems  SaleReturnItem[]
 
   @@index([invoiceId])
   @@index([productId])
@@ -761,6 +780,17 @@ model PurchaseOrder {
   retentionRate     Decimal              @default(0) @db.Decimal(5, 2)
   retentionAmount   Decimal              @default(0) @db.Decimal(14, 2)
   payableTotal      Decimal              @default(0) @db.Decimal(14, 2)
+  discount1Percent  Decimal              @default(0) @db.Decimal(5, 2)
+  discount2Percent  Decimal              @default(0) @db.Decimal(5, 2)
+  freight           Decimal              @default(0) @db.Decimal(14, 2)
+  retentionBase     Decimal?             @db.Decimal(14, 2)
+  retentionBaseReason String?
+  retentionBaseEditedBy String?
+  paymentCondition  String               @default("CREDITO")
+  invoiceDate       DateTime?
+  dueDate           DateTime?
+  operationType     String?
+  purchaseOrderRef  String?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @default(now()) @updatedAt
 
@@ -875,6 +905,7 @@ model BankAccount {
   accountType    String?
   currentBalance Decimal   @default(0) @db.Decimal(14, 2)
   gmfRate       Decimal   @default(0.4) @db.Decimal(8, 5)
+  autoGmf        Boolean   @default(false)
   isActive       Boolean   @default(true)
   deletedAt      DateTime?
   createdAt      DateTime  @default(now())
@@ -918,6 +949,9 @@ model Quote {
   total       Decimal     @db.Decimal(12, 2)
   status      QuoteStatus @default(PENDIENTE)
   expiresAt   DateTime?
+  kind        String      @default("COTIZACION")
+  sellerUserId Int?
+  sellerUsername String?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @default(now()) @updatedAt
 
@@ -941,6 +975,10 @@ model QuoteItem {
   subtotal       Decimal @db.Decimal(12, 2)
   taxAmount      Decimal @db.Decimal(12, 2)
   total          Decimal @db.Decimal(12, 2)
+  warehouseId    Int?
+  fulfillmentStatus String @default("PENDIENTE")
+  fulfilledAt    DateTime?
+  fulfilledByUsername String?
 
   quote        Quote         @relation(fields: [quoteId], references: [id])
   product      Product       @relation(fields: [productId], references: [id])
@@ -1086,4 +1124,217 @@ enum TransferTicketStatus {
   PENDIENTE
   APROBADO
   CANCELADO
+}
+
+enum AdvanceStatus {
+  DISPONIBLE
+  APLICADO
+  DEVUELTO
+}
+
+enum AdvanceSource {
+  ANTICIPO
+  DEVOLUCION
+}
+
+enum ReturnRefundMethod {
+  CUENTA
+  SALDO_FAVOR
+}
+
+// Anticipos de clientes y saldos a favor (incluye los generados por devoluciones).
+model ClientAdvance {
+  id              Int           @id @default(autoincrement())
+  consecutive     String        @unique
+  clientId        Int
+  amount          Decimal       @db.Decimal(14, 2)
+  appliedAmount   Decimal       @default(0) @db.Decimal(14, 2)
+  balance         Decimal       @db.Decimal(14, 2)
+  status          AdvanceStatus @default(DISPONIBLE)
+  source          AdvanceSource @default(ANTICIPO)
+  bankMovementId  Int?
+  saleReturnId    Int?
+  notes           String?
+  createdByUserId Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @default(now()) @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id])
+
+  @@index([clientId])
+  @@index([status])
+  @@index([saleReturnId])
+}
+
+// Devolución parcial o total de una factura, con historial por línea.
+model SaleReturn {
+  id                Int                 @id @default(autoincrement())
+  consecutive       String              @unique
+  invoiceId         Int
+  clientId          Int
+  reason            String
+  notes             String?
+  subtotal          Decimal             @db.Decimal(12, 2)
+  taxes             Decimal             @db.Decimal(12, 2)
+  total             Decimal             @db.Decimal(12, 2)
+  creditApplied     Decimal             @default(0) @db.Decimal(12, 2)
+  refundedAmount    Decimal             @default(0) @db.Decimal(12, 2)
+  advanceAmount     Decimal             @default(0) @db.Decimal(12, 2)
+  refundMethod      ReturnRefundMethod?
+  bankAccountId     Int?
+  createdByUserId   Int?
+  createdByUsername String?
+  createdAt         DateTime            @default(now())
+
+  invoice Invoice          @relation(fields: [invoiceId], references: [id])
+  client  Client           @relation(fields: [clientId], references: [id])
+  items   SaleReturnItem[]
+
+  @@index([invoiceId])
+  @@index([clientId])
+  @@index([createdAt])
+}
+
+model SaleReturnItem {
+  id            Int     @id @default(autoincrement())
+  returnId      Int
+  invoiceItemId Int
+  productId     Int
+  warehouseId   Int?
+  quantity      Decimal @db.Decimal(12, 3)
+  unitPrice     Decimal @db.Decimal(12, 2)
+  taxRate       Decimal @db.Decimal(5, 2)
+  subtotal      Decimal @db.Decimal(12, 2)
+  taxAmount     Decimal @db.Decimal(12, 2)
+  total         Decimal @db.Decimal(12, 2)
+  restocked     Boolean @default(true)
+
+  saleReturn  SaleReturn  @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  invoiceItem InvoiceItem @relation(fields: [invoiceItemId], references: [id])
+
+  @@index([returnId])
+  @@index([invoiceItemId])
+  @@index([productId])
+}
+
+enum ReceiptKind {
+  COBRO
+  PAGO
+}
+
+enum ReceiptStatus {
+  VIGENTE
+  ANULADO
+}
+
+// Recibo de cobro (cliente) o de pago (proveedor): "Total pagos y abonos".
+// El número de documento es el ticket que escribe el usuario.
+model PaymentReceipt {
+  id                Int           @id @default(autoincrement())
+  kind              ReceiptKind
+  receiptNumber     String        @unique
+  documentNumber    String
+  detail            String
+  clientId          Int?
+  providerId        Int?
+  paidAt            DateTime
+  totalAmount       Decimal       @db.Decimal(14, 2)
+  cashAmount        Decimal       @default(0) @db.Decimal(14, 2)
+  retentionTotal    Decimal       @default(0) @db.Decimal(14, 2)
+  instruments       Json          @default("[]")
+  allocations       Json          @default("[]")
+  comments          String?
+  operationType     String?
+  sellerName        String?
+  supportName       String?
+  supportMimeType   String?
+  supportData       String?
+  status            ReceiptStatus @default(VIGENTE)
+  voidedAt          DateTime?
+  voidReason        String?
+  createdByUserId   Int?
+  createdByUsername String?
+  updatedByUserId   Int?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @default(now()) @updatedAt
+
+  payments CreditPayment[]
+
+  @@unique([kind, documentNumber])
+  @@index([clientId])
+  @@index([providerId])
+  @@index([paidAt])
+}
+
+// Soporte y comentarios del pago de una venta (tabla aparte para no engordar listados).
+model InvoicePaymentSupport {
+  id              Int      @id @default(autoincrement())
+  invoiceId       Int      @unique
+  notes           String?
+  supportName     String?
+  supportMimeType String?
+  supportData     String?
+  createdAt       DateTime @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+enum AccountSide {
+  COBRAR
+  PAGAR
+}
+
+enum NoteKind {
+  DEBITO
+  CREDITO
+  ANTICIPO
+}
+
+// Notas de débito/crédito y anticipos de Cuentas por cobrar y por pagar.
+// COBRAR: DEBITO = cargo adicional al cliente (crea una cuenta por cobrar); CREDITO = ajuste que baja una cuenta.
+// PAGAR:  DEBITO = baja lo que se debe de una compra; CREDITO = lo aumenta; ANTICIPO = pago adelantado (egreso de banco).
+model AccountNote {
+  id                Int           @id @default(autoincrement())
+  side              AccountSide
+  kind              NoteKind
+  documentNumber    String
+  detail            String
+  clientId          Int?
+  providerId        Int?
+  creditId          Int?
+  purchaseOrderId   Int?
+  amount            Decimal       @db.Decimal(14, 2)
+  balance           Decimal       @default(0) @db.Decimal(14, 2)
+  issuedAt          DateTime      @default(now())
+  dueDate           DateTime?
+  bankAccountId     Int?
+  advanceNoteId     Int?
+  status            ReceiptStatus @default(VIGENTE)
+  voidedAt          DateTime?
+  voidReason        String?
+  createdByUserId   Int?
+  createdByUsername String?
+  createdAt         DateTime      @default(now())
+
+  @@unique([side, kind, documentNumber])
+  @@index([clientId])
+  @@index([providerId])
+  @@index([creditId])
+  @@index([purchaseOrderId])
+  @@index([advanceNoteId])
+}
+
+// Documentos en espera (ventas y compras largas). No afectan stock, caja ni cartera.
+model DocumentDraft {
+  id        Int      @id @default(autoincrement())
+  kind      String
+  title     String
+  payload   Json
+  userId    Int
+  username  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([userId, kind])
+  @@index([kind])
 }

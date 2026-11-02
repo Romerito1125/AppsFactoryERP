@@ -54,6 +54,7 @@ export class InventarioService {
             orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
             take: 1,
           },
+          prices: { where: { isActive: true }, orderBy: { id: 'asc' } },
           providers: {
             include: { provider: true },
             orderBy: { providerId: 'asc' },
@@ -93,6 +94,7 @@ export class InventarioService {
               orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
               take: 1,
             },
+            prices: { where: { isActive: true }, orderBy: { id: 'asc' } },
             providers: {
               include: { provider: true },
               orderBy: { providerId: 'asc' },
@@ -129,6 +131,7 @@ export class InventarioService {
               orderBy: [{ startsAt: 'desc' }, { id: 'desc' }],
               take: 1,
             },
+            prices: { where: { isActive: true }, orderBy: { id: 'asc' } },
             providers: {
               include: { provider: true },
               orderBy: { providerId: 'asc' },
@@ -379,8 +382,15 @@ export class InventarioService {
         'La bodega origen y destino no pueden ser iguales',
       );
     }
-    this.ensureActorWarehouseAccess(dto.fromWarehouseId, actor);
-    this.ensureActorWarehouseAccess(dto.toWarehouseId, actor);
+    // Un bodeguero puede enviar desde su bodega o pedir hacia ella (traslados sugeridos);
+    // lo que no puede es mover mercancía entre dos bodegas ajenas.
+    if (
+      actor.role === Role.BODEGA &&
+      actor.warehouseId !== dto.fromWarehouseId &&
+      actor.warehouseId !== dto.toWarehouseId
+    ) {
+      throw new NotFoundException('Bodega no encontrada');
+    }
 
     const batchNumber = this.generateTransferBatchNumber();
     const movements = await this.prisma.$transaction(async (tx) => {
@@ -635,6 +645,98 @@ export class InventarioService {
     return buildPaginatedResponse(data, total, page, limit);
   }
 
+  /**
+   * Traslados sugeridos por faltantes: por producto y bodega con existencia bajo el mínimo,
+   * propone cuánto traer de las bodegas con excedente. Solo es una propuesta (nada se mueve
+   * hasta confirmarla). Lo reservado por preventas pendientes no cuenta como disponible.
+   */
+  async suggestTransfers(authUser?: AuthUser) {
+    const rows = await this.prisma.productWarehouse.findMany({
+      where: { warehouse: { isActive: true }, product: { isActive: true, minimumStock: { gt: 0 } } },
+      include: {
+        product: {
+          select: {
+            id: true,
+            name: true,
+            brand: true,
+            minimumStock: true,
+            maximumStock: true,
+            primaryProvider: { select: { id: true, name: true } },
+          },
+        },
+        warehouse: { select: { id: true, location: true } },
+      },
+    });
+    const reservations = await this.prisma.quoteItem.groupBy({
+      by: ['productId', 'warehouseId'],
+      where: {
+        warehouseId: { not: null },
+        fulfillmentStatus: { not: 'SURTIDO' },
+        quote: { kind: 'PREVENTA', status: { in: ['PENDIENTE', 'APROBADA'] } },
+      },
+      _sum: { quantity: true },
+    });
+    const reserved = new Map(
+      reservations.map((row) => [`${row.productId}:${row.warehouseId}`, Number(row._sum.quantity ?? 0)]),
+    );
+    const byProduct = new Map<number, typeof rows>();
+    for (const row of rows) {
+      byProduct.set(row.productId, [...(byProduct.get(row.productId) ?? []), row]);
+    }
+    const warehouseScope = authUser?.role === 'BODEGA' ? authUser.warehouseId : null;
+    const suggestions: Array<Record<string, unknown>> = [];
+    for (const [, locations] of byProduct) {
+      const product = locations[0].product;
+      const minimum = Number(product.minimumStock);
+      const target = Number(product.maximumStock ?? minimum * 2);
+      const donors = locations
+        .map((row) => ({
+          row,
+          surplus: Math.max(
+            0,
+            Number(row.quantity) - (reserved.get(`${row.productId}:${row.warehouseId}`) ?? 0) - minimum,
+          ),
+        }))
+        .filter((donor) => donor.surplus > 0)
+        .sort((a, b) => b.surplus - a.surplus);
+      for (const row of locations) {
+        if (warehouseScope && row.warehouseId !== warehouseScope) continue;
+        const available =
+          Number(row.quantity) - (reserved.get(`${row.productId}:${row.warehouseId}`) ?? 0);
+        if (available >= minimum) continue;
+        let need = Math.max(0, target - available);
+        for (const donor of donors) {
+          if (need <= 0) break;
+          if (donor.row.warehouseId === row.warehouseId || donor.surplus <= 0) continue;
+          const quantity = Math.floor(Math.min(need, donor.surplus));
+          if (quantity <= 0) continue;
+          donor.surplus -= quantity;
+          need -= quantity;
+          suggestions.push({
+            productId: product.id,
+            productName: product.name,
+            brand: product.brand,
+            providerId: product.primaryProvider?.id ?? null,
+            providerName: product.primaryProvider?.name ?? null,
+            fromWarehouseId: donor.row.warehouseId,
+            fromWarehouse: donor.row.warehouse.location,
+            fromAvailable: Number(donor.row.quantity),
+            toWarehouseId: row.warehouseId,
+            toWarehouse: row.warehouse.location,
+            toAvailable: available,
+            minimum,
+            target,
+            quantity,
+          });
+        }
+      }
+    }
+    return suggestions.sort((a, b) =>
+      String(a.brand ?? '').localeCompare(String(b.brand ?? '')) ||
+      String(a.productName).localeCompare(String(b.productName)),
+    );
+  }
+
   async findTransferTicket(id: number, authUser?: AuthUser) {
     this.ensurePositiveId(id);
 
@@ -765,7 +867,10 @@ export class InventarioService {
           product.packagingProfile,
         ) ?? 0
       : 0;
-    const inventoryValue = totalStock * costPerUnit;
+    const inventoryValueNet = totalStock * costPerUnit;
+    const taxRate = Number(product.taxRate ?? 0);
+    const inventoryTax = inventoryValueNet * (taxRate / 100);
+    const inventoryValue = inventoryValueNet + inventoryTax;
     const packaging = buildPackagingBreakdown(
       totalStock,
       product.packagingProfile,
@@ -781,21 +886,29 @@ export class InventarioService {
       stock: totalStock,
       totalStock,
       cost: costPerUnit,
+      inventoryValueNet,
+      inventoryTax,
       inventoryValue,
       stockStatus: getProductStockStatus(
         totalStock,
         product.minimumStock,
         product.maximumStock,
       ),
-      warehouses: (product.warehouses ?? []).map((item) => ({
-        ...item,
-        stockStatus: getProductStockStatus(
-          Number(item.quantity ?? 0),
-          product.minimumStock,
-          product.maximumStock,
-        ),
-        inventoryValue: Number(item.quantity ?? 0) * costPerUnit,
-      })),
+      warehouses: (product.warehouses ?? []).map((item) => {
+        const warehouseValueNet = Number(item.quantity ?? 0) * costPerUnit;
+        const warehouseTax = warehouseValueNet * (taxRate / 100);
+        return {
+          ...item,
+          stockStatus: getProductStockStatus(
+            Number(item.quantity ?? 0),
+            product.minimumStock,
+            product.maximumStock,
+          ),
+          inventoryValueNet: warehouseValueNet,
+          inventoryTax: warehouseTax,
+          inventoryValue: warehouseValueNet + warehouseTax,
+        };
+      }),
       packagingSummary: packaging,
     };
   }

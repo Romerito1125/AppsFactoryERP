@@ -1,10 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import {
   Check,
+  ArrowUpRight,
+  BarChart3,
+  Boxes,
+  CalendarDays,
   CircleX,
+  CircleDollarSign,
+  Clock,
+  CreditCard,
+  Download,
+  Filter,
+  FileSpreadsheet,
+  FolderOpen,
+  Eye,
   FileText,
+  Lightbulb,
   LoaderCircle,
   Package,
+  Percent,
   Plus,
   Printer,
   ReceiptText,
@@ -14,6 +28,8 @@ import {
   ShoppingCart,
   Trash2,
   Truck,
+  TrendingUp,
+  Users,
   Warehouse,
   X,
 } from "lucide-react";
@@ -21,6 +37,44 @@ import {
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
+import {
+  activeSalePrices,
+  calculateLineTotals,
+  defaultSalePrice,
+  getPriceLevel as getCommercialPriceLevel,
+  grossFromNet,
+  netFromGross,
+  roundMoney,
+  salePriceById,
+  salePriceForLevel,
+} from "@/lib/commercial-pricing";
+import { handleEnterAdvance } from "@/lib/enter-advance";
+import { printInvoiceTicket } from "@/lib/invoice-ticket";
+import { DraftsDialog, saveDraft } from "@/components/drafts/drafts-dialog";
+import { focusSalesScanner } from "./sales-scanner-input";
+import { TotalizeDialog } from "@/components/payments/totalize-dialog";
+import { ReturnsPanel } from "./returns-panel";
+import "./sales-reports.css";
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
+// Acciones compartidas con los componentes de la grilla (documentos en espera, bodega por línea, ticket).
+const SalesExtrasContext = createContext({});
 
 const viewLabels = {
   billing: "Facturación",
@@ -154,10 +208,17 @@ export function SalesWindow({
   const [selectedClientId, setSelectedClientId] = useState("");
   const [selectedWarehouseId, setSelectedWarehouseId] = useState("");
   const [selectedSellerId, setSelectedSellerId] = useState("");
-  const [selectedAccountId, setSelectedAccountId] = useState("");
   const [selectedPriceLevel, setSelectedPriceLevel] = useState("0");
-  const [saleMode, setSaleMode] = useState("CONTADO");
   const [creditDueDate, setCreditDueDate] = useState(defaultDueDate());
+  const [clientAdvances, setClientAdvances] = useState([]);
+  const [bonusAvailable, setBonusAvailable] = useState(0);
+  const [clientDebt, setClientDebt] = useState(0);
+  const [totalizeOpen, setTotalizeOpen] = useState(false);
+  const [activeQuoteId, setActiveQuoteId] = useState(null);
+  const [quoteKind, setQuoteKind] = useState("COTIZACION");
+  const [draftsOpen, setDraftsOpen] = useState(false);
+  const [draftId, setDraftId] = useState(null);
+  const [totalizeError, setTotalizeError] = useState("");
   const [cart, setCart] = useState(emptyCart);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -197,7 +258,6 @@ export function SalesWindow({
         if (accountsResult.status === "fulfilled") {
           const nextAccounts = accountsResult.value.filter(isActive);
           setBankAccounts(nextAccounts);
-          setSelectedAccountId(String(nextAccounts[0]?.id ?? ""));
         }
         if (usersResult?.status === "fulfilled") {
           const activeSalesUsers = usersResult.value.filter(
@@ -265,6 +325,47 @@ export function SalesWindow({
     };
   }, [initialDocumentId, onRequestLogin, session?.sub]);
 
+  useEffect(() => {
+    const refreshInvoices = async () => {
+      invalidateSalesDataCache();
+      const result = await apiClient.getAllPages("/facturas");
+      setInvoices(result);
+    };
+    window.addEventListener("sales:invoice-created", refreshInvoices);
+    return () => window.removeEventListener("sales:invoice-created", refreshInvoices);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const handleCatalogChanged = async () => {
+      invalidateSalesDataCache();
+      try {
+        const { productsResult } = await loadCriticalSalesData();
+        if (cancelled || productsResult.status !== "fulfilled") return;
+        const nextProducts = productsResult.value.filter(isActive);
+        const productsById = new Map(
+          nextProducts.map((product) => [String(product.id), product]),
+        );
+        setProducts(nextProducts);
+        setCart((current) =>
+          current
+            .map((item) => {
+              const product = productsById.get(String(item.productId));
+              return product ? { ...item, product } : null;
+            })
+            .filter(Boolean),
+        );
+      } catch (requestError) {
+        if (!cancelled && isAuthError(requestError)) onRequestLogin?.();
+      }
+    };
+    window.addEventListener("catalog:changed", handleCatalogChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("catalog:changed", handleCatalogChanged);
+    };
+  }, [onRequestLogin]);
+
   const activeProducts = useMemo(
     () =>
       products.filter(isActive).filter((product) => getDefaultPrice(product)),
@@ -286,6 +387,7 @@ export function SalesWindow({
     "VENDEDOR",
     "CONTADOR",
   ].includes(session?.role);
+  const canOverridePrice = canEditSalePrice(session);
   const canManageDeliveries = session?.role === "ADMIN";
 
   const salesViews = [
@@ -325,7 +427,11 @@ export function SalesWindow({
         const price = getPriceForClient(item.product, nextClient, nextPriceLevel);
         if (!price || Number(price.id) === Number(item.productPriceId)) return item;
         changed = true;
-        return { ...item, productPriceId: price.id };
+        return {
+          ...item,
+          productPriceId: price.id,
+          unitPriceGrossOverride: null,
+        };
       });
       return changed ? next : current;
     });
@@ -338,7 +444,6 @@ export function SalesWindow({
     const nextPriceLevel = String(nextClient?.priceLevel ?? 0);
     setSelectedClientId(String(nextClientId));
     setSelectedPriceLevel(nextPriceLevel);
-    if (!hasCreditCapacity(nextClient)) setSaleMode("CONTADO");
     applyPriceSelection(nextClient, nextPriceLevel);
   }
 
@@ -384,6 +489,8 @@ export function SalesWindow({
           productId: product.id,
           productPriceId: price.id,
           quantity: Number(item.quantity),
+          warehouseId: item.warehouseId ?? null,
+          unitPriceGrossOverride: null,
         };
       })
       .filter(Boolean);
@@ -392,14 +499,16 @@ export function SalesWindow({
       return;
     }
     setCart(loadedItems);
+    setActiveQuoteId(quote.id);
     if (quote.clientId ?? quote.client?.id)
       setSelectedClientId(String(quote.clientId ?? quote.client.id));
-    setSaleMode("CONTADO");
     setView("billing");
     setLookupType(null);
     setLastDocument(null);
     setError("");
-      setNotice(`Cotización ${quote.consecutive} cargada en facturación.`);
+      setNotice(
+        `${quote.kind === "PREVENTA" ? "Preventa" : "Cotización"} ${quote.consecutive} cargada en facturación: revisa y corrige antes de emitir.`,
+      );
   }
 
   function openQuoteDispatch(quote) {
@@ -438,7 +547,7 @@ export function SalesWindow({
     }
     if (
       !event.key.startsWith("F") ||
-      !["F1", "F2", "F4", "F5", "F6", "F7"].includes(event.key)
+      !["F1", "F2", "F4", "F5", "F6", "F7", "F8", "F9"].includes(event.key)
     )
       return;
     if (lookupType) return;
@@ -449,6 +558,8 @@ export function SalesWindow({
     if (event.key === "F5") openLookup("products");
     if (event.key === "F6") openLookup("invoices");
     if (event.key === "F7") openLookup("quotes");
+    if (event.key === "F8") void holdSale();
+    if (event.key === "F9") setDraftsOpen(true);
   }
 
   useEffect(() => {
@@ -491,10 +602,114 @@ export function SalesWindow({
           productId: product.id,
           productPriceId: price.id,
           quantity: 1,
+          unitPriceGrossOverride: null,
         },
       ];
     });
     setError("");
+  }
+
+  async function printTicketFor(document) {
+    try {
+      // Se consulta la factura completa: trae medios de pago, vendedor y cajero.
+      const full = document.id ? await apiClient.get(`/facturas/${document.id}`) : document;
+      printInvoiceTicket(full);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function fulfillQuoteLine(quote, item, status) {
+    try {
+      const saved = await apiClient.patch(`/cotizaciones/${quote.id}/lineas/${item.id}/surtido`, { status });
+      const apply = (current) => ({
+        ...current,
+        items: (current.items ?? []).map((line) => (line.id === item.id ? { ...line, ...saved } : line)),
+      });
+      setSelectedDocument((current) => (current ? apply(current) : current));
+      setQuotes((current) => current.map((row) => (row.id === quote.id ? apply(row) : row)));
+      setNotice(status === "SURTIDO" ? "Línea marcada como surtida." : "Línea marcada como atendida.");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  function clearCart() {
+    setCart(emptyCart);
+    setActiveQuoteId(null);
+    setDraftId(null);
+  }
+
+  // Bodega por línea (#45/#46): null = la del encabezado.
+  function updateCartWarehouse(productId, warehouseId) {
+    setCart((current) =>
+      current.map((item) =>
+        item.productId === productId
+          ? { ...item, warehouseId: warehouseId ? Number(warehouseId) : null }
+          : item,
+      ),
+    );
+  }
+
+  // Documentos en espera (#73): guarda solo la captura, no mueve stock, caja ni cartera.
+  async function holdSale() {
+    if (!cart.length) {
+      setError("Agrega productos antes de dejar la factura en espera.");
+      return;
+    }
+    const client = clients.find((item) => String(item.id) === String(selectedClientId));
+    const title = `${client ? clientName(client) : "Venta"} · ${new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}`;
+    try {
+      const saved = await saveDraft({
+        id: draftId ?? undefined,
+        kind: "VENTA",
+        title,
+        payload: {
+          clientId: selectedClientId,
+          warehouseId: selectedWarehouseId,
+          sellerId: selectedSellerId,
+          priceLevel: selectedPriceLevel,
+          quoteId: activeQuoteId,
+          items: cart.map((item) => ({
+            productId: item.productId,
+            productPriceId: item.productPriceId,
+            quantity: item.quantity,
+            warehouseId: item.warehouseId ?? null,
+            unitPriceGrossOverride: item.unitPriceGrossOverride ?? null,
+          })),
+        },
+      });
+      setNotice(`Factura «${saved.title}» guardada en espera. No afecta inventario ni caja.`);
+      setCart(emptyCart);
+      setActiveQuoteId(null);
+      setDraftId(null);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  function resumeSale(draft) {
+    const payload = draft.payload ?? {};
+    const restored = (payload.items ?? [])
+      .map((line) => {
+        const product = activeProducts.find((candidate) => candidate.id === line.productId);
+        return product ? { ...line, product } : null;
+      })
+      .filter(Boolean);
+    if (!restored.length) {
+      setError("Los productos de este borrador ya no están disponibles.");
+      return;
+    }
+    if (payload.clientId) setSelectedClientId(String(payload.clientId));
+    if (payload.warehouseId) setSelectedWarehouseId(String(payload.warehouseId));
+    if (payload.sellerId) setSelectedSellerId(String(payload.sellerId));
+    if (payload.priceLevel !== undefined) setSelectedPriceLevel(String(payload.priceLevel));
+    setActiveQuoteId(payload.quoteId ?? null);
+    setCart(restored);
+    setDraftId(draft.id);
+    setDraftsOpen(false);
+    setView("billing");
+    setNotice(`Documento «${draft.title}» retomado. Los precios se revalidan al emitir la factura.`);
   }
 
   function updateCartQuantity(productId, nextQuantity) {
@@ -509,14 +724,78 @@ export function SalesWindow({
     );
   }
 
+  function updateCartPrice(productId, nextGrossPrice) {
+    setCart((current) => current.map((item) =>
+      item.productId === productId
+        ? { ...item, unitPriceGrossOverride: nextGrossPrice }
+        : item,
+    ));
+  }
+
+  // Datos del cliente para totalizar: saldos a favor, bonus y deuda actual.
+  useEffect(() => {
+    let cancelled = false;
+    setClientAdvances([]);
+    setBonusAvailable(0);
+    setClientDebt(0);
+    if (!selectedClientId) return undefined;
+    apiClient
+      .get("/anticipos", { clientId: selectedClientId, status: "DISPONIBLE" })
+      .then((rows) => {
+        if (!cancelled) setClientAdvances(Array.isArray(rows) ? rows : []);
+      })
+      .catch(() => {
+        // Sin permiso de cartera: simplemente no se ofrecen saldos a favor.
+      });
+    apiClient
+      .get(`/facturas/bonus/${selectedClientId}`)
+      .then((result) => {
+        if (!cancelled) setBonusAvailable(Number(result?.available ?? 0));
+      })
+      .catch(() => {});
+    apiClient
+      .get(`/clientes/${selectedClientId}/creditos`)
+      .then((rows) => {
+        if (cancelled) return;
+        const debt = (Array.isArray(rows) ? rows : []).reduce(
+          (sum, credit) => sum + Math.max(0, Number(credit.balance ?? 0)),
+          0,
+        );
+        setClientDebt(roundMoney(debt));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedClientId]);
+
+  // Tras cerrar una consulta, el foco vuelve a la fila de captura de código.
+  useEffect(() => {
+    if (view === "billing" && !lookupType && !loading && !totalizeOpen) {
+      const timer = setTimeout(focusSalesScanner, 0);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [view, lookupType, loading, totalizeOpen]);
+
   async function addBarcodeToCart(code) {
     const normalized = code.trim();
     if (!normalized) return;
-    const localProduct = activeProducts.find((product) =>
-      (product.barcodes ?? []).some(
-        (barcode) => barcode.code?.toLowerCase() === normalized.toLowerCase(),
-      ),
-    );
+    // El código puede ser un código de barras o el código interno del producto
+    // (el que se muestra en la tabla cuando no tiene código de barras).
+    const needle = normalized.toLowerCase();
+    const localProduct =
+      activeProducts.find((product) =>
+        (product.barcodes ?? []).some(
+          (barcode) => barcode.code?.toLowerCase() === needle,
+        ),
+      ) ??
+      activeProducts.find(
+        (product) =>
+          String(product.primaryBarcode ?? "").toLowerCase() === needle ||
+          String(product.code ?? "").toLowerCase() === needle ||
+          String(product.id) === normalized,
+      );
     if (localProduct) {
       addProduct(localProduct);
       return;
@@ -527,72 +806,111 @@ export function SalesWindow({
       );
       addProduct(product);
     } catch (requestError) {
-      setError(requestError.message || "No se encontró el código de barras.");
-      if (isAuthError(requestError)) onRequestLogin?.();
+      if (isAuthError(requestError)) {
+        setError(requestError.message);
+        onRequestLogin?.();
+      } else {
+        setError(`El código ${normalized} no existe en el catálogo.`);
+      }
     }
   }
 
-  async function saveInvoice() {
+  // "Emitir factura" abre Total operación (efectivo, instrumentos, bonus, crédito).
+  function openTotalize() {
     if (!cart.length) {
       setError("Agrega al menos un producto para facturar.");
       return;
     }
-    if (saleMode === "CONTADO" && !selectedAccountId) {
-      setError("Selecciona una cuenta bancaria para registrar el recaudo.");
+    if (cartTotals.total <= 0) {
+      setError("El total de la factura debe ser mayor a cero.");
       return;
     }
-    if (saleMode === "CREDITO" && !hasCreditCapacity(selectedClient)) {
-      setError("Configura el crédito y su límite en la ficha del cliente para vender a crédito.");
-      return;
-    }
-    if (saleMode === "CREDITO" && !creditDueDate) {
-      setError("Selecciona la fecha de vencimiento del crédito.");
-      return;
-    }
-    setSaving(true);
     setError("");
+    setTotalizeError("");
+    setTotalizeOpen(true);
+  }
+
+  async function saveInvoice(result) {
+    setSaving(true);
+    setTotalizeError("");
     setNotice("");
     try {
+      const payments = [
+        ...(result.cashAmount > 0
+          ? [
+              {
+                bankAccountId: result.cashAccountId,
+                amount: result.cashAmount,
+                reference: "Efectivo",
+              },
+            ]
+          : []),
+        ...result.instruments.map((row) => ({
+          bankAccountId: row.bankAccountId,
+          amount: row.amount,
+          ...(row.reference ? { reference: row.reference } : {}),
+        })),
+        ...(result.bonusAmount > 0 ? [{ bonus: true, amount: result.bonusAmount }] : []),
+        ...result.advanceLines.map((line) => ({
+          advanceId: line.advanceId,
+          amount: line.amount,
+        })),
+      ];
+      const onCredit = result.creditAmount > 0;
       const invoice = await apiClient.post("/facturas", {
         clientId: selectedClientId ? Number(selectedClientId) : undefined,
         warehouseId: selectedWarehouseId
           ? Number(selectedWarehouseId)
           : undefined,
         source: "POS",
-        saleMode,
-        ...(saleMode === "CREDITO"
-          ? { creditDueDate: new Date(`${creditDueDate}T00:00:00`).toISOString() }
+        // El crédito lo decide Total operación: lo no pagado queda a crédito.
+        saleMode: onCredit ? "CREDITO" : "CONTADO",
+        ...(onCredit
+          ? { creditDueDate: new Date(`${result.creditDueDate}T00:00:00`).toISOString() }
+          : {}),
+        // Los pagos viajan con la factura: se guardan en una sola transacción.
+        ...(payments.length ? { payments } : {}),
+        ...(result.comments ? { paymentNotes: result.comments } : {}),
+        ...(result.support
+          ? {
+              paymentSupportName: result.support.supportName,
+              paymentSupportMimeType: result.support.supportMimeType,
+              paymentSupportData: result.support.supportData,
+            }
           : {}),
         priceLevel: Number(selectedPriceLevel),
         items: cart.map((item) => ({
           productId: item.productId,
           productPriceId: item.productPriceId,
-        warehouseId: selectedWarehouseId
-            ? Number(selectedWarehouseId)
-            : undefined,
+          warehouseId: item.warehouseId
+            ? Number(item.warehouseId)
+            : selectedWarehouseId
+              ? Number(selectedWarehouseId)
+              : undefined,
           quantity: item.quantity,
+          ...(hasAppliedUnitPrice(item.unitPriceGrossOverride)
+            ? { unitPriceGross: Number(item.unitPriceGrossOverride) }
+            : {}),
         })),
-        createdByUserId: selectedSellerId
-          ? Number(selectedSellerId)
-          : undefined,
+        sellerUserId: selectedSellerId ? Number(selectedSellerId) : undefined,
+        ...(activeQuoteId ? { quoteId: activeQuoteId } : {}),
       });
 
-      if (saleMode === "CONTADO") {
-        await apiClient.post("/movimientos-bancarios/ingreso", {
-          bankAccountId: Number(selectedAccountId),
-          amount: Number(invoice.total),
-          invoiceId: invoice.id,
-          description: `Recaudo venta ${invoice.consecutive}`,
-        });
-      }
-
+      setTotalizeOpen(false);
+      setActiveQuoteId(null);
+      if (draftId) apiClient.delete(`/borradores/${draftId}`).catch(() => {});
+      setDraftId(null);
       setInvoices((current) => [invoice, ...current]);
       invalidateSalesDataCache();
       setLastDocument(invoice);
-      setNotice(`Factura ${invoice.consecutive} creada correctamente.`);
+      setNotice(
+        onCredit
+          ? `Factura ${invoice.consecutive} creada; ${formatCurrency(result.creditAmount)} quedaron a crédito.`
+          : `Factura ${invoice.consecutive} creada correctamente.`,
+      );
       setCart(emptyCart);
     } catch (requestError) {
-      setError(requestError.message);
+      setTotalizeError(requestError.message);
       if (isAuthError(requestError)) onRequestLogin?.();
     } finally {
       setSaving(false);
@@ -616,16 +934,26 @@ export function SalesWindow({
         clientId: Number(selectedClientId),
         expiresAt: new Date(`${creditDueDate}T00:00:00`).toISOString(),
         priceLevel: Number(selectedPriceLevel),
+        kind: quoteKind,
         items: cart.map((item) => ({
           productId: item.productId,
           productPriceId: item.productPriceId,
           quantity: item.quantity,
+          ...(quoteKind === "PREVENTA"
+            ? {
+                warehouseId: Number(item.warehouseId ?? selectedWarehouseId) || undefined,
+              }
+            : {}),
         })),
       });
       setQuotes((current) => [quote, ...current]);
       invalidateSalesDataCache();
       setLastDocument(quote);
-      setNotice(`Cotización ${quote.consecutive} creada correctamente.`);
+      setNotice(
+        quote.kind === "PREVENTA"
+          ? `Preventa ${quote.consecutive} creada: cada bodega recibió el aviso de sus líneas.`
+          : `Cotización ${quote.consecutive} creada correctamente.`,
+      );
       setCart(emptyCart);
     } catch (requestError) {
       setError(requestError.message);
@@ -809,7 +1137,17 @@ export function SalesWindow({
 
   const windowTitle = viewLabels[view] ?? "Ventas";
 
+  const extras = {
+    onHold: holdSale,
+    onDrafts: () => setDraftsOpen(true),
+    warehouses,
+    defaultWarehouseId: selectedWarehouseId,
+    onUpdateWarehouse: updateCartWarehouse,
+    onTicket: printTicketFor,
+  };
+
   return (
+    <SalesExtrasContext.Provider value={extras}>
     <section
       className={`provider-window sales-window sales-window-${view} ${isDragging ? "is-dragging" : ""}`}
       aria-label={`Módulo de ventas · ${windowTitle}`}
@@ -847,10 +1185,8 @@ export function SalesWindow({
             selectedSeller={selectedSeller}
             selectedSellerId={selectedSellerId}
             salesUsers={salesUsers}
-            selectedAccountId={selectedAccountId}
             selectedPriceLevel={selectedPriceLevel}
-            saleMode={saleMode}
-            creditDueDate={creditDueDate}
+            clientDebt={clientDebt}
             cart={cart}
             totals={cartTotals}
             documentNumber={lastDocument?.consecutive ?? "000000"}
@@ -871,14 +1207,20 @@ export function SalesWindow({
                 : undefined
             }
             actionLoading={actionLoading}
-            onAccountChange={setSelectedAccountId}
+            canOverridePrice={canOverridePrice}
+            onScanBarcode={addBarcodeToCart}
+            canViewReturns={canAccessReturns(session, "RETURNS_VIEW")}
+            canCreateReturns={canAccessReturns(session, "RETURNS_CREATE")}
+            onReturnCreated={() => {
+              invalidateSalesDataCache();
+              setNotice("Devolución registrada. Inventario y cartera actualizados.");
+            }}
             onSellerChange={setSelectedSellerId}
-            onSaleModeChange={setSaleMode}
-            onDueDateChange={setCreditDueDate}
             onUpdateQuantity={updateCartQuantity}
+            onUpdatePrice={updateCartPrice}
             onPriceLevelChange={handlePriceLevelChange}
-            onClearCart={() => setCart(emptyCart)}
-            onSubmit={saveInvoice}
+            onClearCart={clearCart}
+            onSubmit={openTotalize}
             onOpenClientLookup={() => openLookup("clients")}
             onOpenWarehouseLookup={() => openLookup("warehouses")}
             onOpenProductLookup={() => openLookup("products")}
@@ -892,6 +1234,8 @@ export function SalesWindow({
             selectedClientId={selectedClientId}
             creditDueDate={creditDueDate}
             selectedPriceLevel={selectedPriceLevel}
+            quoteKind={quoteKind}
+            onQuoteKindChange={setQuoteKind}
             cart={cart}
             totals={cartTotals}
             saving={saving}
@@ -903,7 +1247,7 @@ export function SalesWindow({
             onBarcode={addBarcodeToCart}
             onUpdateQuantity={updateCartQuantity}
             onPriceLevelChange={handlePriceLevelChange}
-            onClearCart={() => setCart(emptyCart)}
+            onClearCart={clearCart}
             onSubmit={saveQuote}
             onOpenProductLookup={() => openLookup("products")}
             onOpenLoadLookup={() => openLookup("quotes")}
@@ -927,7 +1271,15 @@ export function SalesWindow({
             onCreateDelivery={() => startDelivery()}
           />
         ) : view === "reports" ? (
-          <ReportsPanel invoices={invoices} quotes={quotes} orders={orders} />
+          <ReportsPanel
+            invoices={invoices}
+            quotes={quotes}
+            orders={orders}
+            clients={clients}
+            warehouses={warehouses}
+            salesUsers={salesUsers}
+            onSelect={setSelectedDocument}
+          />
         ) : (
           <div className="module-loading">Selecciona una operación de ventas.</div>
         )}
@@ -979,6 +1331,23 @@ export function SalesWindow({
           onCancel={() => setDeliveryEditor(null)}
         />
       )}
+      {totalizeOpen && (
+        <TotalizeDialog
+          mode="sale"
+          title="TOTAL OPERACIÓN"
+          totalLabel="Total operación"
+          total={cartTotals.total}
+          bankAccounts={bankAccounts}
+          client={selectedClient}
+          previousBalance={clientDebt}
+          bonusAvailable={bonusAvailable}
+          advances={clientAdvances}
+          saving={saving}
+          error={totalizeError}
+          onAccept={saveInvoice}
+          onCancel={() => setTotalizeOpen(false)}
+        />
+      )}
       {lookupType && (
         <SalesLookupDialog
           type={lookupType}
@@ -998,6 +1367,11 @@ export function SalesWindow({
           document={selectedDocument}
           type={selectedDocument.__salesType}
           onPrint={() => printSalesDocument(selectedDocument, selectedDocument.__salesType)}
+          onTicket={printTicketFor}
+          warehouses={warehouses}
+          onFulfill={
+            ["ADMIN", "BODEGA"].includes(session?.role) ? fulfillQuoteLine : undefined
+          }
           onAnnul={
             selectedDocument.__salesType === "invoice" &&
             canManageDocuments &&
@@ -1019,7 +1393,11 @@ export function SalesWindow({
           onClose={() => setQuoteDispatch(null)}
         />
       )}
+      {draftsOpen && (
+        <DraftsDialog kind="VENTA" onLoad={resumeSale} onClose={() => setDraftsOpen(false)} />
+      )}
     </section>
+    </SalesExtrasContext.Provider>
   );
 }
 
@@ -1030,10 +1408,8 @@ function BillingPanel({
   selectedSeller,
   selectedSellerId,
   salesUsers,
-  selectedAccountId,
   selectedPriceLevel,
-  saleMode,
-  creditDueDate,
+  clientDebt,
   cart,
   totals,
   documentNumber,
@@ -1046,12 +1422,15 @@ function BillingPanel({
   onAnnulInvoice,
   onValidateInvoice,
   actionLoading,
-  onAccountChange,
+  canOverridePrice,
+  onScanBarcode,
+  canViewReturns,
+  canCreateReturns,
+  onReturnCreated,
   onPriceLevelChange,
   onSellerChange,
-  onSaleModeChange,
-  onDueDateChange,
   onUpdateQuantity,
+  onUpdatePrice,
   onClearCart,
   onSubmit,
   onOpenClientLookup,
@@ -1084,19 +1463,34 @@ function BillingPanel({
         >
           Facturas registradas <span>{invoices.length}</span>
         </button>
+        {canViewReturns && (
+          <button
+            type="button"
+            className={billingTab === "returns" ? "is-active" : ""}
+            role="tab"
+            aria-selected={billingTab === "returns"}
+            onClick={() => setBillingTab("returns")}
+          >
+            Devoluciones
+          </button>
+        )}
       </div>
-      {billingTab === "new" ? (
-        <TicketPanel
+      {billingTab === "returns" && canViewReturns ? (
+        <ReturnsPanel
+          invoices={invoices}
           bankAccounts={bankAccounts}
+          canCreate={canCreateReturns}
+          onCreated={onReturnCreated}
+        />
+      ) : billingTab === "new" ? (
+        <TicketPanel
           selectedClient={selectedClient}
+          clientDebt={clientDebt}
           selectedWarehouse={selectedWarehouse}
           selectedSeller={selectedSeller}
           selectedSellerId={selectedSellerId}
           salesUsers={salesUsers}
-          selectedAccountId={selectedAccountId}
           selectedPriceLevel={selectedPriceLevel}
-          saleMode={saleMode}
-          creditDueDate={creditDueDate}
           cart={cart}
           totals={totals}
           saving={saving}
@@ -1104,12 +1498,12 @@ function BillingPanel({
           notice={notice}
           lastDocument={lastDocument}
           documentNumber={documentNumber}
-          onAccountChange={onAccountChange}
+          onScanBarcode={onScanBarcode}
           onPriceLevelChange={onPriceLevelChange}
           onSellerChange={onSellerChange}
-          onSaleModeChange={onSaleModeChange}
-          onDueDateChange={onDueDateChange}
           onUpdateQuantity={onUpdateQuantity}
+          onUpdatePrice={onUpdatePrice}
+          canOverridePrice={canOverridePrice}
           onClearCart={onClearCart}
           onSubmit={onSubmit}
           submitLabel="Emitir factura"
@@ -1142,6 +1536,8 @@ function QuotePanel({
   selectedClientId,
   creditDueDate,
   selectedPriceLevel,
+  quoteKind,
+  onQuoteKindChange,
   cart,
   totals,
   saving,
@@ -1167,8 +1563,12 @@ function QuotePanel({
     <div className="sales-quote-layout sales-quote-single">
       <div className="sales-quote-builder">
         <SalesPanelHeading
-          title="Emisión de cotización"
-          description="Guarda la cotización para cargarla después en facturación."
+          title={quoteKind === "PREVENTA" ? "Emisión de preventa" : "Emisión de cotización"}
+          description={
+            quoteKind === "PREVENTA"
+              ? "El vendedor arma la preventa; la caja la carga, corrige y factura. Cada bodega recibe solo sus líneas."
+              : "Guarda la cotización para cargarla después en facturación."
+          }
           actionLabel="F7 Cargar cotización"
           onAction={onOpenLoadLookup}
         />
@@ -1185,6 +1585,13 @@ function QuotePanel({
                   {clientName(client)} · {client.identification}
                 </option>
               ))}
+            </select>
+          </label>
+          <label>
+            <span>Tipo</span>
+            <select value={quoteKind} onChange={(event) => onQuoteKindChange(event.target.value)}>
+              <option value="COTIZACION">Cotización</option>
+              <option value="PREVENTA">Preventa (vendedor → caja)</option>
             </select>
           </label>
           <label>
@@ -1216,6 +1623,7 @@ function QuotePanel({
           onLoad={onOpenLoadLookup}
         />
         <CartTable
+          showWarehouse
           cart={cart}
           totals={totals}
           onUpdateQuantity={onUpdateQuantity}
@@ -1230,7 +1638,7 @@ function QuotePanel({
             onClick={onSubmit}
             disabled={saving}
           >
-            <Check size={14} /> {saving ? "Guardando…" : "Guardar cotización"}
+            <Check size={14} /> {saving ? "Guardando…" : quoteKind === "PREVENTA" ? "Guardar preventa" : "Guardar cotización"}
           </button>
         </div>
       </div>
@@ -1331,11 +1739,14 @@ function SalesPriceLevelField({ value, cart = [], onChange }) {
 }
 
 function SalesShortcutBar({ onSales, onProducts, onReprint, onLoad }) {
+  const { onHold, onDrafts } = useContext(SalesExtrasContext);
   const shortcuts = [
     ["F4", "Facturación", onSales, ReceiptText],
     ["F5", "Productos", onProducts, Package],
     ["F6", "Reimprime", onReprint, FileText],
     ["F7", "Cargar", onLoad, ShoppingCart],
+    ["F8", "En espera", onHold, Clock],
+    ["F9", "Borradores", onDrafts, FolderOpen],
   ];
   return (
     <div className="sales-shortcut-bar" aria-label="Atajos de facturación">
@@ -1351,16 +1762,13 @@ function SalesShortcutBar({ onSales, onProducts, onReprint, onLoad }) {
 }
 
 function TicketPanel({
-  bankAccounts,
   selectedClient,
+  clientDebt = 0,
   selectedWarehouse,
   selectedSeller,
   selectedSellerId,
   salesUsers,
-  selectedAccountId,
   selectedPriceLevel,
-  saleMode,
-  creditDueDate,
   cart,
   totals,
   documentNumber,
@@ -1368,12 +1776,12 @@ function TicketPanel({
   notice,
   onDismissNotice,
   lastDocument,
-  onAccountChange,
+  onScanBarcode,
   onPriceLevelChange,
   onSellerChange,
-  onSaleModeChange,
-  onDueDateChange,
   onUpdateQuantity,
+  onUpdatePrice,
+  canOverridePrice,
   onClearCart,
   onSubmit,
   submitLabel,
@@ -1384,6 +1792,7 @@ function TicketPanel({
   onLoadQuote,
   onGoToBilling,
 }) {
+  const { onTicket } = useContext(SalesExtrasContext);
   return (
     <aside className="sales-ticket-panel">
       <div className="sales-billing-top">
@@ -1441,16 +1850,9 @@ function TicketPanel({
             onLoad={onLoadQuote}
           />
           <SalesPaymentBox
-            bankAccounts={bankAccounts}
-            creditEnabled={hasCreditCapacity(selectedClient)}
-            creditLimit={selectedClient?.maxCredit}
-            selectedAccountId={selectedAccountId}
-            saleMode={saleMode}
-            creditDueDate={creditDueDate}
+            client={selectedClient}
             total={totals.total}
-            onAccountChange={onAccountChange}
-            onSaleModeChange={onSaleModeChange}
-            onDueDateChange={onDueDateChange}
+            clientDebt={clientDebt}
           />
         </div>
         <BillingTotalsPanel
@@ -1460,9 +1862,13 @@ function TicketPanel({
         />
       </div>
       <CartTable
+        showWarehouse
+        onScan={onScanBarcode}
         cart={cart}
         totals={totals}
         onUpdateQuantity={onUpdateQuantity}
+        onUpdatePrice={onUpdatePrice}
+        canOverridePrice={canOverridePrice}
         onClearCart={onClearCart}
         onOpenProductLookup={onOpenProductLookup}
       />
@@ -1490,84 +1896,35 @@ function TicketPanel({
           <span>Último documento</span>
           <strong>{lastDocument.consecutive}</strong>
           <small>{formatCurrency(lastDocument.total)}</small>
+          {lastDocument.items && (
+            <button type="button" onClick={() => onTicket?.(lastDocument)}>
+              <Printer size={12} /> Ticket
+            </button>
+          )}
         </div>
       )}
     </aside>
   );
 }
 
-function SalesPaymentBox({
-  bankAccounts,
-  creditEnabled,
-  creditLimit,
-  selectedAccountId,
-  saleMode,
-  creditDueDate,
-  total,
-  onAccountChange,
-  onSaleModeChange,
-  onDueDateChange,
-}) {
+function SalesPaymentBox({ client, total, clientDebt }) {
+  // El crédito lo decide la ficha del cliente; el pago se captura en Total operación.
+  const hasCredit = hasCreditCapacity(client);
   return (
     <div className="sales-payment-box">
       <div className="sales-payment-heading">
-        <span>Forma de pago</span>
+        <span>Total a pagar</span>
         <strong>{formatCurrency(total)}</strong>
       </div>
-      <div className="sales-payment-options">
-        <label className={saleMode === "CONTADO" ? "is-selected" : ""}>
-          <input
-            type="radio"
-            checked={saleMode === "CONTADO"}
-            onChange={() => onSaleModeChange("CONTADO")}
-          />
-          <span>Contado</span>
-        </label>
-        <label
-          className={`${saleMode === "CREDITO" ? "is-selected" : ""} ${creditEnabled ? "" : "is-disabled"}`}
-        >
-          <input
-            type="radio"
-            checked={saleMode === "CREDITO"}
-            disabled={!creditEnabled}
-            onChange={() => onSaleModeChange("CREDITO")}
-          />
-          <span>Crédito</span>
-        </label>
-      </div>
-      {!creditEnabled && (
-        <small className="sales-credit-hint">
-          El cliente seleccionado no tiene crédito configurado.
-        </small>
-      )}
-      {saleMode === "CONTADO" ? (
-        <label>
-          <span>Cuenta de recaudo</span>
-          <select
-            value={selectedAccountId}
-            onChange={(event) => onAccountChange(event.target.value)}
-          >
-            <option value="">Selecciona una cuenta</option>
-            {bankAccounts.map((account) => (
-              <option value={account.id} key={account.id}>
-                {account.name} · {account.bankName}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : (
-        <div className="sales-credit-fields">
-          <label>
-            <span>Vencimiento del crédito</span>
-            <input
-              type="date"
-              value={creditDueDate}
-              onChange={(event) => onDueDateChange(event.target.value)}
-            />
-          </label>
-          <small>Límite asignado: {formatCurrency(creditLimit)}</small>
-        </div>
-      )}
+      <small className="sales-credit-hint">
+        {hasCredit
+          ? `Cliente con crédito · límite ${formatCurrency(client.maxCredit)} · deuda actual ${formatCurrency(clientDebt)}`
+          : "Cliente sin crédito: la venta es de contado."}
+      </small>
+      <small className="sales-credit-hint">
+        «Emitir factura» abre Total operación: efectivo, cuentas, bonus
+        {hasCredit ? " y crédito" : ""}.
+      </small>
     </div>
   );
 }
@@ -1605,13 +1962,21 @@ function BillingTotalsPanel({ documentNumber, cart, totals }) {
 }
 
 function CartTable({
+  onScan,
   cart,
   totals,
   onUpdateQuantity,
+  onUpdatePrice,
+  canOverridePrice,
   onClearCart,
   onOpenProductLookup,
+  showWarehouse = false,
 }) {
-  const blankRowCount = Math.max(12, 16 - cart.length);
+  const { warehouses = [], defaultWarehouseId, onUpdateWarehouse } =
+    useContext(SalesExtrasContext);
+  const columns = showWarehouse ? 7 : 6;
+  // #50: más renglones visibles en la grilla.
+  const blankRowCount = Math.max(14, 22 - cart.length);
 
   function handleTableClick(event) {
     // Las líneas existentes son editables, pero las filas vacías siguen
@@ -1624,7 +1989,12 @@ function CartTable({
   }
 
   function handleTableKeyDown(event) {
-    if (!onOpenProductLookup || cart.length > 0) return;
+    if (cart.length > 0) {
+      // Enter confirma el campo y pasa al siguiente; tras el último abre productos.
+      handleEnterAdvance(event, { onLast: () => onOpenProductLookup?.() });
+      return;
+    }
+    if (!onOpenProductLookup) return;
     if (!["Enter", " "].includes(event.key)) return;
     event.preventDefault();
     onOpenProductLookup();
@@ -1634,6 +2004,7 @@ function CartTable({
     <div className="sales-cart">
       <div
         className="sales-cart-table-wrap"
+        data-enter-scope
         role={cart.length > 0 ? undefined : "button"}
         tabIndex={cart.length > 0 ? -1 : 0}
         aria-label={
@@ -1651,6 +2022,7 @@ function CartTable({
               <th>Producto</th>
               <th>Cantidad</th>
               <th>Und</th>
+              {showWarehouse && <th>Bodega</th>}
               <th>Precio</th>
               <th>Total</th>
             </tr>
@@ -1660,11 +2032,18 @@ function CartTable({
               const price =
                 getPriceById(item.product, item.productPriceId) ??
                 getDefaultPrice(item.product);
+              const lineTotals = calculateLineTotals({
+                unitPriceNet: cartUnitPriceNet(item, price),
+                quantity: item.quantity,
+                taxRate: item.product.taxRate,
+              });
               return (
                 <tr key={item.productId}>
                   <td>
                     <strong>
-                      {item.product.primaryBarcode ?? item.product.id}
+                      {item.product.primaryBarcode ??
+                        item.product.code ??
+                        item.product.id}
                     </strong>
                   </td>
                   <td className="sales-cart-description-cell">
@@ -1677,23 +2056,59 @@ function CartTable({
                     />
                   </td>
                   <td>UND</td>
+                  {showWarehouse && (
+                    <td>
+                      <LineWarehouse
+                        item={item}
+                        warehouses={warehouses}
+                        defaultWarehouseId={defaultWarehouseId}
+                        onChange={onUpdateWarehouse}
+                      />
+                    </td>
+                  )}
                   <td>
-                    <span className="sales-cart-price-level">
-                      <strong>{priceLabel(getPriceLevel(price))}</strong>
-                      <small>{formatCurrency(price?.price)}</small>
-                    </span>
+                    {canOverridePrice ? (
+                      <SalesPriceInput
+                        item={item}
+                        catalogPrice={price}
+                        onUpdatePrice={onUpdatePrice}
+                      />
+                    ) : (
+                      <span className="sales-cart-price-level">
+                        {formatCurrency(
+                          grossFromNet(
+                            cartUnitPriceNet(item, price),
+                            item.product.taxRate,
+                          ),
+                        )}
+                      </span>
+                    )}
                   </td>
                   <td className="sales-cart-total">
-                    {formatCurrency(Number(price?.price ?? 0) * item.quantity)}
+                    {formatCurrency(lineTotals.total)}
                   </td>
                 </tr>
               );
             })}
-            {Array.from({ length: blankRowCount }, (_, index) => (
-              <tr className="sales-cart-empty-row" key={`empty-${index}`}>
-                <td colSpan="6" />
-              </tr>
-            ))}
+            {Array.from({ length: blankRowCount }, (_, index) =>
+              index === 0 && onScan ? (
+                // Fila de captura (como en Saint): Código + Enter agrega el producto;
+                // Enter con el código vacío abre la lista de productos.
+                <tr className="sales-cart-empty-row sales-cart-entry-row" key="entry">
+                  <td>
+                    <SalesEntryCode
+                      onScan={onScan}
+                      onOpenProductLookup={onOpenProductLookup}
+                    />
+                  </td>
+                  <td colSpan={columns - 1} />
+                </tr>
+              ) : (
+                <tr className="sales-cart-empty-row" key={`empty-${index}`}>
+                  <td colSpan={columns} />
+                </tr>
+              ),
+            )}
           </tbody>
         </table>
       </div>
@@ -1721,12 +2136,95 @@ function CartTable({
   );
 }
 
+/**
+ * Bodega de origen de cada línea (#45) con la existencia disponible por ubicación (#46).
+ * Una línea que sale de una bodega distinta a la del encabezado se resalta.
+ */
+function LineWarehouse({ item, warehouses, defaultWarehouseId, onChange }) {
+  const effectiveId = item.warehouseId ?? Number(defaultWarehouseId);
+  const stockByWarehouse = new Map(
+    (item.product?.warehouses ?? []).map((row) => [Number(row.warehouseId), Number(row.quantity ?? 0)]),
+  );
+  const isOther = item.warehouseId && Number(item.warehouseId) !== Number(defaultWarehouseId);
+  const requested = Number(item.quantity ?? 0);
+  const available = stockByWarehouse.get(Number(effectiveId)) ?? 0;
+  return (
+    <div className={`sales-line-warehouse ${isOther ? "is-other" : ""}`}>
+      <select
+        value={item.warehouseId ?? ""}
+        aria-label={`Bodega de origen de ${item.product?.name}`}
+        onChange={(event) => onChange?.(item.productId, event.target.value)}
+      >
+        <option value="">
+          Bodega del encabezado · disp. {stockByWarehouse.get(Number(defaultWarehouseId)) ?? 0}
+        </option>
+        {warehouses.map((warehouse) => (
+          <option key={warehouse.id} value={warehouse.id}>
+            {warehouse.location} · disp. {stockByWarehouse.get(Number(warehouse.id)) ?? 0}
+          </option>
+        ))}
+      </select>
+      {isOther && <strong className="sales-line-badge">OTRA BODEGA</strong>}
+      {requested > available && (
+        <small className="sales-line-short">Solo hay {available} en esa bodega</small>
+      )}
+    </div>
+  );
+}
+
+function SalesEntryCode({ onScan, onOpenProductLookup }) {
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="sales-quantity-control">
+    <input
+      data-sales-scanner
+      autoComplete="off"
+      value={code}
+      disabled={busy}
+      aria-label="Código del siguiente producto"
+      onChange={(event) => setCode(event.target.value)}
+      onKeyDown={async (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        event.stopPropagation();
+        const value = code.trim();
+        if (!value) {
+          onOpenProductLookup?.();
+          return;
+        }
+        setBusy(true);
+        setCode("");
+        try {
+          await onScan(value);
+        } finally {
+          setBusy(false);
+          // El input se deshabilita mientras consulta: se devuelve el foco al terminar.
+          setTimeout(focusSalesScanner, 0);
+        }
+      }}
+    />
+    </div>
+  );
+}
+
 function SalesQuantityInput({ item, onUpdateQuantity }) {
   const [draft, setDraft] = useState(String(item.quantity));
   return (
     <div className="sales-quantity-control">
       <input
         type="text"
+        onKeyDown={(event) => {
+          // Enter confirma la cantidad y devuelve el foco al lector de códigos.
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          const parsedValue = parseQuantityInput(draft);
+          if (parsedValue !== null) {
+            onUpdateQuantity(item.productId, parsedValue);
+            setDraft(String(parsedValue));
+          }
+          focusSalesScanner();
+        }}
         inputMode="decimal"
         min="0.001"
         step="any"
@@ -1749,6 +2247,54 @@ function SalesQuantityInput({ item, onUpdateQuantity }) {
         aria-label={`Cantidad de ${item.product.name}`}
       />
     </div>
+  );
+}
+
+function SalesPriceInput({ item, catalogPrice, onUpdatePrice }) {
+  const currentNet = cartUnitPriceNet(item, catalogPrice);
+  const currentGross = grossFromNet(currentNet, item.product.taxRate);
+  const [draft, setDraft] = useState(String(currentGross));
+
+  useEffect(() => {
+    setDraft(String(currentGross));
+  }, [currentGross]);
+
+  function commit() {
+    const parsed = parseMoneyInput(draft);
+    if (parsed === null) {
+      setDraft(String(currentGross));
+      return;
+    }
+    const catalogGross = grossFromNet(
+      hasAppliedUnitPrice(item.appliedUnitPrice)
+        ? Number(item.appliedUnitPrice)
+        : Number(catalogPrice?.price ?? 0),
+      item.product.taxRate,
+    );
+    onUpdatePrice(
+      item.productId,
+      Math.abs(parsed - catalogGross) < 0.005 ? null : parsed,
+    );
+    setDraft(String(parsed));
+  }
+
+  return (
+    <label className="sales-cart-price-editor">
+      <input
+        type="text"
+        inputMode="decimal"
+        value={draft}
+        onChange={(event) => {
+          if (isMoneyDraft(event.target.value)) setDraft(event.target.value);
+        }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          // Confirma el precio; el avance al siguiente recuadro lo hace el contenedor.
+          if (event.key === "Enter") commit();
+        }}
+        aria-label={`Precio final con IVA de ${item.product.name}`}
+      />
+    </label>
   );
 }
 
@@ -1810,6 +2356,8 @@ export function InvoicePanel({
             <tr>
               <th>Factura</th>
               <th>Cliente</th>
+              <th>Vendedor</th>
+              <th>Cajero</th>
               <th>Origen</th>
               <th>Estado</th>
               <th>Validación</th>
@@ -1831,6 +2379,8 @@ export function InvoicePanel({
                     <strong>{invoice.consecutive}</strong>
                   </td>
                   <td>{clientName(invoice.client)}</td>
+                  <td>{invoice.sellerUsername ?? invoice.createdByUsername ?? "—"}</td>
+                  <td>{invoice.createdByUsername ?? "—"}</td>
                   <td>
                     {invoiceSourceLabel(invoice.source)}
                   </td>
@@ -1862,7 +2412,7 @@ export function InvoicePanel({
                           onSelect({ ...invoice, __salesType: "invoice" })
                         }
                       >
-                        Ver
+                        <Eye size={13} /> Ver
                       </button>
                       {onAnnul && invoice.status !== "ANULADA" && (
                         <button
@@ -1904,9 +2454,6 @@ export function InvoicePanel({
           </tbody>
         </table>
       </div>
-      <p className="table-hint">
-        Doble clic sobre una factura para ver su detalle.
-      </p>
     </div>
   );
 }
@@ -1951,6 +2498,7 @@ function QuoteList({
                 >
                   <td>
                     <strong>{quote.consecutive}</strong>
+                    {quote.kind === "PREVENTA" && <small className="sales-kind-badge"> Preventa</small>}
                   </td>
                   <td>{clientName(quote.client)}</td>
                   <td>{quote.items?.length ?? 0}</td>
@@ -1976,7 +2524,7 @@ function QuoteList({
                           onSelect({ ...quote, __salesType: "quote" })
                         }
                       >
-                        Ver
+                        <Eye size={13} /> Ver
                       </button>
                       <button
                         type="button"
@@ -2029,7 +2577,7 @@ function QuoteList({
                           </button>
                         </>
                       )}
-                      {["PENDIENTE", "APROBADA"].includes(quote.status) && (
+                      {quote.kind !== "PREVENTA" && ["PENDIENTE", "APROBADA"].includes(quote.status) && (
                         <button
                           type="button"
                           disabled={Boolean(actionLoading)}
@@ -2163,7 +2711,7 @@ function DeliveryPanel({
                         </button>
                       ) : (
                         <button type="button" onClick={() => onSelect(detail)}>
-                          Ver
+                          <Eye size={13} /> Ver
                         </button>
                       )}
                     </td>
@@ -2318,7 +2866,7 @@ function OrdersPanel({
                     <td>
                       <div className="sales-table-actions">
                         <button type="button" onClick={() => onSelect(detail)}>
-                          Ver
+                          <Eye size={13} /> Ver
                         </button>
                         {!order.delivery && (
                           <button
@@ -2350,82 +2898,599 @@ function OrdersPanel({
   );
 }
 
-function ReportsPanel({ invoices, quotes, orders }) {
-  const activeInvoices = invoices.filter(
-    (invoice) => invoice.status === "ACTIVA",
+const REPORT_INITIAL_FILTERS = {
+  period: "30D",
+  from: "",
+  to: "",
+  source: "ALL",
+  status: "ACTIVA",
+  saleMode: "ALL",
+  warehouse: "ALL",
+  seller: "ALL",
+  client: "ALL",
+  query: "",
+};
+
+function ReportsPanel({ invoices, quotes, orders, clients, warehouses, salesUsers, onSelect }) {
+  const [filters, setFilters] = useState(REPORT_INITIAL_FILTERS);
+  const [activeTab, setActiveTab] = useState("overview");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const range = useMemo(() => salesReportRange(filters), [filters]);
+  const filteredInvoices = useMemo(
+    () => invoices.filter((invoice) => matchesSalesReportInvoice(invoice, filters, range)),
+    [filters, invoices, range],
   );
-  const totalSales = activeInvoices.reduce(
-    (sum, invoice) => sum + Number(invoice.total ?? 0),
-    0,
+  const filteredQuotes = useMemo(
+    () => quotes.filter((quote) => matchesSalesReportDocument(quote, filters, range)),
+    [filters, quotes, range],
   );
-  const totalQuotes = quotes.reduce(
-    (sum, quote) => sum + Number(quote.total ?? 0),
-    0,
+  const filteredOrders = useMemo(
+    () => orders.filter((order) => inSalesReportRange(order.createdAt, range)),
+    [orders, range],
   );
-  const appOrders = orders.length;
-  const cards = [
-    ["Ventas activas", activeInvoices.length, "Facturas vigentes"],
-    ["Valor vendido", formatCurrency(totalSales), "Facturación acumulada"],
-    [
-      "Cotizaciones",
-      formatCurrency(totalQuotes),
-      `${quotes.length} propuestas`,
-    ],
-    ["Pedidos móviles", appOrders, "Pedidos recibidos"],
+  const metrics = useMemo(
+    () => buildSalesReportMetrics(filteredInvoices, filteredQuotes, filteredOrders),
+    [filteredInvoices, filteredOrders, filteredQuotes],
+  );
+  const dailySales = useMemo(
+    () => buildDailySales(filteredInvoices),
+    [filteredInvoices],
+  );
+  const sourceMix = useMemo(() => buildSourceMix(filteredInvoices), [filteredInvoices]);
+  const paymentMix = useMemo(() => buildPaymentMix(filteredInvoices), [filteredInvoices]);
+  const topProducts = useMemo(() => buildTopSalesProducts(filteredInvoices), [filteredInvoices]);
+  const sellerRows = useMemo(() => buildSellerRows(filteredInvoices), [filteredInvoices]);
+  const topClients = useMemo(() => buildTopSalesClients(filteredInvoices), [filteredInvoices]);
+  const summary = useMemo(
+    () => buildSalesSummary(metrics, dailySales, topProducts, topClients, filteredQuotes),
+    [dailySales, filteredQuotes, metrics, topClients, topProducts],
+  );
+  const recommendations = useMemo(
+    () => buildSalesRecommendations(metrics, topProducts, filteredQuotes, filteredInvoices, filteredOrders),
+    [filteredInvoices, filteredOrders, filteredQuotes, metrics, topProducts],
+  );
+  const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const paginatedInvoices = filteredInvoices.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+  const reportTabs = [
+    { id: "overview", label: "Resumen", icon: BarChart3 },
+    { id: "trends", label: "Tendencias", icon: TrendingUp },
+    { id: "products", label: "Productos y equipo", icon: Package },
+    { id: "opportunities", label: "Oportunidades", icon: Lightbulb },
+    { id: "detail", label: "Detalle", icon: ReceiptText },
   ];
-  const max = Math.max(
-    ...activeInvoices.map((invoice) => Number(invoice.total ?? 0)),
-    0,
-  );
+
+  function updateFilter(name, value) {
+    setFilters((current) => ({ ...current, [name]: value }));
+    setPage(1);
+  }
+
+  function resetFilters() {
+    setFilters(REPORT_INITIAL_FILTERS);
+    setPage(1);
+  }
+
+  function exportReportCsv() {
+    if (!filteredInvoices.length) return;
+    const headers = ["Fecha", "Factura", "Cliente", "Origen", "Forma de pago", "Vendedor", "Total", "Utilidad"];
+    const rows = filteredInvoices.map((invoice) => [
+      formatDate(invoice.createdAt),
+      invoice.consecutive,
+      clientName(invoice.client),
+      invoiceSourceLabel(invoice.source),
+      invoice.saleMode === "CREDITO" ? "Crédito" : "Contado",
+      reportSellerName(invoice),
+      Number(invoice.total ?? 0).toFixed(2),
+      invoiceProfit(invoice).toFixed(2),
+    ]);
+    const csv = [headers, ...rows]
+      .map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(","))
+      .join("\n");
+    downloadSalesReport(csv, `ventas-${filters.period.toLowerCase()}.csv`);
+  }
+
+  async function exportReportPdf() {
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 34;
+    const colors = { navy: [28, 48, 74], blue: [43, 108, 176], green: [49, 165, 109], amber: [210, 138, 37], ink: [41, 57, 78], muted: [104, 121, 143], line: [224, 231, 239], pale: [244, 247, 251] };
+    let y = 0;
+    const money = (value) => formatCurrency(value);
+    const ensureSpace = (height) => { if (y + height > pageHeight - margin) { doc.addPage(); y = margin; drawHeader(false); return true; } return false; };
+    const drawHeader = (first = true) => {
+      if (first) { doc.setFillColor(...colors.navy); doc.rect(0, 0, pageWidth, 78, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("MUNDO TIENDA", margin, 34); doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.text("REPORTE COMERCIAL DE VENTAS", margin, 54); doc.setFontSize(10); doc.text(`Periodo: ${range.label}`, pageWidth - margin, 34, { align: "right" }); doc.text(`Generado: ${new Date().toLocaleString("es-CO")}`, pageWidth - margin, 52, { align: "right" }); y = 106; }
+      else { doc.setFillColor(...colors.navy); doc.rect(0, 0, pageWidth, 34, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.text("MUNDO TIENDA · REPORTE DE VENTAS", margin, 21); y = 55; }
+    };
+    const sectionTitle = (title) => { ensureSpace(28); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text(title, margin, y); y += 18; };
+    drawHeader();
+    doc.setFillColor(...colors.pale); doc.roundedRect(margin, y, pageWidth - margin * 2, 45, 6, 6, "F"); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.text(summary.headline, margin + 14, y + 18); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...colors.muted); doc.text(doc.splitTextToSize(summary.detail, pageWidth - margin * 2 - 28), margin + 14, y + 33); y += 62;
+    const metricCards = [["Ventas", money(metrics.sales), colors.blue], ["Ticket promedio", money(metrics.averageTicket), colors.navy], ["Utilidad bruta", `${money(metrics.profit)} · ${metrics.margin.toFixed(1)}%`, colors.green], ["IVA generado", money(metrics.taxes), colors.amber], ["Ventas a crédito", `${money(metrics.creditSales)} · ${metrics.creditShare.toFixed(1)}%`, colors.amber]];
+    const cardGap = 9; const cardWidth = (pageWidth - margin * 2 - cardGap * (metricCards.length - 1)) / metricCards.length;
+    metricCards.forEach(([label, value, color], index) => { const x = margin + index * (cardWidth + cardGap); doc.setFillColor(255, 255, 255); doc.setDrawColor(...colors.line); doc.roundedRect(x, y, cardWidth, 58, 5, 5, "FD"); doc.setFillColor(...color); doc.roundedRect(x, y, cardWidth, 4, 2, 2, "F"); doc.setTextColor(...colors.muted); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.text(label, x + 10, y + 20); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text(value, x + 10, y + 41); }); y += 82;
+    sectionTitle("Productos con mayor facturación");
+    topProducts.slice(0, 8).forEach((row, index) => { ensureSpace(18); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.text(`${index + 1}. ${row.name}`, margin, y); doc.setTextColor(...colors.muted); doc.text(`${formatQuantity(row.units)} unidades`, margin + 250, y); doc.setTextColor(...colors.green); doc.setFont("helvetica", "bold"); doc.text(money(row.profit), pageWidth - margin - 135, y, { align: "right" }); doc.setTextColor(...colors.ink); doc.text(money(row.total), pageWidth - margin, y, { align: "right" }); y += 17; });
+    y += 8; sectionTitle("Recomendaciones de negocio");
+    recommendations.forEach((recommendation) => { ensureSpace(30); doc.setFillColor(...colors.pale); doc.roundedRect(margin, y - 10, pageWidth - margin * 2, 29, 4, 4, "F"); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.text(recommendation.title, margin + 10, y + 2); doc.setTextColor(...colors.muted); doc.setFont("helvetica", "normal"); doc.text(doc.splitTextToSize(recommendation.detail, pageWidth - margin * 2 - 220), margin + 210, y + 2); y += 38; });
+    sectionTitle("Detalle de facturas filtradas");
+    const columns = [{ label: "Fecha", width: 74 }, { label: "Factura", width: 145 }, { label: "Cliente", width: 190 }, { label: "Origen", width: 80 }, { label: "Pago", width: 62 }, { label: "Total", width: 90 }, { label: "Utilidad", width: 90 }];
+    const drawTableHeader = () => { ensureSpace(24); doc.setFillColor(...colors.navy); doc.rect(margin, y - 12, pageWidth - margin * 2, 21, "F"); let x = margin + 7; doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(8); columns.forEach((column) => { doc.text(column.label, x, y + 1); x += column.width; }); y += 20; };
+    drawTableHeader();
+    filteredInvoices.slice(0, 100).forEach((invoice, index) => { if (ensureSpace(20)) drawTableHeader(); if (index % 2 === 0) { doc.setFillColor(250, 252, 254); doc.rect(margin, y - 11, pageWidth - margin * 2, 19, "F"); } let x = margin + 7; const values = [formatDate(invoice.createdAt), invoice.consecutive, clientName(invoice.client), invoiceSourceLabel(invoice.source), invoice.saleMode === "CREDITO" ? "Crédito" : "Contado", money(invoice.total), money(invoiceProfit(invoice))]; doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...colors.ink); values.forEach((value, valueIndex) => { doc.text(doc.splitTextToSize(String(value), columns[valueIndex].width - 12)[0], x, y); x += columns[valueIndex].width; }); y += 19; });
+    doc.setTextColor(...colors.muted); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.text("Mundo Tienda · Reporte generado desde el módulo de Ventas", margin, pageHeight - 18); doc.save(`reporte-ventas-${filters.period.toLowerCase()}.pdf`);
+  }
+
+  async function exportReportExcel() {
+    const XLSX = await import("xlsx");
+    const rows = filteredInvoices.map((invoice) => ({
+      Fecha: formatDate(invoice.createdAt),
+      Factura: invoice.consecutive,
+      Cliente: clientName(invoice.client),
+      Origen: invoiceSourceLabel(invoice.source),
+      Pago: invoice.saleMode === "CREDITO" ? "Crédito" : "Contado",
+      Vendedor: reportSellerName(invoice),
+      Subtotal: Number(invoice.subtotal ?? 0),
+      IVA: Number(invoice.taxes ?? 0),
+      Total: Number(invoice.total ?? 0),
+      Utilidad: invoiceProfit(invoice),
+    }));
+    const summaryRows = [
+      { Indicador: "Periodo", Valor: range.label },
+      { Indicador: "Facturas filtradas", Valor: metrics.invoices },
+      { Indicador: "Ventas", Valor: metrics.sales },
+      { Indicador: "Ticket promedio", Valor: metrics.averageTicket },
+      { Indicador: "Utilidad bruta", Valor: metrics.profit },
+      { Indicador: "Margen", Valor: `${metrics.margin.toFixed(1)}%` },
+      { Indicador: "IVA generado", Valor: metrics.taxes },
+      { Indicador: "Ventas a crédito", Valor: metrics.creditSales },
+      { Indicador: "Unidades vendidas", Valor: metrics.units },
+    ];
+    const workbook = XLSX.utils.book_new();
+    const appendSheet = (name, data, widths) => { const sheet = XLSX.utils.json_to_sheet(data); sheet["!cols"] = widths.map((wch) => ({ wch })); if (data.length) sheet["!autofilter"] = { ref: XLSX.utils.encode_range(XLSX.utils.decode_range(sheet["!ref"])) }; XLSX.utils.book_append_sheet(workbook, sheet, name); };
+    appendSheet("Resumen", summaryRows, [28, 24]);
+    appendSheet("Facturas", rows, [14, 22, 28, 16, 14, 24, 14, 14, 14, 14]);
+    appendSheet("Productos", topProducts.slice(0, 100).map((row) => ({ Producto: row.name, Unidades: row.units, Ventas: row.total, Utilidad: row.profit, Margen: row.total > 0 ? `${((row.profit / row.total) * 100).toFixed(1)}%` : "0%" })), [34, 14, 16, 16, 12]);
+    appendSheet("Vendedores", sellerRows.slice(0, 100).map((row) => ({ Vendedor: row.name, Facturas: row.count, Ventas: row.total, Utilidad: row.profit })), [28, 14, 16, 16]);
+    appendSheet("Clientes", topClients.slice(0, 100).map((row) => ({ Cliente: row.name, Facturas: row.count, Ventas: row.total })), [34, 14, 16]);
+    appendSheet("Evolución", dailySales.map((row) => ({ Fecha: row.label, Ventas: row.total, Utilidad: row.profit })), [16, 16, 16]);
+    appendSheet("Oportunidades", [
+      { Indicador: "Cotizaciones totales", Cantidad: metrics.totalQuotes, Valor: metrics.totalQuoteValue },
+      { Indicador: "Cotizaciones abiertas", Cantidad: metrics.openQuotes, Valor: metrics.openQuoteValue },
+      { Indicador: "Cotizaciones convertidas", Cantidad: metrics.convertedQuotes, Valor: metrics.convertedQuoteValue },
+      { Indicador: "Entregas pendientes", Cantidad: metrics.pendingDeliveries, Valor: "" },
+    ], [30, 14, 18]);
+    XLSX.writeFile(workbook, `reporte-ventas-${filters.period.toLowerCase()}.xlsx`);
+  }
+
   return (
-    <div className="sales-report-panel">
-      <SalesPanelHeading
-        title="Reportes de ventas"
-        description="Indicadores construidos con los documentos registrados."
-      />
-      <div className="sales-report-cards">
-        {cards.map(([label, value, helper]) => (
-          <article key={label}>
-            <span>{label}</span>
-            <strong>{value}</strong>
-            <small>{helper}</small>
-          </article>
-        ))}
-      </div>
-      <div className="sales-report-chart">
-        <div className="sales-section-heading">
-          <div>
-            <strong>Facturación por documento</strong>
-            <span>Comparativo visual de las facturas activas.</span>
-          </div>
+    <div className="sales-report-panel sales-report-dashboard">
+      <div className="sales-report-hero">
+        <div>
+          <span className="sales-report-eyebrow">MÓDULO DE VENTAS · ANALÍTICA</span>
+          <h2>Panel comercial</h2>
+          <p>Lectura rápida de facturación, rentabilidad, clientes y oportunidades.</p>
         </div>
-        {activeInvoices.length ? (
-          activeInvoices.slice(0, 10).map((invoice) => (
-            <div className="sales-report-row" key={invoice.id}>
-              <div>
-                <strong>{invoice.consecutive}</strong>
-                <span>
-                  {clientName(invoice.client)} · {formatDate(invoice.createdAt)}
-                </span>
-              </div>
-              <div className="sales-report-track">
-                <span
-                  style={{
-                    width: `${max ? Math.max(6, (Number(invoice.total) / max) * 100) : 0}%`,
-                  }}
-                />
-              </div>
-              <b>{formatCurrency(invoice.total)}</b>
-            </div>
-          ))
-        ) : (
-          <div className="table-empty">
-            No hay facturas activas para graficar.
+        <div className="sales-report-hero-actions">
+          <span className="sales-report-period-label"><CalendarDays size={14} /> {range.label}</span>
+          <button type="button" onClick={resetFilters}><RotateCcw size={14} /> Restablecer</button>
+          <button type="button" onClick={exportReportCsv} disabled={!filteredInvoices.length}><Download size={14} /> CSV</button>
+          <button type="button" onClick={exportReportPdf}><FileText size={14} /> PDF</button>
+          <button type="button" onClick={exportReportExcel}><FileSpreadsheet size={14} /> Excel</button>
+        </div>
+      </div>
+
+      <section className="sales-report-filter-panel">
+        <div className="sales-report-filter-heading">
+          <div><Filter size={15} /><strong>Filtros del reporte</strong></div>
+          <span>{filteredInvoices.length} facturas · {filteredQuotes.length} cotizaciones · {filteredOrders.length} pedidos</span>
+        </div>
+        <div className="sales-report-quick-filters" aria-label="Periodos rápidos">
+          {[['TODAY', 'Hoy'], ['7D', '7 días'], ['30D', '30 días'], ['90D', '90 días'], ['ALL', 'Historial']].map(([value, label]) => <button key={value} type="button" className={filters.period === value ? "is-active" : ""} onClick={() => updateFilter("period", value)}>{label}</button>)}
+          <button type="button" className={filters.period === "CUSTOM" ? "is-active" : ""} onClick={() => updateFilter("period", "CUSTOM")}><CalendarDays size={13} /> Rango personalizado</button>
+        </div>
+        <div className="sales-report-filters">
+          <label><span>Periodo</span><select value={filters.period} onChange={(event) => updateFilter("period", event.target.value)}>
+            <option value="TODAY">Hoy</option><option value="7D">Últimos 7 días</option><option value="30D">Últimos 30 días</option><option value="90D">Últimos 90 días</option><option value="ALL">Todo el historial</option><option value="CUSTOM">Personalizado</option>
+          </select></label>
+          {filters.period === "CUSTOM" && <>
+            <label><span>Desde</span><input type="date" value={filters.from} onChange={(event) => updateFilter("from", event.target.value)} /></label>
+            <label><span>Hasta</span><input type="date" value={filters.to} onChange={(event) => updateFilter("to", event.target.value)} /></label>
+          </>}
+          <label><span>Origen</span><select value={filters.source} onChange={(event) => updateFilter("source", event.target.value)}>
+            <option value="ALL">Todos</option><option value="ADMIN">Administrativo</option><option value="POS">POS</option><option value="APP_MOVIL">App móvil</option>
+          </select></label>
+          <label><span>Estado</span><select value={filters.status} onChange={(event) => updateFilter("status", event.target.value)}>
+            <option value="ACTIVA">Activas</option><option value="ANULADA">Anuladas</option><option value="ALL">Todos</option>
+          </select></label>
+          <label><span>Pago</span><select value={filters.saleMode} onChange={(event) => updateFilter("saleMode", event.target.value)}>
+            <option value="ALL">Contado y crédito</option><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option>
+          </select></label>
+          <label><span>Bodega</span><select value={filters.warehouse} onChange={(event) => updateFilter("warehouse", event.target.value)}>
+            <option value="ALL">Todas</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.location ?? warehouse.name ?? `Bodega ${warehouse.id}`}</option>)}
+          </select></label>
+          <label><span>Vendedor</span><select value={filters.seller} onChange={(event) => updateFilter("seller", event.target.value)}>
+            <option value="ALL">Todos</option>{salesUsers.map((user) => <option key={user.id} value={user.username}>{user.employee ? `${user.employee.firstName ?? ""} ${user.employee.lastName ?? ""}`.trim() || user.username : user.username}</option>)}
+          </select></label>
+          <label><span>Cliente</span><select value={filters.client} onChange={(event) => updateFilter("client", event.target.value)}>
+            <option value="ALL">Todos</option>{clients.map((client) => <option key={client.id} value={client.id}>{clientName(client)}</option>)}
+          </select></label>
+          <label className="sales-report-filter-search"><span>Buscar</span><div><Search size={14} /><input value={filters.query} onChange={(event) => updateFilter("query", event.target.value)} placeholder="Factura, cliente o producto" /></div></label>
+        </div>
+      </section>
+
+      <section className="sales-report-kpis">
+        <ReportMetricCard icon={CircleDollarSign} label="Ventas" value={formatCurrency(metrics.sales)} helper={`${metrics.invoices} facturas filtradas`} tone="primary" />
+        <ReportMetricCard icon={ReceiptText} label="Ticket promedio" value={formatCurrency(metrics.averageTicket)} helper="Venta media por factura" />
+        <ReportMetricCard icon={TrendingUp} label="Utilidad bruta" value={formatCurrency(metrics.profit)} helper={`${metrics.margin.toFixed(1)}% sobre ventas`} tone="positive" />
+        <ReportMetricCard icon={Percent} label="IVA generado" value={formatCurrency(metrics.taxes)} helper={`${metrics.taxRate.toFixed(1)}% de la venta`} />
+        <ReportMetricCard icon={CreditCard} label="Ventas a crédito" value={formatCurrency(metrics.creditSales)} helper={`${metrics.creditShare.toFixed(1)}% del periodo`} tone="warning" />
+        <ReportMetricCard icon={Boxes} label="Unidades vendidas" value={formatQuantity(metrics.units)} helper={`${metrics.activeProducts} productos con movimiento`} />
+      </section>
+
+      <nav className="sales-report-tabs" role="tablist" aria-label="Secciones del reporte">
+        {reportTabs.map(({ id, label, icon: Icon }) => <button key={id} type="button" role="tab" aria-selected={activeTab === id} className={activeTab === id ? "is-active" : ""} onClick={() => setActiveTab(id)}><Icon size={14} />{label}</button>)}
+      </nav>
+
+      <div className="sales-report-tab-panel" role="tabpanel">
+        {activeTab === "overview" && <>
+          <SalesExecutiveSummary summary={summary} metrics={metrics} />
+          <div className="sales-report-main-grid">
+            <section className="sales-report-card sales-report-trend-card">
+              <div className="sales-report-card-heading"><div><span>EVOLUCIÓN</span><strong>Ventas por día</strong></div><span className="sales-report-card-meta">{range.label}</span></div>
+              <SalesTrendChart points={dailySales} />
+            </section>
+            <section className="sales-report-card sales-report-source-card">
+              <div className="sales-report-card-heading"><div><span>MEZCLA COMERCIAL</span><strong>Origen de las ventas</strong></div><BarChart3 size={16} /></div>
+              <SalesSourceMix sourceMix={sourceMix} sales={metrics.sales} />
+            </section>
           </div>
-        )}
+          <RecommendationsPanel recommendations={recommendations} />
+        </>}
+
+        {activeTab === "trends" && <div className="sales-report-chart-grid">
+          <section className="sales-report-card sales-report-wide-chart"><div className="sales-report-card-heading"><div><span>EVOLUCIÓN</span><strong>Tendencia de facturación</strong></div><span className="sales-report-card-meta">{range.label}</span></div><SalesTrendChart points={dailySales} /></section>
+          <section className="sales-report-card"><div className="sales-report-card-heading"><div><span>MEZCLA COMERCIAL</span><strong>Origen de las ventas</strong></div><BarChart3 size={16} /></div><SalesSourceMix sourceMix={sourceMix} sales={metrics.sales} /></section>
+          <section className="sales-report-card"><div className="sales-report-card-heading"><div><span>FORMA DE PAGO</span><strong>Contado frente a crédito</strong></div><CreditCard size={16} /></div><SalesPaymentChart rows={paymentMix} /></section>
+          <section className="sales-report-card sales-report-wide-chart"><div className="sales-report-card-heading"><div><span>COMPARATIVO</span><strong>Ventas y utilidad por día</strong></div><TrendingUp size={16} /></div><SalesTrendComparison points={dailySales} /></section>
+        </div>}
+
+        {activeTab === "products" && <div className="sales-report-products-grid">
+          <section className="sales-report-card"><div className="sales-report-card-heading"><div><span>PRODUCTOS</span><strong>Lo que más se vende</strong></div><Package size={16} /></div><TopSalesProducts rows={topProducts} /></section>
+          <section className="sales-report-card"><div className="sales-report-card-heading"><div><span>EQUIPO</span><strong>Ventas por vendedor</strong></div><Users size={16} /></div><SalesSellerTable rows={sellerRows} /></section>
+          <section className="sales-report-card sales-report-products-chart"><div className="sales-report-card-heading"><div><span>FACTURACIÓN</span><strong>Comparativo de productos</strong></div><BarChart3 size={16} /></div><SalesProductChart rows={topProducts} /></section>
+          <section className="sales-report-card sales-report-products-chart"><div className="sales-report-card-heading"><div><span>DESEMPEÑO</span><strong>Ventas por vendedor</strong></div><Users size={16} /></div><SalesSellerChart rows={sellerRows} /></section>
+          <section className="sales-report-card sales-report-product-insight"><div className="sales-report-card-heading"><div><span>RENTABILIDAD</span><strong>Lectura de margen</strong></div><TrendingUp size={16} /></div><MarginInsight metrics={metrics} topProducts={topProducts} /></section>
+          <section className="sales-report-card"><div className="sales-report-card-heading"><div><span>CLIENTES</span><strong>Mayor aporte a ventas</strong></div><Users size={16} /></div><TopClientsTable rows={topClients} /></section>
+        </div>}
+
+        {activeTab === "opportunities" && <>
+          <div className="sales-report-opportunity-grid">
+            <section className="sales-report-card sales-report-opportunity-card"><div className="sales-report-card-heading"><div><span>OPORTUNIDADES</span><strong>Embudo comercial</strong></div><ArrowUpRight size={16} /></div><OpportunityFunnel metrics={metrics} /></section>
+            <section className="sales-report-card"><div className="sales-report-card-heading"><div><span>ACCIÓN SUGERIDA</span><strong>Prioridades de seguimiento</strong></div><Lightbulb size={16} /></div><OpportunityActions metrics={metrics} topClients={topClients} /></section>
+            <RecommendationsPanel recommendations={recommendations} />
+          </div>
+        </>}
+
+        {activeTab === "detail" && <section className="sales-report-card sales-report-detail-card">
+          <div className="sales-report-card-heading"><div><span>DETALLE</span><strong>Facturas filtradas</strong></div><span className="sales-report-card-meta">Mostrando {paginatedInvoices.length} de {filteredInvoices.length}</span></div>
+          <div className="sales-report-detail-scroll"><table className="sales-report-detail-table"><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Origen</th><th>Pago</th><th>Vendedor</th><th>Total</th><th>Utilidad</th></tr></thead><tbody>{paginatedInvoices.map((invoice) => <tr key={invoice.id} className="sales-report-detail-row" tabIndex="0" onClick={() => onSelect?.({ ...invoice, __salesType: "invoice" })} onDoubleClick={() => onSelect?.({ ...invoice, __salesType: "invoice" })} onKeyDown={(event) => { if (event.key === "Enter") onSelect?.({ ...invoice, __salesType: "invoice" }); }}><td>{formatDate(invoice.createdAt)}</td><td><strong>{invoice.consecutive}</strong></td><td>{clientName(invoice.client)}</td><td><span className="sales-report-source-pill">{invoiceSourceLabel(invoice.source)}</span></td><td>{invoice.saleMode === "CREDITO" ? "Crédito" : "Contado"}</td><td>{reportSellerName(invoice)}</td><td className="sales-report-number">{formatCurrency(invoice.total)}</td><td className="sales-report-number">{formatCurrency(invoiceProfit(invoice))}</td></tr>)}</tbody></table>{!filteredInvoices.length && <div className="sales-report-empty">No hay facturas con los filtros seleccionados.</div>}</div>
+          {filteredInvoices.length > 0 && <div className="sales-report-pagination"><span>Página {currentPage} de {totalPages}</span><label>Filas<select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value="10">10</option><option value="25">25</option><option value="50">50</option></select></label><div><button type="button" disabled={currentPage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Anterior</button><button type="button" disabled={currentPage >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Siguiente</button></div></div>}
+        </section>}
+
       </div>
     </div>
   );
+}
+
+function SalesExecutiveSummary({ summary, metrics }) {
+  return <section className="sales-report-executive-summary"><div className="sales-report-summary-copy"><span className="sales-report-summary-kicker">RESUMEN EJECUTIVO</span><strong>{summary.headline}</strong><p>{summary.detail}</p></div><div className="sales-report-summary-highlights"><div><span>Mejor día</span><strong>{summary.bestDay}</strong><small>{formatCurrency(summary.bestDayValue)}</small></div><div><span>Producto líder</span><strong>{summary.topProduct}</strong><small>{formatCurrency(summary.topProductValue)}</small></div><div><span>Clientes activos</span><strong>{summary.activeClients}</strong><small>{metrics.invoices} facturas en el filtro</small></div></div></section>;
+}
+
+function SalesSourceMix({ sourceMix, sales }) {
+  if (!sourceMix.length) return <div className="sales-report-empty">Sin ventas en el filtro.</div>;
+  return <div className="sales-report-chart-donut-wrap"><div className="sales-report-chart-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sourceMix} dataKey="total" nameKey="label" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sourceMix.map((segment) => <Cell key={segment.key} fill={segment.color} />)}</Pie><Tooltip content={<ReportTooltip currency />} /></PieChart></ResponsiveContainer><div><strong>{formatCurrency(sales)}</strong><span>Total</span></div></div><div className="sales-report-legend">{sourceMix.map((segment) => <div key={segment.key}><i style={{ background: segment.color }} /><span>{segment.label}</span><strong>{formatCurrency(segment.total)}</strong><small>{segment.count} facturas · {segment.share.toFixed(1)}%</small></div>)}</div></div>;
+}
+
+function SalesPaymentChart({ rows }) {
+  if (!rows.length) return <div className="sales-report-empty">Sin datos de pago.</div>;
+  return <div className="sales-report-payment-chart"><ResponsiveContainer width="100%" height={245}><BarChart data={rows} margin={{ top: 12, right: 12, left: 0, bottom: 4 }}><CartesianGrid vertical={false} stroke="#e9eef4" /><XAxis dataKey="label" tick={{ fill: "#718096", fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value) => formatCurrencyShort(value)} /><Tooltip content={<ReportTooltip currency />} /><Bar dataKey="total" radius={[5, 5, 0, 0]} fill="#2b6cb0" /></BarChart></ResponsiveContainer></div>;
+}
+
+function SalesProductChart({ rows }) {
+  if (!rows.length) return <div className="sales-report-empty">Sin productos en el filtro.</div>;
+  return <div className="sales-report-products-chart-wrap"><ResponsiveContainer width="100%" height={300}><BarChart data={rows.slice(0, 8)} layout="vertical" margin={{ top: 5, right: 18, left: 5, bottom: 5 }}><CartesianGrid horizontal={false} stroke="#e9eef4" /><XAxis type="number" hide /><YAxis type="category" dataKey="name" width={120} tick={{ fill: "#596b82", fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip content={<ReportTooltip currency />} /><Bar dataKey="total" radius={[0, 5, 5, 0]} fill="#31a56d" /></BarChart></ResponsiveContainer></div>;
+}
+
+function SalesSellerChart({ rows }) {
+  if (!rows.length) return <div className="sales-report-empty">Sin vendedores en el filtro.</div>;
+  return <div className="sales-report-products-chart-wrap"><ResponsiveContainer width="100%" height={300}><BarChart data={rows.slice(0, 8)} margin={{ top: 5, right: 10, left: -8, bottom: 5 }}><CartesianGrid vertical={false} stroke="#e9eef4" /><XAxis dataKey="name" tick={{ fill: "#596b82", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value) => value.slice(0, 10)} /><YAxis tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value) => formatCurrencyShort(value)} /><Tooltip content={<ReportTooltip currency />} /><Bar dataKey="total" radius={[5, 5, 0, 0]} fill="#d28a25" /></BarChart></ResponsiveContainer></div>;
+}
+
+function SalesTrendComparison({ points }) {
+  if (!points.length) return <div className="sales-report-empty">Sin ventas para comparar.</div>;
+  const data = points;
+  return <div className="sales-report-comparison-chart"><ResponsiveContainer width="100%" height={290}><LineChart data={data} margin={{ top: 12, right: 18, left: 0, bottom: 6 }}><CartesianGrid vertical={false} stroke="#e9eef4" /><XAxis dataKey="label" tick={{ fill: "#718096", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value) => formatCurrencyShort(value)} /><Tooltip content={<ReportTooltip currency />} /><Legend iconType="circle" wrapperStyle={{ fontSize: 11, color: "#65758b" }} /><Line type="monotone" dataKey="total" name="Ventas" stroke="#2b6cb0" strokeWidth={3} dot={{ r: 2 }} /><Line type="monotone" dataKey="profit" name="Utilidad estimada" stroke="#31a56d" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div>;
+}
+
+function ReportTooltip({ active, payload, label, currency = false }) {
+  if (!active || !payload?.length) return null;
+  return <div className="sales-report-tooltip"><strong>{label}</strong>{payload.map((entry) => <div key={entry.dataKey}><span>{entry.name ?? entry.dataKey}</span><b>{currency ? formatCurrency(entry.value) : entry.value}</b></div>)}</div>;
+}
+
+function OpportunityFunnel({ metrics }) {
+  const rows = [{ label: "Cotizaciones", value: metrics.totalQuotes, amount: metrics.totalQuoteValue, tone: "blue" }, { label: "Abiertas", value: metrics.openQuotes, amount: metrics.openQuoteValue, tone: "amber" }, { label: "Convertidas", value: metrics.convertedQuotes, amount: metrics.convertedQuoteValue, tone: "green" }];
+  const max = Math.max(...rows.map((row) => row.value), 1);
+  return <div className="sales-report-funnel">{rows.map((row) => <div key={row.label}><div className="sales-report-funnel-label"><span>{row.label}</span><strong>{row.value}</strong></div><div className="sales-report-funnel-track"><i className={row.tone} style={{ width: `${Math.max(8, (row.value / max) * 100)}%` }} /></div><small>{formatCurrency(row.amount)}</small></div>)}</div>;
+}
+
+function OpportunityActions({ metrics, topClients }) {
+  const actions = [];
+  if (metrics.openQuotes > 0) actions.push({ title: "Contactar cotizaciones abiertas", detail: `${metrics.openQuotes} oportunidades por ${formatCurrency(metrics.openQuoteValue)}.` });
+  if (metrics.pendingDeliveries > 0) actions.push({ title: "Resolver entregas pendientes", detail: `${metrics.pendingDeliveries} facturas todavía requieren coordinación.` });
+  if (metrics.creditShare >= 30) actions.push({ title: "Priorizar recaudo de crédito", detail: `${metrics.creditShare.toFixed(1)}% de la venta está a crédito.` });
+  if (topClients[0]) actions.push({ title: `Cuidar la relación con ${topClients[0].name}`, detail: `Aporta ${formatCurrency(topClients[0].total)} en el periodo.` });
+  if (!actions.length) actions.push({ title: "Mantener seguimiento comercial", detail: "El periodo no muestra alertas operativas prioritarias." });
+  return <div className="sales-report-action-list">{actions.slice(0, 4).map((action) => <div key={action.title}><span><ArrowUpRight size={13} /></span><div><strong>{action.title}</strong><p>{action.detail}</p></div></div>)}</div>;
+}
+
+function TopClientsTable({ rows }) {
+  if (!rows.length) return <div className="sales-report-empty">Sin clientes en el filtro.</div>;
+  return <div className="sales-report-client-list">{rows.slice(0, 6).map((row, index) => <div key={row.name}><span>{index + 1}</span><div><strong>{row.name}</strong><small>{row.count} facturas</small></div><b>{formatCurrency(row.total)}</b></div>)}</div>;
+}
+
+function RecommendationsPanel({ recommendations }) {
+  return <section className="sales-report-card sales-report-recommendations"><div className="sales-report-card-heading"><div><span>LECTURA DE NEGOCIO</span><strong>Recomendaciones para decidir</strong></div><Lightbulb size={16} /></div><div className="sales-report-recommendation-grid">{recommendations.map((recommendation) => <article key={recommendation.title}><div className={`sales-report-recommendation-icon ${recommendation.tone}`}><ArrowUpRight size={15} /></div><div><strong>{recommendation.title}</strong><p>{recommendation.detail}</p></div></article>)}</div></section>;
+}
+
+function MarginInsight({ metrics, topProducts }) {
+  const bestProduct = [...topProducts].sort((a, b) => b.profit - a.profit)[0];
+  return <div className="sales-report-margin-insight"><div><span>Margen bruto del periodo</span><strong>{metrics.margin.toFixed(1)}%</strong></div><div className="sales-report-margin-track"><i style={{ width: `${Math.min(100, Math.max(0, metrics.margin))}%` }} /></div><p>{bestProduct ? `${bestProduct.name} aporta la mayor utilidad acumulada (${formatCurrency(bestProduct.profit)}).` : "Aún no hay utilidad calculada para este filtro."}</p></div>;
+}
+
+function ReportMetricCard({ icon: Icon, label, value, helper, tone = "neutral" }) {
+  return <article className={`sales-report-metric-card ${tone}`}><div><Icon size={15} /><span>{label}</span></div><strong>{value}</strong><small>{helper}</small></article>;
+}
+
+function SalesTrendChart({ points }) {
+  if (!points.length) return <div className="sales-report-empty sales-report-chart-empty">No hay ventas para dibujar en este periodo.</div>;
+  return <div className="sales-report-trend-wrap"><ResponsiveContainer width="100%" height={255}><AreaChart data={points} margin={{ top: 10, right: 12, left: 2, bottom: 5 }}><defs><linearGradient id="sales-report-area" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#2b6cb0" stopOpacity=".28" /><stop offset="100%" stopColor="#2b6cb0" stopOpacity="0" /></linearGradient></defs><CartesianGrid vertical={false} stroke="#e9eef4" /><XAxis dataKey="label" tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value) => formatCurrencyShort(value)} /><Tooltip content={<ReportTooltip currency />} /><Area type="monotone" dataKey="total" name="Ventas" stroke="#2b6cb0" strokeWidth={3} fill="url(#sales-report-area)" dot={{ r: 3, strokeWidth: 2, fill: "#fff" }} activeDot={{ r: 5 }} /></AreaChart></ResponsiveContainer><div className="sales-report-trend-total"><span>Total del periodo</span><strong>{formatCurrency(points.reduce((sum, point) => sum + point.total, 0))}</strong></div></div>;
+}
+
+function TopSalesProducts({ rows }) {
+  if (!rows.length) return <div className="sales-report-empty">No hay productos en el periodo.</div>;
+  const max = Math.max(...rows.map((row) => row.total), 1);
+  return <div className="sales-report-product-list">{rows.slice(0, 6).map((row, index) => <div className="sales-report-product-row" key={row.productId}><div className="sales-report-product-index">{index + 1}</div><div className="sales-report-product-info"><strong>{row.name}</strong><span>{formatQuantity(row.units)} unidades · {formatCurrency(row.profit)} utilidad</span><div><i style={{ width: `${Math.max(5, (row.total / max) * 100)}%` }} /></div></div><b>{formatCurrency(row.total)}</b></div>)}</div>;
+}
+
+function SalesSellerTable({ rows }) {
+  if (!rows.length) return <div className="sales-report-empty">No hay vendedores con ventas en el periodo.</div>;
+  return <div className="sales-report-seller-list">{rows.slice(0, 6).map((row) => <div className="sales-report-seller-row" key={row.name}><span className="sales-report-avatar">{row.name.slice(0, 1).toUpperCase()}</span><div><strong>{row.name}</strong><small>{row.count} facturas · {formatCurrency(row.profit)} utilidad</small></div><b>{formatCurrency(row.total)}</b></div>)}</div>;
+}
+
+function buildSalesReportMetrics(invoices, quotes, orders) {
+  const sales = invoices.reduce((sum, invoice) => sum + Number(invoice.total ?? 0), 0);
+  const subtotal = invoices.reduce((sum, invoice) => sum + Number(invoice.subtotal ?? 0), 0);
+  const taxes = invoices.reduce((sum, invoice) => sum + Number(invoice.taxes ?? 0), 0);
+  const profit = invoices.reduce((sum, invoice) => sum + invoiceProfit(invoice), 0);
+  const units = invoices.reduce((sum, invoice) => sum + (invoice.items ?? []).reduce((inner, item) => inner + Number(item.quantity ?? 0), 0), 0);
+  const creditSales = invoices.filter((invoice) => invoice.saleMode === "CREDITO").reduce((sum, invoice) => sum + Number(invoice.total ?? 0), 0);
+  const convertedQuoteRows = quotes.filter((quote) => quote.status === "CONVERTIDA");
+  const convertedQuotes = convertedQuoteRows.length;
+  const openQuotes = quotes.filter((quote) => ["PENDIENTE", "APROBADA"].includes(quote.status));
+  const pendingDeliveries = invoices.filter((invoice) => invoice.delivery && invoice.delivery.status !== "ENTREGADO" && invoice.delivery.status !== "CANCELADO").length;
+  const deliveredOrders = orders.filter((order) => order.delivery?.status === "ENTREGADO").length;
+  return {
+    invoices: invoices.length,
+    sales,
+    subtotal,
+    taxes,
+    taxRate: sales > 0 ? (taxes / sales) * 100 : 0,
+    profit,
+    margin: sales > 0 ? (profit / sales) * 100 : 0,
+    averageTicket: invoices.length ? sales / invoices.length : 0,
+    units,
+    activeProducts: new Set(invoices.flatMap((invoice) => (invoice.items ?? []).map((item) => item.productId))).size,
+    creditSales,
+    creditShare: sales > 0 ? (creditSales / sales) * 100 : 0,
+    openQuotes: openQuotes.length,
+    openQuoteValue: openQuotes.reduce((sum, quote) => sum + Number(quote.total ?? 0), 0),
+    totalQuotes: quotes.length,
+    totalQuoteValue: quotes.reduce((sum, quote) => sum + Number(quote.total ?? 0), 0),
+    convertedQuotes,
+    convertedQuoteValue: convertedQuoteRows.reduce((sum, quote) => sum + Number(quote.total ?? 0), 0),
+    quoteConversion: quotes.length ? (convertedQuotes / quotes.length) * 100 : 0,
+    pendingDeliveries,
+    deliveredOrders,
+  };
+}
+
+function buildDailySales(invoices) {
+  const rows = new Map();
+  invoices.forEach((invoice) => {
+    const key = salesReportDateKey(invoice.createdAt);
+    const current = rows.get(key) ?? { key, total: 0, profit: 0, label: salesReportDayLabel(invoice.createdAt) };
+    current.total += Number(invoice.total ?? 0);
+    current.profit += invoiceProfit(invoice);
+    rows.set(key, current);
+  });
+  const sorted = [...rows.values()].sort((a, b) => a.key.localeCompare(b.key));
+  if (sorted.length <= 14) return sorted;
+  return sorted.slice(-14);
+}
+
+function buildSourceMix(invoices) {
+  const colors = { ADMIN: "#2b6cb0", POS: "#31a56d", APP_MOVIL: "#e09b3d", OTHER: "#8995a7" };
+  const labels = { ADMIN: "Administrativo", POS: "POS", APP_MOVIL: "App móvil", OTHER: "Otro" };
+  const grouped = new Map();
+  invoices.forEach((invoice) => {
+    const key = colors[invoice.source] ? invoice.source : "OTHER";
+    const current = grouped.get(key) ?? { key, label: labels[key], total: 0, count: 0, color: colors[key] };
+    current.total += Number(invoice.total ?? 0);
+    current.count += 1;
+    grouped.set(key, current);
+  });
+  const total = invoices.reduce((sum, invoice) => sum + Number(invoice.total ?? 0), 0);
+  return [...grouped.values()].sort((a, b) => b.total - a.total).map((item) => ({ ...item, share: total > 0 ? (item.total / total) * 100 : 0 }));
+}
+
+function buildPaymentMix(invoices) {
+  const grouped = new Map([["CONTADO", { label: "Contado", total: 0, count: 0 }], ["CREDITO", { label: "Crédito", total: 0, count: 0 }]]);
+  invoices.forEach((invoice) => {
+    const key = invoice.saleMode === "CREDITO" ? "CREDITO" : "CONTADO";
+    const row = grouped.get(key);
+    row.total += Number(invoice.total ?? 0);
+    row.count += 1;
+  });
+  return [...grouped.values()].filter((row) => row.count > 0);
+}
+
+function buildTopSalesProducts(invoices) {
+  const grouped = new Map();
+  invoices.forEach((invoice) => (invoice.items ?? []).forEach((item) => {
+    const current = grouped.get(item.productId) ?? { productId: item.productId, name: item.product?.name ?? `Producto #${item.productId}`, units: 0, total: 0, profit: 0 };
+    current.units += Number(item.quantity ?? 0);
+    current.total += Number(item.total ?? 0);
+    current.profit += Number(item.profitAmount ?? 0) || (Number(item.total ?? 0) - Number(item.unitCost ?? 0) * Number(item.quantity ?? 0));
+    grouped.set(item.productId, current);
+  }));
+  return [...grouped.values()].sort((a, b) => b.total - a.total);
+}
+
+function buildSellerRows(invoices) {
+  const grouped = new Map();
+  invoices.forEach((invoice) => {
+    const name = reportSellerName(invoice);
+    const current = grouped.get(name) ?? { name, count: 0, total: 0, profit: 0 };
+    current.count += 1;
+    current.total += Number(invoice.total ?? 0);
+    current.profit += invoiceProfit(invoice);
+    grouped.set(name, current);
+  });
+  return [...grouped.values()].sort((a, b) => b.total - a.total);
+}
+
+function buildTopSalesClients(invoices) {
+  const grouped = new Map();
+  invoices.forEach((invoice) => {
+    const name = clientName(invoice.client);
+    const current = grouped.get(name) ?? { name, count: 0, total: 0 };
+    current.count += 1;
+    current.total += Number(invoice.total ?? 0);
+    grouped.set(name, current);
+  });
+  return [...grouped.values()].sort((a, b) => b.total - a.total);
+}
+
+function buildSalesSummary(metrics, dailySales, topProducts, topClients, quotes) {
+  const bestDay = [...dailySales].sort((a, b) => b.total - a.total)[0];
+  const topProduct = topProducts[0];
+  let headline = "El periodo está listo para ser analizado.";
+  if (metrics.sales > 0 && metrics.margin >= 20) headline = "El periodo muestra una operación comercial saludable.";
+  else if (metrics.sales > 0 && metrics.margin < 15) headline = "El volumen de ventas requiere proteger la rentabilidad.";
+  else if (!metrics.sales) headline = "Amplía el periodo para obtener una lectura comercial completa.";
+  const detail = metrics.sales > 0
+    ? `${metrics.invoices} facturas generan ${formatCurrency(metrics.sales)}. ${metrics.openQuotes > 0 ? `Hay ${metrics.openQuotes} cotizaciones abiertas que pueden convertirse en facturación.` : "No hay cotizaciones abiertas pendientes en el filtro."}`
+    : `${quotes.length} cotizaciones y ${topClients.length} clientes están disponibles para ajustar la consulta.`;
+  return { headline, detail, bestDay: bestDay?.label ?? "—", bestDayValue: bestDay?.total ?? 0, topProduct: topProduct?.name ?? "—", topProductValue: topProduct?.total ?? 0, activeClients: topClients.length };
+}
+
+function buildSalesRecommendations(metrics, topProducts, quotes, invoices, orders) {
+  const recommendations = [];
+  if (topProducts[0]) recommendations.push({ title: `Protege el inventario de ${topProducts[0].name}`, detail: `Es el producto con más facturación del filtro: ${formatCurrency(topProducts[0].total)}. Revisa existencia y reposición antes del próximo ciclo.`, tone: "blue" });
+  if (metrics.openQuotes > 0) recommendations.push({ title: "Haz seguimiento a cotizaciones abiertas", detail: `${metrics.openQuotes} cotizaciones representan ${formatCurrency(metrics.openQuoteValue)}. Prioriza las de mayor valor y fecha más antigua.`, tone: "amber" });
+  if (metrics.creditShare >= 35) recommendations.push({ title: "Revisa la concentración de ventas a crédito", detail: `El crédito representa ${metrics.creditShare.toFixed(1)}% de las ventas filtradas. Valida cupos, vencimientos y próximos recaudos.`, tone: "red" });
+  if (metrics.margin > 0 && metrics.margin < 15) recommendations.push({ title: "Revisa precios y costos", detail: `La utilidad bruta calculada es ${metrics.margin.toFixed(1)}%. Identifica productos con margen bajo antes de aplicar descuentos.`, tone: "red" });
+  if (metrics.pendingDeliveries > 0) recommendations.push({ title: "Prioriza las entregas pendientes", detail: `${metrics.pendingDeliveries} facturas tienen entrega abierta. Coordina preparación y salida para evitar acumulación operativa.`, tone: "amber" });
+  if (!recommendations.length && invoices.length) recommendations.push({ title: "Mantén el seguimiento periódico", detail: `El periodo tiene ${metrics.invoices} facturas y ${orders.length} pedidos. Conserva esta revisión para detectar cambios de mezcla y margen.`, tone: "blue" });
+  if (!invoices.length && !quotes.length) recommendations.push({ title: "Amplía el periodo de consulta", detail: "No hay documentos con los filtros actuales. Prueba Todo el historial o ajusta la fecha para encontrar actividad.", tone: "amber" });
+  return recommendations.slice(0, 4);
+}
+
+function matchesSalesReportInvoice(invoice, filters, range) {
+  if (!inSalesReportRange(invoice.createdAt, range)) return false;
+  if (filters.source !== "ALL" && invoice.source !== filters.source) return false;
+  if (filters.status !== "ALL" && invoice.status !== filters.status) return false;
+  if (filters.saleMode !== "ALL" && invoice.saleMode !== filters.saleMode) return false;
+  if (filters.warehouse !== "ALL" && String(invoice.warehouseId ?? invoice.warehouse?.id ?? "") !== String(filters.warehouse)) return false;
+  if (filters.seller !== "ALL" && reportSellerName(invoice) !== filters.seller && String(invoice.createdByUsername ?? "") !== filters.seller) return false;
+  if (filters.client !== "ALL" && String(invoice.clientId ?? invoice.client?.id ?? "") !== String(filters.client)) return false;
+  const query = filters.query.trim().toLowerCase();
+  if (query && !`${invoice.consecutive ?? ""} ${clientName(invoice.client)} ${(invoice.items ?? []).map((item) => item.product?.name ?? "").join(" ")}`.toLowerCase().includes(query)) return false;
+  return true;
+}
+
+function matchesSalesReportDocument(document, filters, range) {
+  if (!inSalesReportRange(document.createdAt, range)) return false;
+  const query = filters.query.trim().toLowerCase();
+  return !query || `${document.consecutive ?? ""} ${clientName(document.client)}`.toLowerCase().includes(query);
+}
+
+function salesReportRange(filters) {
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  if (filters.period === "CUSTOM") {
+    const start = filters.from ? new Date(`${filters.from}T00:00:00`) : new Date(0);
+    const customEnd = filters.to ? new Date(`${filters.to}T23:59:59`) : end;
+    return { start, end: customEnd, label: `${filters.from || "inicio"} · ${filters.to || "hoy"}` };
+  }
+  if (filters.period === "ALL") return { start: new Date(0), end, label: "Todo el historial" };
+  const days = { TODAY: 0, "7D": 6, "30D": 29, "90D": 89 }[filters.period] ?? 29;
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - days);
+  return { start, end, label: { TODAY: "Hoy", "7D": "Últimos 7 días", "30D": "Últimos 30 días", "90D": "Últimos 90 días" }[filters.period] ?? "Periodo seleccionado" };
+}
+
+function inSalesReportRange(value, range) {
+  if (!value) return false;
+  const dateValue = new Date(value);
+  return dateValue >= range.start && dateValue <= range.end;
+}
+
+function salesReportDateKey(value) {
+  const dateValue = new Date(value);
+  return `${dateValue.getFullYear()}-${String(dateValue.getMonth() + 1).padStart(2, "0")}-${String(dateValue.getDate()).padStart(2, "0")}`;
+}
+
+function salesReportDayLabel(value) {
+  return new Intl.DateTimeFormat("es-CO", { day: "2-digit", month: "short" }).format(new Date(value)).replace(".", "");
+}
+
+function reportSellerName(invoice) {
+  return invoice.sellerUsername ?? invoice.createdByUsername ?? invoice.createdByUser?.username ?? "Sin vendedor";
+}
+
+function invoiceProfit(invoice) {
+  return (invoice.items ?? []).reduce((sum, item) => {
+    const explicit = Number(item.profitAmount);
+    if (Number.isFinite(explicit) && explicit !== 0) return sum + explicit;
+    return sum + Number(item.total ?? 0) - Number(item.unitCost ?? 0) * Number(item.quantity ?? 0);
+  }, 0);
+}
+
+function formatQuantity(value) {
+  return Number(value ?? 0).toLocaleString("es-CO", { maximumFractionDigits: 2 });
+}
+
+function formatCurrencyShort(value) {
+  const amount = Number(value ?? 0);
+  if (Math.abs(amount) >= 1000000) return `$${(amount / 1000000).toFixed(1)}M`;
+  if (Math.abs(amount) >= 1000) return `$${(amount / 1000).toFixed(0)}k`;
+  return `$${Math.round(amount)}`;
+}
+
+function downloadSalesReport(content, filename) {
+  const url = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function SalesLoadingState() {
@@ -2443,7 +3508,6 @@ function SalesPanelHeading({ title, description, actionLabel, onAction }) {
     <div className="sales-section-heading sales-panel-heading">
       <div>
         <strong>{title}</strong>
-        <span>{description}</span>
       </div>
       {actionLabel && (
         <button type="button" onClick={onAction}>
@@ -2791,7 +3855,14 @@ function renderLookupCells(record, type) {
         </td>
         <td>{record.name}</td>
         <td>{productStock(record)}</td>
-        <td>{formatCurrency(getDefaultPrice(record)?.price)}</td>
+        <td>
+          {formatCurrency(
+            grossFromNet(
+              getDefaultPrice(record)?.price,
+              record.taxRate,
+            ),
+          )}
+        </td>
       </>
     );
   if (type === "warehouses")
@@ -2915,6 +3986,9 @@ function SalesDocumentDialog({
   document,
   type,
   onPrint,
+  onTicket,
+  onFulfill,
+  warehouses = [],
   onAnnul,
   actionLoading,
   onClose,
@@ -2949,6 +4023,24 @@ function SalesDocumentDialog({
             <span>Fecha</span>
             <strong>{formatDate(document.createdAt)}</strong>
           </div>
+          {isInvoice && (
+            <>
+              <div>
+                <span>Vendedor</span>
+                <strong>{document.sellerUsername ?? document.createdByUsername ?? "—"}</strong>
+              </div>
+              <div>
+                <span>Cajero</span>
+                <strong>{document.createdByUsername ?? "—"}</strong>
+              </div>
+            </>
+          )}
+          {isQuote && (
+            <div>
+              <span>Tipo</span>
+              <strong>{document.kind === "PREVENTA" ? "Preventa" : "Cotización"}</strong>
+            </div>
+          )}
           <div>
             <span>Total</span>
             <strong>
@@ -2972,9 +4064,32 @@ function SalesDocumentDialog({
                   {item.product?.name ?? `Producto #${item.productId}`}
                 </span>
                 <span>
-                  {item.quantity} × {formatCurrency(item.unitPrice)}
+                  {item.quantity} × {formatCurrency(
+                    grossFromNet(item.unitPrice, item.taxRate ?? item.product?.taxRate),
+                  )}
                 </span>
                 <strong>{formatCurrency(item.total)}</strong>
+                {isQuote && document.kind === "PREVENTA" && (
+                  <small className="sales-line-fulfillment">
+                    {warehouseLabel(item.warehouseId, warehouses)} ·{" "}
+                    {item.fulfillmentStatus === "SURTIDO"
+                      ? "Surtido"
+                      : item.fulfillmentStatus === "ATENDIDO"
+                        ? "Atendido"
+                        : "Pendiente"}
+                    {onFulfill && item.fulfillmentStatus !== "SURTIDO" && (
+                      <>
+                        {" "}
+                        <button type="button" onClick={() => onFulfill(document, item, "ATENDIDO")}>
+                          Atender
+                        </button>
+                        <button type="button" onClick={() => onFulfill(document, item, "SURTIDO")}>
+                          Surtido
+                        </button>
+                      </>
+                    )}
+                  </small>
+                )}
               </div>
             ))
           ) : (
@@ -2987,6 +4102,11 @@ function SalesDocumentDialog({
           {onPrint && (
             <button type="button" className="primary-action" onClick={onPrint}>
               <Printer size={13} /> {isQuote ? "Exportar PDF" : "Imprimir"}
+            </button>
+          )}
+          {isInvoice && onTicket && (
+            <button type="button" onClick={() => onTicket(document)}>
+              <Printer size={13} /> Ticket
             </button>
           )}
           {onAnnul && document.status === "ACTIVA" && (
@@ -3015,6 +4135,11 @@ function SalesDocumentDialog({
   );
 }
 
+function warehouseLabel(id, warehouses) {
+  if (!id) return "Sin bodega";
+  return warehouses.find((warehouse) => Number(warehouse.id) === Number(id))?.location ?? `Bodega #${id}`;
+}
+
 function printSalesDocument(record, type) {
   const printWindow = window.open("", "_blank", "width=900,height=700");
   if (!printWindow) {
@@ -3029,15 +4154,15 @@ function printSalesDocument(record, type) {
       (item) => `<tr>
         <td>${escapeHtml(item.product?.name ?? `Producto #${item.productId}`)}</td>
         <td>${Number(item.quantity ?? 0)}</td>
-        <td>${formatCurrency(item.unitPrice)}</td>
+        <td>${formatCurrency(grossFromNet(item.unitPrice, item.taxRate ?? item.product?.taxRate))}</td>
         <td>${formatCurrency(item.total)}</td>
       </tr>`,
     )
     .join("");
 
   printWindow.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>
-    @page{size:A4;margin:14mm}*{box-sizing:border-box}body{margin:0;color:#173c53;background:#fff;font:13px Arial,sans-serif}
-    .sheet{border:2px solid #17688c;padding:22px;background:#f7fbfd}.head{display:flex;justify-content:space-between;gap:24px;border-bottom:4px solid #17688c;padding-bottom:14px;margin-bottom:18px}.brand{color:#125578;font-size:20px;font-weight:700}.type{text-align:right;color:#0e6287;font-size:17px;font-weight:700}.meta{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:18px}.meta div{padding:10px;background:#e0eff6;border-left:4px solid #2180a8}.meta span{display:block;color:#376275;font-size:11px;margin-bottom:4px}.meta strong{font-size:13px}table{width:100%;border-collapse:collapse;margin-top:8px}th{padding:10px;text-align:left;color:#fff;background:#176b8d}td{padding:10px;border-bottom:1px solid #b9d0db}th:nth-child(n+2),td:nth-child(n+2){text-align:right}.totals{display:flex;justify-content:flex-end;margin-top:18px}.totals div{min-width:220px;padding:12px;background:#dceef6;border:1px solid #8bb8c9}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .total{padding-top:9px;border-top:2px solid #17688c;font-size:17px;font-weight:700;color:#0b587d}.foot{margin-top:24px;color:#416576;font-size:11px}
+    @page{size:A4;margin:14mm}*{box-sizing:border-box}body{margin:0;color:#0d0d0d;background:#ececec;font:13px Arial,sans-serif}
+    .sheet{border:2px solid #2d2d2d;padding:22px;background:#fdfdfd}.head{display:flex;justify-content:space-between;gap:24px;border-bottom:4px solid #2d2d2d;padding-bottom:14px;margin-bottom:18px}.brand{color:#111111;font-size:20px;font-weight:700}.type{text-align:right;color:#131313;font-size:17px;font-weight:700}.meta{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:18px}.meta div{padding:10px;background:#f5f5f5;border-left:4px solid #373737}.meta span{display:block;color:#161616;font-size:11px;margin-bottom:4px}.meta strong{font-size:13px}table{width:100%;border-collapse:collapse;margin-top:8px}th{padding:10px;text-align:left;color:#fff;background:#2f6aa6}td{padding:10px;border-bottom:1px solid #d5d5d5}th:nth-child(n+2),td:nth-child(n+2){text-align:right}.totals{display:flex;justify-content:flex-end;margin-top:18px}.totals div{min-width:220px;padding:12px;background:#f4f4f4;border:1px solid #bbbbbb}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .total{padding-top:9px;border-top:2px solid #2d2d2d;font-size:17px;font-weight:700;color:#111111}.foot{margin-top:24px;color:#3b3b3b;font-size:11px}
   </style></head><body><main class="sheet"><header class="head"><div class="brand">Mundo Tienda</div><div class="type">${isQuote ? "COTIZACIÓN" : "FACTURA"}<br><span>${escapeHtml(title)}</span></div></header><section class="meta"><div><span>Cliente</span><strong>${escapeHtml(clientName(record.client))}</strong></div><div><span>Fecha</span><strong>${escapeHtml(formatDate(record.createdAt))}</strong></div><div><span>Estado</span><strong>${escapeHtml(record.status ?? "ACTIVA")}</strong></div></section><table><thead><tr><th>Producto</th><th>Cantidad</th><th>Precio unitario</th><th>Total</th></tr></thead><tbody>${rows || '<tr><td colspan="4">Este documento no tiene líneas.</td></tr>'}</tbody></table><section class="totals"><div><p>Subtotal <strong>${formatCurrency(record.subtotal)}</strong></p><p>Impuestos <strong>${formatCurrency(record.taxes)}</strong></p><p class="total">Total <strong>${formatCurrency(record.total)}</strong></p></div></section><p class="foot">Documento generado desde el módulo de ventas.</p></main></body></html>`);
   printWindow.document.close();
   printWindow.focus();
@@ -3057,13 +4182,7 @@ function escapeHtml(value) {
 }
 
 function activePrices(product) {
-  const now = Date.now();
-  return (product?.prices ?? []).filter(
-    (price) =>
-      isActive(price) &&
-      (!price.startsAt || new Date(price.startsAt).getTime() <= now) &&
-      (!price.endsAt || new Date(price.endsAt).getTime() >= now),
-  );
+  return activeSalePrices(product);
 }
 function isQuantityDraft(value) {
   return /^\d*([.,]\d{0,3})?$/.test(String(value ?? ""));
@@ -3075,36 +4194,22 @@ function parseQuantityInput(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 function getDefaultPrice(product) {
-  return (
-    activePrices(product).find((price) => price.isDefault) ??
-    activePrices(product).find((price) => getPriceLevel(price) === 0) ??
-    activePrices(product)[0] ??
-    null
-  );
+  return defaultSalePrice(product);
 }
 function getPriceForClient(product, client, priceLevel) {
   const effectivePriceLevel =
     priceLevel === undefined || priceLevel === null
       ? client?.priceLevel ?? 0
       : priceLevel;
-  return getExactPriceForLevel(product, effectivePriceLevel) ?? getDefaultPrice(product);
+  return salePriceForLevel(product, effectivePriceLevel);
 }
 function getExactPriceForLevel(product, priceLevel = "0") {
-  return activePrices(product).find(
-    (price) => getPriceLevel(price) === Number(priceLevel),
+  return activeSalePrices(product).find(
+    (price) => getCommercialPriceLevel(price) === Number(priceLevel),
   );
 }
-function getPriceLevel(price) {
-  if (price?.priceLevel !== null && price?.priceLevel !== undefined)
-    return Number(price.priceLevel);
-  const match = String(price?.name ?? "").match(/^precio\s*([0-3])$/i);
-  return match ? Number(match[1]) : null;
-}
-function priceLabel(level) {
-  return level === null || level === undefined ? "Precio predeterminado" : `Precio ${level}`;
-}
 function getPriceById(product, id) {
-  return activePrices(product).find((price) => Number(price.id) === Number(id));
+  return salePriceById(product, id);
 }
 function productStock(product) {
   return (product?.warehouses ?? []).reduce(
@@ -3118,15 +4223,52 @@ function calculateCartTotals(cart) {
       const price =
         getPriceById(item.product, item.productPriceId) ??
         getDefaultPrice(item.product);
-      const subtotal = Number(price?.price ?? 0) * item.quantity;
-      const taxes = subtotal * (Number(item.product.taxRate ?? 0) / 100);
-      totals.subtotal += subtotal;
-      totals.taxes += taxes;
-      totals.total += subtotal + taxes;
+      const line = calculateLineTotals({
+        unitPriceNet: cartUnitPriceNet(item, price),
+        quantity: item.quantity,
+        taxRate: item.product.taxRate,
+      });
+      totals.subtotal = roundMoney(totals.subtotal + line.subtotal);
+      totals.taxes = roundMoney(totals.taxes + line.taxAmount);
+      totals.total = roundMoney(totals.total + line.total);
       return totals;
     },
     { subtotal: 0, taxes: 0, total: 0 },
   );
+}
+
+function cartUnitPriceNet(item, catalogPrice) {
+  if (hasAppliedUnitPrice(item.unitPriceGrossOverride)) {
+    return netFromGross(Number(item.unitPriceGrossOverride), item.product?.taxRate);
+  }
+  if (hasAppliedUnitPrice(item.appliedUnitPrice)) return Number(item.appliedUnitPrice);
+  return Number(catalogPrice?.price ?? 0);
+}
+
+function hasAppliedUnitPrice(value) {
+  return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
+}
+
+function isMoneyDraft(value) {
+  return /^\d*([.,]\d{0,2})?$/.test(String(value ?? ""));
+}
+
+function parseMoneyInput(value) {
+  const normalized = String(value ?? "").trim().replace(",", ".");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed >= 0 ? roundMoney(parsed) : null;
+}
+
+function canAccessReturns(session, permission) {
+  return (
+    session?.role === "ADMIN" ||
+    Boolean(session?.permissions?.includes(permission))
+  );
+}
+
+function canEditSalePrice(session) {
+  return session?.role === "ADMIN" || session?.permissions?.includes("SALES_PRICE_OVERRIDE");
 }
 function filterDocuments(documents, search, sourceFilter = "", statusFilter = "") {
   const query = search.trim().toLowerCase();
@@ -3179,7 +4321,8 @@ function formatCurrency(value) {
   return new Intl.NumberFormat("es-CO", {
     style: "currency",
     currency: "COP",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(Number(value ?? 0));
 }
 function formatDate(value) {

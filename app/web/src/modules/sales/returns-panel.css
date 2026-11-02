@@ -1,0 +1,254 @@
+.returns-panel {
+  display: grid;
+  gap: 12px;
+  padding: 10px 12px;
+  overflow: auto;
+  font-size: 13px;
+}
+
+.returns-panel h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 14px;
+  color: #184578;
+}
+
+.returns-form,
+.returns-history {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #c4ccd4;
+}
+
+.returns-invoice-pick,
+.returns-fields,
+.returns-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.returns-invoice-pick input,
+.returns-invoice-pick select,
+.returns-fields input,
+.returns-fields select,
+.returns-filters input {
+  padding: 4px 6px;
+}
+
+.returns-invoice-pick select {
+  min-width: 340px;
+}
+
+.returns-fields label {
+  display: grid;
+  gap: 2px;
+  min-width: 220px;
+}
+
+.returns-context,
+.returns-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.returns-summary button {
+  margin-left: auto;
+}
+
+.returns-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.returns-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.returns-table th,
+.returns-table td {
+  padding: 4px 6px;
+  border: 1px solid #d4dae1;
+  text-align: left;
+}
+
+.returns-table thead th {
+  color: #fff;
+  background: #1f5f9f;
+}
+
+.returns-table input {
+  width: 90px;
+  padding: 3px 5px;
+  text-align: right;
+}
+
+.returns-empty {
+  text-align: center;
+  color: #667;
+}
+
+.returns-error {
+  margin: 0;
+  color: #a1281f;
+  font-weight: 700;
+}
+
+.returns-notice {
+  margin: 0;
+  color: #1b6b34;
+  font-weight: 700;
+}
+
+/* Escáner y pagos mixtos de facturación */
+.sales-scanner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #fff;
+  border: 1px solid #93a2b4;
+}
+
+.sales-scanner input {
+  flex: 1;
+  padding: 4px 6px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+.sales-scanner:focus-within {
+  border-color: #1f5f9f;
+  box-shadow: 0 0 0 2px rgba(31, 95, 159, 0.2);
+}
+
+.sales-scanner-state {
+  font-size: 11px;
+  font-weight: 700;
+  color: #1b6b34;
+}
+
+.sales-credit-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.sales-payment-lines {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.sales-payment-line {
+  display: grid;
+  grid-template-columns: minmax(110px, 1.4fr) 90px minmax(70px, 1fr) 24px;
+  align-items: center;
+  gap: 4px;
+}
+
+.sales-payment-line.is-main {
+  grid-template-columns: auto auto 1fr;
+  font-size: 12px;
+}
+
+.sales-payment-line .is-negative {
+  color: #a1281f;
+}
+
+.sales-payment-add {
+  justify-self: start;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+
+/* Bodega por línea (#45/#46), preventas y ticket */
+.sales-line-warehouse {
+  display: grid;
+  gap: 2px;
+}
+
+.sales-line-warehouse select {
+  width: 100%;
+  padding: 2px 4px;
+  font-size: 12px;
+}
+
+.sales-line-warehouse.is-other select {
+  font-weight: 700;
+  border-color: #c2570c;
+  background: #fff1e0;
+}
+
+.sales-line-badge {
+  width: fit-content;
+  padding: 0 6px;
+  color: #fff;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  background: #c2570c;
+  border-radius: 2px;
+}
+
+.sales-line-short {
+  color: #a1281f;
+  font-size: 11px;
+}
+
+.sales-data-table td small.sales-kind-badge,
+.sales-kind-badge {
+  display: inline-block;
+  margin: 0 0 0 4px;
+  padding: 0 5px;
+  color: #fff;
+  font-size: 10px;
+  background: #1f5f9f;
+  border-radius: 2px;
+}
+
+.sales-line-fulfillment {
+  grid-column: 1 / -1;
+  color: #1a4f8b;
+}
+
+.sales-line-fulfillment button {
+  margin-left: 4px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+.sales-last-document button {
+  margin-top: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* #50: filas de la grilla con mejor contraste */
+.sales-cart-table tbody tr:not(.sales-cart-empty-row) td {
+  color: #111;
+  border-bottom: 1px solid #c9d3de;
+}
+
+.sales-cart-table tbody tr:nth-child(even):not(.sales-cart-empty-row) td {
+  background: #f3f8fd;
+}
+
+.sales-submit-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}

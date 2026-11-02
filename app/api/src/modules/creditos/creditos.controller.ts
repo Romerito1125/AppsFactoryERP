@@ -7,8 +7,11 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '../../common/enums/role.enum';
@@ -68,8 +71,15 @@ export class CreditosController {
   pay(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateCreditPaymentDto,
+    @Req() request: Request & { user: AuthUser },
   ) {
-    return this.service.pay(id, dto);
+    return this.service.pay(id, dto, request.user);
+  }
+  @Get('creditos/pagos/:paymentId/soporte')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @Permissions('RECEIVABLES_VIEW')
+  paymentSupport(@Param('paymentId', ParseIntPipe) paymentId: number) {
+    return this.service.paymentSupport(paymentId);
   }
   @Patch('creditos/:id/estado')
   @UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard)

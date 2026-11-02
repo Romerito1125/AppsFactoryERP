@@ -109,7 +109,6 @@ export function AuditLogWindow({ onClose, onRequestLogin }) {
         <div>
           <span>ADMINISTRATIVO · TRAZABILIDAD</span>
           <h2>Acciones generales del sistema</h2>
-          <p>Consulta las acciones realizadas por usuarios y módulos del software.</p>
         </div>
         <button type="button" className="audit-log-refresh" onClick={loadRows} disabled={loading}><RefreshCw size={14} className={loading ? "is-spinning" : ""} /> Actualizar</button>
       </div>

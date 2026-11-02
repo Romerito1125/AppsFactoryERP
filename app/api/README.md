@@ -1,6 +1,6 @@
 # API REST Modular ERP
 
-API NestJS + TypeScript ejecutada con Bun, Prisma y PostgreSQL/Supabase. Es un monolito modular: no usa microservicios, NATS, RabbitMQ ni mensajería.
+API NestJS + TypeScript ejecutada con Bun, Prisma y PostgreSQL directo. Es un monolito modular: no usa microservicios, NATS, RabbitMQ ni mensajería.
 
 Base local por defecto:
 

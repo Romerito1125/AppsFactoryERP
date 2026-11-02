@@ -74,6 +74,13 @@ export const permissionCatalog = [
     group: "Transacciones",
   },
   { code: "SALES_CREATE", label: "Registrar ventas", group: "Transacciones" },
+  {
+    code: "SALES_PRICE_OVERRIDE",
+    label: "Editar precio unitario en ventas",
+    group: "Ventas",
+  },
+  { code: "RETURNS_VIEW", label: "Consultar devoluciones", group: "Ventas" },
+  { code: "RETURNS_CREATE", label: "Registrar devoluciones", group: "Ventas" },
   { code: "OFFERS_VIEW", label: "Consultar ofertas", group: "Ventas" },
   { code: "OFFERS_EDIT", label: "Gestionar ofertas", group: "Ventas" },
   { code: "REFERRALS_VIEW", label: "Consultar referidos", group: "Ventas" },
@@ -94,8 +101,11 @@ export const defaultPermissionCodesByRole = {
     "BANKS_VIEW",
     "BANKS_EDIT",
     "SALES_CREATE",
+    "RETURNS_VIEW",
+    "RETURNS_CREATE",
   ],
   VENDEDOR: [
+    "RETURNS_VIEW",
     "CLIENTS_VIEW",
     "CLIENTS_EDIT",
     "PRODUCTS_VIEW",
@@ -115,6 +125,7 @@ export const defaultPermissionCodesByRole = {
     "DELIVERIES_DISPATCH",
   ],
   CONTADOR: [
+    "RETURNS_VIEW",
     "CLIENTS_VIEW",
     "PROVIDERS_VIEW",
     "PRODUCTS_VIEW",

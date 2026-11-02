@@ -302,7 +302,6 @@ function WarehouseDashboard({ session, focus, activeTab, onTabChange, pendingQuo
         <div>
           <span className="warehouse-admin-eyebrow">OPERACIÓN DE BODEGA</span>
           <h2>Administración de bodega</h2>
-          <p>Cotizaciones de proveedores, recepciones y existencias de la bodega asignada.</p>
         </div>
         <div className="warehouse-admin-user">
           <Warehouse size={15} />
@@ -468,6 +467,18 @@ function WarehouseDashboard({ session, focus, activeTab, onTabChange, pendingQuo
       {reviewQuote && (
         <WarehouseQuoteReviewDialog
           quote={reviewQuote}
+          onFulfill={async (item, status) => {
+            try {
+              const saved = await apiClient.patch(`/cotizaciones/${reviewQuote.id}/lineas/${item.id}/surtido`, { status });
+              setReviewQuote((current) => ({
+                ...current,
+                items: current.items.map((line) => (line.id === item.id ? { ...line, ...saved } : line)),
+              }));
+              setNotice(status === "SURTIDO" ? "Línea marcada como surtida." : "Línea marcada como atendida.");
+            } catch (requestError) {
+              setNotice(requestError.message);
+            }
+          }}
           onPrint={() => window.print()}
           onClose={() => setReviewQuote(null)}
         />
@@ -489,7 +500,7 @@ function Kpi({ icon: Icon, label, value, tone }) {
 }
 
 function PanelHeading({ icon: Icon, title, description }) {
-  return <div className="warehouse-admin-panel-heading"><div><Icon size={16} /><div><strong>{title}</strong><span>{description}</span></div></div></div>;
+  return <div className="warehouse-admin-panel-heading"><div><Icon size={16} /><div><strong>{title}</strong></div></div></div>;
 }
 
 function LoadingState() {
@@ -545,7 +556,8 @@ function WarehouseAppOrderDialog({ order, busy, onClose, onUpdateStatus }) {
   );
 }
 
-function WarehouseQuoteReviewDialog({ quote, onPrint, onClose }) {
+function WarehouseQuoteReviewDialog({ quote, onFulfill, onPrint, onClose }) {
+  const isPresale = quote.kind === "PREVENTA";
   return (
     <div className="sales-dialog-backdrop" role="presentation">
       <div className="sales-document-dialog" role="dialog" aria-modal="true" aria-label="Cotización recibida">
@@ -576,6 +588,23 @@ function WarehouseQuoteReviewDialog({ quote, onPrint, onClose }) {
                 <span>{item.product?.name ?? `Producto #${item.productId}`}</span>
                 <span>{item.quantity} × {formatCurrency(item.unitPrice)}</span>
                 <strong>{formatCurrency(item.total)}</strong>
+                {isPresale && (
+                  <span className="sales-line-fulfillment">
+                    {item.fulfillmentStatus === "SURTIDO"
+                      ? "Surtido"
+                      : item.fulfillmentStatus === "ATENDIDO"
+                        ? "Atendido"
+                        : "Pendiente"}
+                    {item.fulfillmentStatus !== "SURTIDO" && onFulfill && (
+                      <>
+                        {item.fulfillmentStatus !== "ATENDIDO" && (
+                          <button type="button" onClick={() => onFulfill(item, "ATENDIDO")}>Atendido</button>
+                        )}
+                        <button type="button" onClick={() => onFulfill(item, "SURTIDO")}>Surtido</button>
+                      </>
+                    )}
+                  </span>
+                )}
               </div>
             ))
           ) : (

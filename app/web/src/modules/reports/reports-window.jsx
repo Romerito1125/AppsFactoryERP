@@ -1,21 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, CircleX, Download, LoaderCircle, Mail, Printer, RefreshCw, X } from "lucide-react";
+import { BarChart3, CircleX, Download, FileSpreadsheet, LoaderCircle, Mail, Printer, RefreshCw, X } from "lucide-react";
 
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CrossSalesReport, DayCloseReport, RetentionsReport } from "./reports-extra";
 import "./reports-window.css";
 
 const tabs = [
   ["resumen", "Resumen"], ["facturas", "Facturación"], ["inventario", "Inventario"],
   ["iva", "IVA"], ["exogena", "Exógena"], ["compras", "Compras"], ["clientes", "Clientes"],
   ["productos", "Top productos"], ["traslados", "Traslados"],
+  ["retenciones", "Retenciones"], ["cruzadas", "Ventas cruzadas"], ["cierre", "Cierre del día"],
 ];
 
 export function ReportsWindow({ onClose, onRequestLogin, session }) {
   const [tab, setTab] = useState("resumen");
   const [period, setPeriod] = useState("SEMANA_DOMINGO");
-  const [state, setState] = useState({ loading: true, error: "", invoices: [], purchases: [], clients: [], products: [], inventory: [], movements: [], transfers: [], accounts: [] });
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [state, setState] = useState({ loading: true, error: "", invoices: [], purchases: [], clients: [], products: [], inventory: [], movements: [], transfers: [], accounts: [], warehouses: [] });
   const [notice, setNotice] = useState("");
   const [manualSignals, setManualSignals] = useState(() => readManualSignals());
   const { handlePointerDown, isDragging, style: windowStyle } = useDraggableWindow();
@@ -32,7 +37,7 @@ export function ReportsWindow({ onClose, onRequestLogin, session }) {
       const inventory = normalizeInventoryRows(rawInventory);
       const failed = results.find((result) => result.status === "rejected");
       if (failed && !invoices.length && !purchases.length) throw failed.reason;
-      setState({ loading: false, error: failed ? "Algunos bloques no están disponibles con este perfil." : "", invoices, purchases, clients, products, inventory, movements, transfers, accounts });
+      setState({ loading: false, error: failed ? "Algunos bloques no están disponibles con este perfil." : "", invoices, purchases, clients, products, inventory, movements, transfers, accounts, warehouses: [...new Map(inventory.filter((row) => row.warehouse).map((row) => [row.warehouse.id, row.warehouse])).values()] });
     } catch (requestError) {
       setState((current) => ({ ...current, loading: false, error: requestError.message ?? "No se pudieron cargar los reportes." }));
       if (/sesión|inicia sesión|401/i.test(requestError.message ?? "")) onRequestLogin?.();
@@ -41,8 +46,8 @@ export function ReportsWindow({ onClose, onRequestLogin, session }) {
 
   useEffect(() => { void loadData(); }, []);
 
-  const filteredInvoices = useMemo(() => state.invoices.filter((invoice) => inPeriod(invoice.createdAt, period)), [period, state.invoices]);
-  const filteredPurchases = useMemo(() => state.purchases.filter((purchase) => inPeriod(purchase.createdAt, period)), [period, state.purchases]);
+  const filteredInvoices = useMemo(() => state.invoices.filter((invoice) => inPeriod(invoice.createdAt, period, customFrom, customTo)), [customFrom, customTo, period, state.invoices]);
+  const filteredPurchases = useMemo(() => state.purchases.filter((purchase) => inPeriod(purchase.createdAt, period, customFrom, customTo)), [customFrom, customTo, period, state.purchases]);
   const totals = useMemo(() => ({
     invoices: filteredInvoices.length,
     sales: sum(filteredInvoices, "total"),
@@ -60,7 +65,7 @@ export function ReportsWindow({ onClose, onRequestLogin, session }) {
   }, [filteredInvoices]);
 
   function exportCsv() {
-    const rows = tab === "facturas" ? filteredInvoices.map((row) => ({ fecha: row.createdAt, factura: row.consecutive, origen: row.source, ivaVenta: invoiceTaxLabel(row), ivaPagado: invoiceTaxAmount(row), total: row.total })) : tab === "compras" ? filteredPurchases.map((row) => ({ fecha: row.createdAt, compra: row.consecutive, estado: row.status, total: row.total })) : tab === "productos" ? topProducts : state.inventory.map((row) => ({ producto: row.product?.name, existencia: row.quantity, inventario: row.inventoryValue ?? Number(row.product?.cost ?? 0) * Number(row.quantity ?? 0), minimo: row.product?.minimumStock, estado: manualSignals[row.productId] ?? semaphore(row) }));
+    const rows = tab === "facturas" ? filteredInvoices.map((row) => ({ fecha: row.createdAt, factura: row.consecutive, origen: row.source, cliente: row.client ? `${row.client.firstName ?? ""} ${row.client.lastName ?? ""}`.trim() : "—", ivaVenta: invoiceTaxLabel(row), ivaPagado: invoiceTaxAmount(row), total: row.total })) : tab === "compras" ? filteredPurchases.map((row) => ({ fecha: row.createdAt, compra: row.consecutive, proveedor: row.provider?.name ?? "—", estado: row.status, subtotal: row.subtotal, impuestos: row.taxes, total: row.total })) : tab === "productos" ? topProducts : state.inventory.map((row) => ({ producto: row.product?.name, bodega: row.warehouse?.location ?? "—", existencia: row.quantity, inventario: row.inventoryValue ?? Number(row.product?.cost ?? 0) * Number(row.quantity ?? 0), minimo: row.product?.minimumStock, maximo: row.product?.maximumStock, estado: manualSignals[row.productId] ?? semaphore(row) }));
     if (!rows.length) return setNotice("No hay datos para exportar.");
     const headers = Object.keys(rows[0]);
     const csv = [headers.join(","), ...rows.map((row) => headers.map((key) => `"${String(row[key] ?? "").replaceAll('"', '""')}"`).join(","))].join("\n");
@@ -68,19 +73,60 @@ export function ReportsWindow({ onClose, onRequestLogin, session }) {
     setNotice("CSV descargado.");
   }
 
-  function exportPdf() {
-    const lines = buildReportPdfLines({ tab, period, state, filteredInvoices, filteredPurchases, topProducts, manualSignals, totals });
-    const pdf = createSimplePdf(lines);
-    downloadBlob(pdf, `reporte-${tab}.pdf`, "application/pdf");
-    setNotice("PDF descargado.");
+  async function exportExcel() {
+    const XLSX = await import("xlsx");
+    const workbook = XLSX.utils.book_new();
+    const appendSheet = (name, rows, widths) => { const sheet = XLSX.utils.json_to_sheet(rows); sheet["!cols"] = widths.map((wch) => ({ wch })); if (rows.length) sheet["!autofilter"] = { ref: XLSX.utils.encode_range(XLSX.utils.decode_range(sheet["!ref"])) }; XLSX.utils.book_append_sheet(workbook, sheet, name); };
+    appendSheet("Resumen", [{ Indicador: "Periodo", Valor: periodLabel(period) }, { Indicador: "Ventas", Valor: totals.sales }, { Indicador: "Facturas", Valor: totals.invoices }, { Indicador: "IVA", Valor: totals.iva }, { Indicador: "Compras", Valor: totals.purchases }, { Indicador: "Stock crítico", Valor: totals.critical }], [28, 24]);
+    appendSheet("Facturas", filteredInvoices.map((row) => ({ Fecha: date(row.createdAt), Factura: row.consecutive, Origen: row.source, Cliente: row.client ? `${row.client.firstName ?? ""} ${row.client.lastName ?? ""}`.trim() : "—", Subtotal: Number(row.subtotal ?? 0), IVA: invoiceTaxAmount(row), Total: Number(row.total ?? 0) })), [14, 22, 14, 30, 16, 16, 16]);
+    appendSheet("Compras", filteredPurchases.map((row) => ({ Fecha: date(row.createdAt), Orden: row.consecutive, Proveedor: row.provider?.name ?? "—", Estado: row.status, Subtotal: Number(row.subtotal ?? 0), Impuestos: Number(row.taxes ?? 0), Total: Number(row.total ?? 0) })), [14, 20, 30, 16, 16, 16, 16]);
+    appendSheet("Inventario", state.inventory.map((row) => ({ Producto: row.product?.name ?? `Producto #${row.productId}`, Bodega: row.warehouse?.location ?? "—", Existencia: Number(row.quantity ?? 0), Mínimo: Number(row.product?.minimumStock ?? 0), Máximo: Number(row.product?.maximumStock ?? 0), Inventario: Number(row.inventoryValue ?? 0), Estado: manualSignals[row.productId] ?? semaphore(row) })), [34, 22, 14, 14, 14, 18, 14]);
+    appendSheet("Top productos", topProducts.slice(0, 100).map((row) => ({ Producto: row.name, Unidades: row.quantity, Total: row.total })), [34, 16, 18]);
+    XLSX.writeFile(workbook, `biblioteca-reportes-${tab}-${period.toLowerCase()}.xlsx`);
+    setNotice("Excel descargado.");
+  }
+
+  async function exportPdf() {
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 34;
+    const colors = { navy: [31, 51, 77], blue: [43, 108, 176], green: [49, 165, 109], amber: [210, 138, 37], ink: [39, 55, 76], muted: [103, 119, 139], line: [224, 231, 239], pale: [246, 249, 252] };
+    const reportRows = tab === "facturas"
+      ? filteredInvoices.map((row) => [date(row.createdAt), row.consecutive, row.source ?? "—", row.client ? `${row.client.firstName ?? ""} ${row.client.lastName ?? ""}`.trim() : "—", `$${money(row.total)}`])
+      : tab === "compras"
+        ? filteredPurchases.map((row) => [date(row.createdAt), row.consecutive, row.status ?? "—", row.provider?.name ?? "—", `$${money(row.total)}`])
+        : tab === "productos"
+          ? topProducts.map((row) => [row.name, String(row.quantity), `$${money(row.total)}`])
+          : state.inventory.map((row) => [row.product?.name ?? `Producto #${row.productId}`, row.warehouse?.location ?? "—", String(row.quantity ?? 0), `$${money(row.inventoryValue)}`, manualSignals[row.productId] ?? semaphore(row)]);
+    const headers = tab === "facturas" ? ["Fecha", "Factura", "Origen", "Cliente", "Total"] : tab === "compras" ? ["Fecha", "Orden", "Estado", "Proveedor", "Total"] : tab === "productos" ? ["Producto", "Unidades", "Ventas"] : ["Producto", "Bodega", "Existencia", "Inventario", "Estado"];
+    let y = 0;
+    const drawHeader = (first = true) => {
+      doc.setFillColor(...colors.navy); doc.rect(0, 0, pageWidth, first ? 76 : 34, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(first ? 19 : 10); doc.text(first ? "MUNDO TIENDA" : "MUNDO TIENDA · BIBLIOTECA DE REPORTES", margin, first ? 32 : 21); if (first) { doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.text("ADMINISTRACIÓN · CONTROL Y CUMPLIMIENTO", margin, 51); doc.text(`Periodo: ${periodLabel(period)}`, pageWidth - margin, 32, { align: "right" }); doc.text(`Generado: ${new Date().toLocaleString("es-CO")}`, pageWidth - margin, 50, { align: "right" }); y = 104; } else y = 55;
+    };
+    drawHeader();
+    const cards = [["Ventas", `$${money(totals.sales)}`, colors.blue], ["Facturas", String(totals.invoices), colors.green], ["IVA", `$${money(totals.iva)}`, colors.amber], ["Compras", `$${money(totals.purchases)}`, colors.navy], ["Stock crítico", String(totals.critical), colors.red ?? [196, 84, 84]]];
+    const gap = 9; const cardWidth = (pageWidth - margin * 2 - gap * (cards.length - 1)) / cards.length;
+    cards.forEach(([label, value, color], index) => { const x = margin + index * (cardWidth + gap); doc.setFillColor(255, 255, 255); doc.setDrawColor(...colors.line); doc.roundedRect(x, y, cardWidth, 56, 5, 5, "FD"); doc.setFillColor(...color); doc.roundedRect(x, y, cardWidth, 4, 2, 2, "F"); doc.setTextColor(...colors.muted); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.text(label, x + 10, y + 20); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text(value, x + 10, y + 41); });
+    y += 84;
+    doc.setTextColor(...colors.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text(`Detalle · ${tabs.find(([value]) => value === tab)?.[1] ?? "Reporte"}`, margin, y); y += 18;
+    const widths = headers.length === 5 ? [72, 135, 100, 215, 70] : headers.length === 3 ? [360, 90, 100] : [240, 150, 90, 110, 80];
+    const drawTableHeader = () => { doc.setFillColor(...colors.blue); doc.rect(margin, y - 12, pageWidth - margin * 2, 21, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(8); let x = margin + 7; headers.forEach((header, index) => { doc.text(header, x, y + 2); x += widths[index]; }); y += 21; };
+    drawTableHeader();
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8); reportRows.slice(0, 100).forEach((row, index) => { if (y > pageHeight - 42) { doc.addPage(); drawHeader(false); drawTableHeader(); } if (index % 2 === 0) { doc.setFillColor(...colors.pale); doc.rect(margin, y - 11, pageWidth - margin * 2, 19, "F"); } let x = margin + 7; doc.setTextColor(...colors.ink); row.forEach((value, valueIndex) => { doc.text(doc.splitTextToSize(String(value ?? "—"), widths[valueIndex] - 12)[0], x, y); x += widths[valueIndex]; }); y += 19; });
+    if (!reportRows.length) { doc.setTextColor(...colors.muted); doc.text("No hay datos para este periodo.", margin + 7, y + 6); }
+    doc.setTextColor(...colors.muted); doc.setFontSize(8); doc.text("Mundo Tienda · Reporte generado desde Administración", margin, pageHeight - 18); doc.save(`biblioteca-reportes-${tab}-${period.toLowerCase()}.pdf`); setNotice("PDF descargado.");
   }
 
   async function sendEmail() {
     const recipient = window.prompt("Correo que recibirá el reporte semanal:", session?.username?.includes("@") ? session.username : "");
     if (!recipient) return;
     try {
+      const emailStart = reportStart(period, customFrom);
+      const emailEnd = period === "CUSTOM" && customTo ? new Date(`${customTo}T23:59:59`) : new Date();
       await apiClient.post("/reportes/email", {
-        to: [recipient.trim()], subject: `Reporte ${periodLabel(period)} · Mundo Tienda`, startDate: reportStart(period).toISOString(), endDate: new Date().toISOString(), generatedAt: new Date().toISOString(), generatedBy: session?.username ?? session?.user?.username,
+        to: [recipient.trim()], subject: `Reporte ${periodLabel(period)} · Mundo Tienda`, startDate: emailStart.toISOString(), endDate: emailEnd.toISOString(), generatedAt: new Date().toISOString(), generatedBy: session?.username ?? session?.user?.username,
         sections: ["RESUMEN", "FACTURAS", "IVA", "EXOGENAS", "STOCK", "TRASLADOS", "PRODUCTOS"],
         summaryCards: [{ label: "Ventas", value: `$${money(totals.sales)}` }, { label: "Facturas", value: totals.invoices }, { label: "Stock crítico", value: totals.critical }],
         highlights: [{ label: "Periodo", value: periodLabel(period) }],
@@ -105,31 +151,51 @@ export function ReportsWindow({ onClose, onRequestLogin, session }) {
 
   return <section className={`provider-window p1-window reports-window ${isDragging ? "is-dragging" : ""}`} style={windowStyle} aria-label="Biblioteca de reportes">
     <header className="provider-titlebar drag-handle p1-titlebar" onPointerDown={handlePointerDown}><div className="provider-title-mark"><BarChart3 size={14} /></div><strong>BIBLIOTECA DE REPORTES</strong><button type="button" className="provider-close" onClick={onClose} aria-label="Cerrar reportes"><X size={17} /></button></header>
-    <div className="p1-heading"><div><span>REPORTES · CONTROL OPERATIVO</span><h2>Reportes por bloque y periodo</h2><p>Consulta, filtra, exporta y comparte la información que necesita el negocio.</p></div><div className="p1-heading-actions"><select value={period} onChange={(event) => setPeriod(event.target.value)} aria-label="Periodo"><option value="DIARIO">Hoy</option><option value="TRES_DIAS">Últimos 3 días</option><option value="SEMANA_DOMINGO">Semana con cierre dominical</option></select><button type="button" className="p1-secondary-button" onClick={() => void loadData()} disabled={state.loading}><RefreshCw size={14} className={state.loading ? "is-spinning" : ""} /> Actualizar</button><button type="button" className="p1-secondary-button" onClick={exportPdf}><Printer size={14} /> Exportar PDF</button><button type="button" className="p1-secondary-button" onClick={() => window.print()}><Printer size={14} /> Imprimir</button><button type="button" className="p1-secondary-button" onClick={exportCsv}><Download size={14} /> CSV</button><button type="button" className="p1-secondary-button" onClick={() => void sendEmail()}><Mail size={14} /> Enviar correo</button></div></div>
+    <div className="p1-heading"><div><span className="p1-heading-kicker">ADMINISTRACIÓN · CONTROL Y CUMPLIMIENTO</span><h2>Biblioteca de reportes</h2><p>Consulta, compara y exporta la operación del negocio desde una sola vista.</p></div><div className="p1-heading-actions"><select value={period} onChange={(event) => setPeriod(event.target.value)} aria-label="Periodo"><option value="DIARIO">Hoy</option><option value="TRES_DIAS">Últimos 3 días</option><option value="SEMANA_DOMINGO">Semana con cierre dominical</option><option value="MES">Últimos 30 días</option><option value="TRIMESTRE">Últimos 90 días</option><option value="CUSTOM">Rango personalizado</option></select>{period === "CUSTOM" && <><label className="p1-date-control">Desde<input type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} /></label><label className="p1-date-control">Hasta<input type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} /></label></>}<button type="button" className="p1-secondary-button p1-button-blue" onClick={() => void loadData()} disabled={state.loading}><RefreshCw size={14} className={state.loading ? "is-spinning" : ""} /> Actualizar</button><button type="button" className="p1-secondary-button p1-button-green" onClick={exportPdf}><Printer size={14} /> PDF</button><button type="button" className="p1-secondary-button p1-button-green" onClick={() => window.print()}><Printer size={14} /> Imprimir</button><button type="button" className="p1-secondary-button p1-button-amber" onClick={exportCsv}><Download size={14} /> CSV</button><button type="button" className="p1-secondary-button p1-button-green" onClick={() => void exportExcel()}><FileSpreadsheet size={14} /> Excel</button><button type="button" className="p1-secondary-button p1-button-dark" onClick={() => void sendEmail()}><Mail size={14} /> Enviar correo</button></div></div>
     {(state.error || notice) && <TransientMessage className={state.error ? "window-error" : "p1-success"} role={state.error ? "alert" : "status"} onDismiss={() => { setNotice(""); setState((current) => ({ ...current, error: "" })); }}>{state.error || notice}</TransientMessage>}
     <nav className="p1-tabs" aria-label="Bloques de reportes">{tabs.map(([value, label]) => <button key={value} type="button" className={tab === value ? "is-active" : ""} onClick={() => setTab(value)}>{label}</button>)}</nav>
-    {state.loading ? <div className="p1-state p1-page-state"><LoaderCircle size={24} className="is-spinning" /> Preparando reportes…</div> : <ReportBody tab={tab} state={state} totals={totals} topProducts={topProducts} period={period} manualSignals={manualSignals} onManualSignal={toggleManualSignal} />}
+    {state.loading ? <div className="p1-state p1-page-state"><LoaderCircle size={24} className="is-spinning" /> Preparando reportes…</div> : <ReportBody tab={tab} state={state} totals={totals} topProducts={topProducts} period={period} customFrom={customFrom} customTo={customTo} manualSignals={manualSignals} onManualSignal={toggleManualSignal} />}
     <footer className="provider-window-footer"><span>Periodo: {periodLabel(period)} · Usuario: {session?.username ?? session?.user?.username ?? "—"}</span><button type="button" className="exit-action" onClick={onClose}><CircleX size={14} /> Salir</button></footer>
   </section>;
 }
 
-function ReportBody({ tab, state, totals, topProducts, period, manualSignals, onManualSignal }) {
-  if (tab === "resumen") return <div className="p1-report-grid"><ReportKpi label="Ventas" value={`$${money(totals.sales)}`} /><ReportKpi label="Facturas" value={totals.invoices} /><ReportKpi label="IVA" value={`$${money(totals.iva)}`} /><ReportKpi label="Compras" value={`$${money(totals.purchases)}`} /><ReportKpi label="Stock crítico" value={totals.critical} /><section className="p1-card p1-report-wide"><div className="p1-card-title"><div><strong>Biblioteca incluida</strong><span>Facturación, inventario, IVA, compras, clientes, top de productos y traslados.</span></div></div><div className="p1-report-highlights"><span>• Facturas filtrables por origen</span><span>• Stock crítico y semáforo</span><span>• Movimientos diarios / cada 3 días</span><span>• Exportación PDF y CSV</span></div></section></div>;
-  if (tab === "facturas") return <DataTable headers={["Fecha", "Factura", "Origen", "Cliente", "IVA venta", "IVA pagado", "Total"]} rows={state.invoices.filter((row) => inPeriod(row.createdAt, period)).map((row) => [date(row.createdAt), row.consecutive, row.source, row.client ? `${row.client.firstName ?? ""} ${row.client.lastName ?? ""}` : "—", invoiceTaxLabel(row), `$${money(invoiceTaxAmount(row))}`, `$${money(row.total)}`])} />;
-  if (tab === "compras") return <DataTable headers={["Fecha", "Orden", "Estado", "Bodega", "Total"]} rows={state.purchases.filter((row) => inPeriod(row.createdAt, period)).map((row) => [date(row.createdAt), row.consecutive, row.status, row.warehouse?.location ?? "—", `$${money(row.total)}`])} />;
+function ReportBody({ tab, state, totals, topProducts, period, customFrom, customTo, manualSignals, onManualSignal }) {
+  const inSelectedPeriod = (value) => inPeriod(value, period, customFrom, customTo);
+  const filteredInvoices = state.invoices.filter((invoice) => inSelectedPeriod(invoice.createdAt));
+  const filteredPurchases = state.purchases.filter((purchase) => inSelectedPeriod(purchase.createdAt));
+  if (tab === "retenciones") return <RetentionsReport purchases={state.purchases} inPeriod={inSelectedPeriod} />;
+  if (tab === "cruzadas") return <CrossSalesReport invoices={state.invoices} inPeriod={inSelectedPeriod} warehouses={state.warehouses} />;
+  if (tab === "cierre") return <DayCloseReport />;
+  if (tab === "resumen") return <div className="p1-report-grid p1-report-dashboard"><ReportKpi label="Ventas" value={`$${money(totals.sales)}`} tone="blue" /><ReportKpi label="Facturas" value={totals.invoices} tone="green" /><ReportKpi label="IVA" value={`$${money(totals.iva)}`} tone="amber" /><ReportKpi label="Compras" value={`$${money(totals.purchases)}`} tone="navy" /><ReportKpi label="Stock crítico" value={totals.critical} tone="red" /><AdminSummaryCharts invoices={filteredInvoices} purchases={filteredPurchases} topProducts={topProducts} totals={totals} /><section className="p1-card p1-report-wide"><div className="p1-card-title"><div><strong>Lectura ejecutiva</strong><span>Facturación, inventario, IVA, compras, clientes, productos y traslados en el mismo periodo.</span></div></div><div className="p1-report-highlights"><span>• Usa las fechas para comparar cortes</span><span>• Revisa IVA antes del cierre</span><span>• Prioriza inventario en rojo</span><span>• Exporta el detalle para auditoría</span></div></section></div>;
+  if (tab === "facturas") return <DataTable headers={["Fecha", "Factura", "Origen", "Cliente", "IVA venta", "IVA pagado", "Total"]} rows={state.invoices.filter((row) => inSelectedPeriod(row.createdAt)).map((row) => [date(row.createdAt), row.consecutive, row.source, row.client ? `${row.client.firstName ?? ""} ${row.client.lastName ?? ""}` : "—", invoiceTaxLabel(row), `$${money(invoiceTaxAmount(row))}`, `$${money(row.total)}`])} />;
+  if (tab === "compras") return <DataTable headers={["Fecha", "Orden", "Estado", "Bodega", "Total"]} rows={state.purchases.filter((row) => inSelectedPeriod(row.createdAt)).map((row) => [date(row.createdAt), row.consecutive, row.status, row.warehouse?.location ?? "—", `$${money(row.total)}`])} />;
   if (tab === "clientes") return <DataTable headers={["Identificación", "Cliente", "Tipo", "Estado"]} rows={state.clients.map((row) => [row.identification, `${row.firstName ?? ""} ${row.lastName ?? ""}`, row.clientType ?? row.type ?? "—", row.isActive ? "Activo" : "Inactivo"]) } />;
   if (tab === "productos") return <DataTable headers={["Producto", "Unidades vendidas", "Total"]} rows={topProducts.map((row) => [row.name, row.quantity, `$${money(row.total)}`])} />;
   if (tab === "traslados") return <DataTable headers={["Fecha", "Ticket", "Estado", "Origen", "Destino"]} rows={state.transfers.map((row) => [date(row.createdAt), row.ticketNumber ?? row.id, row.status ?? "Registrado", row.fromWarehouse?.location ?? row.sourceWarehouse?.location ?? "—", row.toWarehouse?.location ?? row.destinationWarehouse?.location ?? "—"]) } />;
-  if (tab === "iva") return <DataTable headers={["Fecha", "Factura", "IVA venta", "Base", "IVA pagado", "Total"]} rows={state.invoices.filter((row) => inPeriod(row.createdAt, period)).map((row) => [date(row.createdAt), row.consecutive, invoiceTaxLabel(row), `$${money(row.subtotal)}`, `$${money(invoiceTaxAmount(row))}`, `$${money(row.total)}`])} />;
-  if (tab === "exogena") return <DataTable headers={["Factura", "Identificación", "Origen", "Total"]} rows={state.invoices.filter((row) => inPeriod(row.createdAt, period)).map((row) => [row.consecutive, row.client?.identification ?? "—", row.source, `$${money(row.total)}`])} />;
-  return <section className="p1-card p1-report-table-card"><div className="p1-card-title"><div><strong>Existencias y semáforo manual</strong><span>Se muestra el valor total del inventario con el costo de adquisición incluido.</span></div></div><div className="p1-simple-table"><div className="p1-simple-head"><span>Producto</span><span>Existencia</span><span>Inventario total</span><span>Estado</span></div>{state.inventory.length ? state.inventory.map((row) => { const signal = manualSignals[row.productId] ?? semaphore(row); return <div className="p1-simple-row" key={`${row.productId}-${row.warehouseId}`}><span>{row.product?.name ?? `Producto #${row.productId}`}</span><span>{row.quantity}</span><span>${money(row.inventoryValue)}</span><span><button type="button" className={`p1-signal-button ${signal.toLowerCase()}`} onClick={() => onManualSignal(row.productId)}>{signal}</button></span></div>; }) : <div className="p1-state">No hay existencias para este periodo.</div>}</div></section>;
+  if (tab === "iva") return <DataTable headers={["Fecha", "Factura", "IVA venta", "Base", "IVA pagado", "Total"]} rows={state.invoices.filter((row) => inSelectedPeriod(row.createdAt)).map((row) => [date(row.createdAt), row.consecutive, invoiceTaxLabel(row), `$${money(row.subtotal)}`, `$${money(invoiceTaxAmount(row))}`, `$${money(row.total)}`])} />;
+  if (tab === "exogena") return <DataTable headers={["Factura", "Identificación", "Origen", "Total"]} rows={state.invoices.filter((row) => inSelectedPeriod(row.createdAt)).map((row) => [row.consecutive, row.client?.identification ?? "—", row.source, `$${money(row.total)}`])} />;
+  return <section className="p1-card p1-report-table-card"><div className="p1-card-title"><div><strong>Existencias y valorización</strong></div></div><div className="p1-simple-table"><div className="p1-simple-head"><span>Producto</span><span>Existencia</span><span>Sin IVA</span><span>IVA</span><span>Con IVA</span><span>Estado</span></div>{state.inventory.length ? state.inventory.map((row) => { const signal = manualSignals[row.productId] ?? semaphore(row); return <div className="p1-simple-row" key={`${row.productId}-${row.warehouseId}`}><span>{row.product?.name ?? `Producto #${row.productId}`}</span><span>{row.quantity}</span><span>${money(row.inventoryValueNet)}</span><span>${money(row.inventoryTax)}</span><span>${money(row.inventoryValue)}</span><span><button type="button" className={`p1-signal-button ${signal.toLowerCase()}`} onClick={() => onManualSignal(row.productId)}>{signal}</button></span></div>; }) : <div className="p1-state">No hay existencias para este periodo.</div>}</div></section>;
 }
 
-function ReportKpi({ label, value }) { return <article className="p1-kpi blue"><span>{label}</span><strong>{value}</strong></article>; }
+function ReportKpi({ label, value, tone = "blue" }) { return <article className={`p1-kpi ${tone}`}><span>{label}</span><strong>{value}</strong></article>; }
+
+function AdminSummaryCharts({ invoices, purchases, topProducts, totals }) {
+  const byDay = new Map();
+  invoices.forEach((invoice) => { const key = dateKey(invoice.createdAt); const row = byDay.get(key) ?? { date: dayLabel(invoice.createdAt), ventas: 0, iva: 0 }; row.ventas += Number(invoice.total ?? 0); row.iva += invoiceTaxAmount(invoice); byDay.set(key, row); });
+  const trend = [...byDay.values()].sort((a, b) => a.date.localeCompare(b.date)).slice(-14);
+  const purchaseTotal = purchases.reduce((sum, purchase) => sum + Number(purchase.total ?? 0), 0);
+  const mix = [{ name: "Ventas", value: totals.sales, color: "#2b6cb0" }, { name: "Compras", value: purchaseTotal, color: "#d28a25" }, { name: "IVA", value: totals.iva, color: "#31a56d" }].filter((row) => row.value > 0);
+  return <div className="p1-chart-grid p1-report-wide"><section className="p1-card p1-chart-card"><div className="p1-card-title"><div><strong>Flujo del periodo</strong><span>Ventas e impuestos por día.</span></div></div><ResponsiveContainer width="100%" height={250}><BarChart data={trend} margin={{ top: 10, right: 8, left: -16, bottom: 4 }}><CartesianGrid vertical={false} stroke="#e7edf3" /><XAxis dataKey="date" tick={{ fill: "#718096", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value) => shortMoney(value)} /><Tooltip content={<AdminTooltip />} /><Legend iconType="circle" wrapperStyle={{ fontSize: 11, color: "#66778d" }} /><Bar dataKey="ventas" name="Ventas" fill="#2b6cb0" radius={[4, 4, 0, 0]} /><Bar dataKey="iva" name="IVA" fill="#31a56d" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></section><section className="p1-card p1-chart-card"><div className="p1-card-title"><div><strong>Distribución de valor</strong><span>Ventas, compras e IVA del filtro.</span></div></div><div className="p1-pie-wrap"><ResponsiveContainer width="100%" height={210}><PieChart><Pie data={mix} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="78%" paddingAngle={3} stroke="none">{mix.map((row) => <Cell key={row.name} fill={row.color} />)}</Pie><Tooltip content={<AdminTooltip currency />} /></PieChart></ResponsiveContainer><div className="p1-pie-legend">{mix.map((row) => <div key={row.name}><i style={{ background: row.color }} /><span>{row.name}</span><strong>${money(row.value)}</strong></div>)}</div></div></section><section className="p1-card p1-chart-card"><div className="p1-card-title"><div><strong>Top productos</strong><span>Unidades y venta acumulada.</span></div></div><ResponsiveContainer width="100%" height={250}><BarChart data={topProducts.slice(0, 6)} layout="vertical" margin={{ top: 5, right: 12, left: 5, bottom: 5 }}><CartesianGrid horizontal={false} stroke="#e7edf3" /><XAxis type="number" hide /><YAxis type="category" dataKey="name" width={110} tick={{ fill: "#596b82", fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip content={<AdminTooltip currency />} /><Bar dataKey="total" name="Venta" fill="#2b6cb0" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></section></div>;
+}
+
+function AdminTooltip({ active, payload, label, currency = false }) { if (!active || !payload?.length) return null; return <div className="p1-chart-tooltip"><strong>{label}</strong>{payload.map((row) => <div key={row.dataKey}><span>{row.name ?? row.dataKey}</span><b>{currency ? `$${money(row.value)}` : shortMoney(row.value)}</b></div>)}</div>; }
 function DataTable({ headers, rows }) { return <section className="p1-card p1-report-table-card"><div className="p1-simple-table"><div className="p1-simple-head">{headers.map((header) => <span key={header}>{header}</span>)}</div>{rows.length ? rows.slice(0, 250).map((row, index) => <div className="p1-simple-row" key={index}>{row.map((cell, cellIndex) => <span key={cellIndex}>{cell}</span>)}</div>) : <div className="p1-state">No hay datos para este periodo.</div>}</div></section>; }
-function inPeriod(value, period) { const dateValue = value ? new Date(value) : new Date(); const now = new Date(); const start = reportStart(period); return dateValue >= start && dateValue <= now; }
-function reportStart(period) { const start = new Date(); start.setHours(0, 0, 0, 0); if (period === "TRES_DIAS") start.setDate(start.getDate() - 2); if (period === "SEMANA_DOMINGO") start.setDate(start.getDate() - start.getDay()); return start; }
-function periodLabel(period) { return { DIARIO: "hoy", TRES_DIAS: "ultimos 3 dias", SEMANA_DOMINGO: "semana domingo-hoy" }[period] ?? period; }
+function inPeriod(value, period, customFrom = "", customTo = "") { const dateValue = value ? new Date(value) : new Date(); const now = new Date(); const start = reportStart(period, customFrom); const end = period === "CUSTOM" && customTo ? new Date(`${customTo}T23:59:59`) : now; return dateValue >= start && dateValue <= end; }
+function reportStart(period, customFrom = "") { const start = new Date(); start.setHours(0, 0, 0, 0); if (period === "CUSTOM") return customFrom ? new Date(`${customFrom}T00:00:00`) : new Date(0); if (period === "TRES_DIAS") start.setDate(start.getDate() - 2); if (period === "SEMANA_DOMINGO") start.setDate(start.getDate() - start.getDay()); if (period === "MES") start.setDate(start.getDate() - 29); if (period === "TRIMESTRE") start.setDate(start.getDate() - 89); return start; }
+function periodLabel(period) { return { DIARIO: "hoy", TRES_DIAS: "últimos 3 días", SEMANA_DOMINGO: "semana domingo-hoy", MES: "últimos 30 días", TRIMESTRE: "últimos 90 días", CUSTOM: "rango personalizado" }[period] ?? period; }
+function dateKey(value) { const dateValue = new Date(value); return `${dateValue.getFullYear()}-${String(dateValue.getMonth() + 1).padStart(2, "0")}-${String(dateValue.getDate()).padStart(2, "0")}`; }
+function dayLabel(value) { return new Intl.DateTimeFormat("es-CO", { day: "2-digit", month: "short" }).format(new Date(value)).replace(".", ""); }
+function shortMoney(value) { const amount = Number(value ?? 0); return amount >= 1000000 ? `$${(amount / 1000000).toFixed(1)}M` : amount >= 1000 ? `$${Math.round(amount / 1000)}k` : `$${Math.round(amount)}`; }
 function sum(rows, key) { return rows.reduce((total, row) => total + Number(row[key] ?? 0), 0); }
 function money(value) { return Number(value ?? 0).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function date(value) { return value ? new Date(value).toLocaleDateString("es-CO") : "-"; }
@@ -216,6 +282,8 @@ function normalizeInventoryRows(products) {
       productId: product.id,
       warehouseId: warehouseRow.warehouseId ?? warehouseRow.warehouse?.id ?? null,
       quantity: warehouseRow.quantity ?? warehouseRow.stock ?? 0,
+      inventoryValueNet: warehouseRow.inventoryValueNet ?? product.inventoryValueNet ?? 0,
+      inventoryTax: warehouseRow.inventoryTax ?? product.inventoryTax ?? 0,
       inventoryValue: warehouseRow.inventoryValue ?? product.inventoryValue ?? 0,
       product: {
         ...product,

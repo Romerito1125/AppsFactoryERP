@@ -1,0 +1,38 @@
+{
+  "password": "Qa123456*",
+  "users": {
+    "cajero": "qa.cajero@mundotienda.com",
+    "cajero2": "qa.cajero2@mundotienda.com",
+    "vendedor": "qa.vendedor@mundotienda.com",
+    "vendedor2": "qa.vendedor2@mundotienda.com",
+    "bodegaNorte": "qa.bodega.norte@mundotienda.com",
+    "bodegaSur": "qa.bodega.sur@mundotienda.com",
+    "contador": "qa.contador@mundotienda.com"
+  },
+  "warehouses": {
+    "norte": 6,
+    "sur": 7,
+    "principal": 1
+  },
+  "providers": {
+    "conRetencion": 10,
+    "sinRetencion": 11,
+    "autorretenedor": 12
+  },
+  "products": {
+    "iva0": 9,
+    "iva5": 10,
+    "iva19": 11,
+    "soloNorte": 12,
+    "faltanteSur": 13
+  },
+  "clients": {
+    "conCredito": 11,
+    "sinCredito": 12,
+    "mayorista": 13
+  },
+  "accounts": {
+    "caja": 5,
+    "banco4x1000": 6
+  }
+}

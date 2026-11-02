@@ -18,6 +18,7 @@ import {
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
+import { SuggestedTransfersDialog } from "./suggested-transfers-dialog";
 
 export function InventoryTransfersWindow({ onClose, onRequestLogin }) {
   const [warehouses, setWarehouses] = useState([]);
@@ -32,6 +33,7 @@ export function InventoryTransfersWindow({ onClose, onRequestLogin }) {
   const [supportNote, setSupportNote] = useState("");
   const [selectedTicket, setSelectedTicket] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [suggestedOpen, setSuggestedOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -240,9 +242,11 @@ export function InventoryTransfersWindow({ onClose, onRequestLogin }) {
           <div>
             <span>GESTIÓN DE INVENTARIO</span>
             <h2>Operaciones de inventario</h2>
-            <p>Traslados, cargos, descargos y ajustes.</p>
           </div>
           <div className="inventory-transfer-heading-actions">
+            <button type="button" className="inventory-transfer-history-trigger" onClick={() => setSuggestedOpen(true)} disabled={saving}>
+              <ArrowLeftRight size={14} /> Traslados sugeridos
+            </button>
             <button type="button" className="inventory-transfer-history-trigger" onClick={() => setHistoryOpen(true)} disabled={saving}>
               <ClipboardCheck size={14} /> Historial
             </button>
@@ -352,7 +356,6 @@ export function InventoryTransfersWindow({ onClose, onRequestLogin }) {
             {operationItems.length > 0 && <div className="inventory-operation-items" aria-label="Productos agregados">
               <div className="inventory-operation-items-summary">
                 <strong>{operationItems.length} productos</strong>
-                <span>Edita cantidades antes de registrar</span>
               </div>
               <div className="inventory-operation-items-head" aria-hidden="true">
                 <span>Producto</span>
@@ -411,6 +414,12 @@ export function InventoryTransfersWindow({ onClose, onRequestLogin }) {
         onOpen={openMovement}
         onCloseTicket={() => setSelectedTicket(null)}
       />}
+      {suggestedOpen && (
+        <SuggestedTransfersDialog
+          onClose={() => setSuggestedOpen(false)}
+          onDone={(text) => { setSuggestedOpen(false); setNotice(text); loadData(); }}
+        />
+      )}
       <footer className="provider-window-footer inventory-transfer-footer">
         <span>{movements.length} movimiento(s) cargado(s)</span>
         <div className="provider-navigation-actions"><button type="button" className="exit-action" onClick={onClose}><X size={14} /> Salir</button></div>
@@ -433,7 +442,6 @@ function InventoryHistoryWindow({ loading, movements, selectedTicket, onClose, o
           <div>
             <span>CONSULTA</span>
             <h2>Historial de operaciones</h2>
-            <p>Revisa los movimientos registrados y abre el detalle de cada ticket.</p>
           </div>
           <span className="inventory-history-count">{movements.length} movimientos</span>
         </div>

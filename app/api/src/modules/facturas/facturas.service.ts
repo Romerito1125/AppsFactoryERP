@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -16,6 +17,12 @@ import {
   SaleMode,
 } from '@prisma/client';
 import { InvoiceStatus } from '../../common/enums/invoice-status.enum';
+import { effectivePermissionCodes } from '../../common/permissions/permission.constants';
+import {
+  calculateLineTotals,
+  netFromGross,
+  roundMoney,
+} from '../../common/utils/commercial-pricing.util';
 import { convertProductQuantityToBase } from '../../common/utils/product-quantity.util';
 import {
   buildPaginatedResponse,
@@ -26,7 +33,9 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { ProductResolverService } from '../../shared/products/product-resolver.service';
+import { postBankMovement } from '../../common/utils/bank-ledger.util';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
+import { CreateInvoicePaymentDto } from './dto/create-invoice-payment.dto';
 import { ListInvoicesQueryDto } from './dto/list-invoices-query.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { resolveOfferPricing } from '../ofertas/offer-pricing.util';
@@ -41,6 +50,16 @@ type ResolvedInvoiceProduct = Product & {
     packagesPerBox: number | null;
   } | null;
 };
+
+function hasExplicitUnitPrice(item: {
+  unitPrice?: number | null;
+  unitPriceGross?: number | null;
+}) {
+  return (
+    (item.unitPrice !== undefined && item.unitPrice !== null) ||
+    (item.unitPriceGross !== undefined && item.unitPriceGross !== null)
+  );
+}
 
 export type InvoiceDeliveryInput = {
   address: string;
@@ -120,6 +139,11 @@ export class FacturasService {
     authUser: AuthUser,
     delivery?: InvoiceDeliveryInput,
   ) {
+    const hasPriceOverride = createInvoiceDto.items.some(hasExplicitUnitPrice);
+    if (hasPriceOverride) {
+      await this.ensurePriceOverrideAllowed(authUser);
+    }
+
     const invoice = await this.prisma.$transaction(async (tx) => {
       const source = createInvoiceDto.source ?? InvoiceSource.ADMIN;
       const saleMode = createInvoiceDto.saleMode ?? SaleMode.CONTADO;
@@ -192,10 +216,21 @@ export class FacturasService {
         quantity: number;
         warehouseId?: number;
         unitPrice?: number;
+        unitPriceGross?: number;
         product: ResolvedInvoiceProduct;
       }> = [];
 
       for (const item of createInvoiceDto.items) {
+        if (
+          item.unitPrice !== undefined &&
+          item.unitPrice !== null &&
+          item.unitPriceGross !== undefined &&
+          item.unitPriceGross !== null
+        ) {
+          throw new BadRequestException(
+            'Cada línea puede recibir unitPrice o unitPriceGross, pero no ambos',
+          );
+        }
         const product = (await this.productResolver.resolve(item, tx, {
           prices: { where: { isActive: true } },
           costs: {
@@ -214,6 +249,7 @@ export class FacturasService {
           quantity: item.quantity,
           warehouseId: item.warehouseId ?? requestedWarehouseId,
           unitPrice: item.unitPrice,
+          unitPriceGross: item.unitPriceGross,
           product,
         });
       }
@@ -254,14 +290,8 @@ export class FacturasService {
             'La bodega seleccionada no existe o está inactiva',
           );
         }
-        if (
-          actorWarehouseId !== undefined &&
-          item.warehouseId !== actorWarehouseId
-        ) {
-          throw new BadRequestException(
-            'El usuario operativo solo puede facturar desde su bodega asignada',
-          );
-        }
+        // La bodega por línea (#45/#46) permite surtir desde otra bodega: el encabezado sigue
+        // atado a la bodega del usuario y el stock se valida y descuenta en la bodega de la línea.
       }
 
       const groupedItems = this.groupItems(resolvedItems);
@@ -351,8 +381,10 @@ export class FacturasService {
         }
 
         const catalogUnitPrice = Number(productPrice.price);
+        const taxRate = Number(product.taxRate);
+        const hasManualPrice = hasExplicitUnitPrice(item);
         const offerPricing =
-          item.unitPrice === undefined
+          !hasManualPrice
             ? resolveOfferPricing(catalogUnitPrice, activeOffers, {
                 clientId: client.id,
                 productId: product.id,
@@ -362,7 +394,10 @@ export class FacturasService {
               })
             : {
                 discountAmount: 0,
-                effectiveUnitPrice: item.unitPrice,
+                effectiveUnitPrice:
+                  item.unitPriceGross !== undefined && item.unitPriceGross !== null
+                    ? netFromGross(item.unitPriceGross, taxRate)
+                    : item.unitPrice,
               };
         const unitPrice = Number(
           offerPricing.effectiveUnitPrice ?? catalogUnitPrice,
@@ -372,7 +407,6 @@ export class FacturasService {
             `El precio acordado para ${product.name} no es vÃ¡lido`,
           );
         }
-        const taxRate = Number(product.taxRate);
         const grossSubtotal = this.roundMoney(catalogUnitPrice * item.quantity);
         const netSubtotal = this.roundMoney(unitPrice * item.quantity);
         const currentCost = product.costs[0];
@@ -404,7 +438,9 @@ export class FacturasService {
           taxRate,
           grossSubtotal,
           netSubtotal,
-          offerDiscountAmount: this.roundMoney(grossSubtotal - netSubtotal),
+          offerDiscountAmount: hasManualPrice
+            ? 0
+            : this.roundMoney(grossSubtotal - netSubtotal),
           unitCost,
         };
       });
@@ -446,8 +482,10 @@ export class FacturasService {
         const subtotal = this.roundMoney(
           item.netSubtotal - referralDiscountAmounts[index],
         );
-        const taxAmount = this.roundMoney(subtotal * (item.taxRate / 100));
-        const total = this.roundMoney(subtotal + taxAmount);
+        const lineTotals = calculateLineTotals({
+          netSubtotal: subtotal,
+          taxRate: item.taxRate,
+        });
         const profitAmount =
           item.unitCost === null
             ? 0
@@ -455,9 +493,9 @@ export class FacturasService {
 
         return {
           ...invoiceItem,
-          subtotal,
-          taxAmount,
-          total,
+          subtotal: lineTotals.subtotal,
+          taxAmount: lineTotals.taxAmount,
+          total: lineTotals.total,
           discountAmount,
           profitAmount,
         };
@@ -471,8 +509,22 @@ export class FacturasService {
       const total = this.roundMoney(
         invoiceItems.reduce((sum, item) => sum + item.total, 0),
       );
+      // Lo pagado en el momento (cuentas, efectivo, saldo a favor, bonus) no es deuda:
+      // solo el resto queda a crédito.
+      const upfrontPaid = this.roundMoney(
+        (createInvoiceDto.payments ?? []).reduce(
+          (sum, payment) => sum + Number(payment.amount),
+          0,
+        ),
+      );
+      const creditAmount = this.roundMoney(total - upfrontPaid);
       if (saleMode === SaleMode.CREDITO) {
-        await assertClientCreditCapacity(tx, client.id, total);
+        if (creditAmount <= 0) {
+          throw new BadRequestException(
+            'Los pagos cubren todo el total: registra la venta de contado',
+          );
+        }
+        await assertClientCreditCapacity(tx, client.id, creditAmount);
       }
       const baseProfit = this.roundMoney(
         Math.max(
@@ -511,24 +563,41 @@ export class FacturasService {
         );
       }
 
-      let creatorId = authUser.sub;
-      let creatorRole = authUser.role as PrismaRole;
-      let creatorUsername = authUser.username;
-
-      if (createInvoiceDto.createdByUserId) {
-        const creatorUser = await tx.user.findUnique({
-          where: { id: createInvoiceDto.createdByUserId, isActive: true },
+      // Cajero = quien registra y cobra (usuario autenticado). Vendedor = quien vendió: se
+      // elige aparte (sellerUserId; createdByUserId se acepta por compatibilidad con la app móvil).
+      const creatorId = authUser.sub;
+      const creatorRole = authUser.role as PrismaRole;
+      const creatorUsername = authUser.username;
+      let sellerUserId: number | null = authUser.sub;
+      let sellerUsername: string | null = authUser.username;
+      const requestedSellerId =
+        createInvoiceDto.sellerUserId ?? createInvoiceDto.createdByUserId;
+      if (requestedSellerId && requestedSellerId !== authUser.sub) {
+        const sellerUser = await tx.user.findUnique({
+          where: { id: requestedSellerId, isActive: true },
         });
-        if (creatorUser) {
-          creatorId = creatorUser.id;
-          creatorRole = creatorUser.role;
-          creatorUsername = creatorUser.username;
+        if (sellerUser) {
+          sellerUserId = sellerUser.id;
+          sellerUsername = sellerUser.username;
+        }
+      }
+
+      // Una preventa/cotización solo se convierte en factura una vez.
+      if (createInvoiceDto.quoteId) {
+        const quote = await tx.quote.findUnique({ where: { id: createInvoiceDto.quoteId } });
+        if (!quote) throw new NotFoundException('La preventa o cotización no existe');
+        if (quote.status === 'CONVERTIDA') {
+          throw new BadRequestException('La preventa o cotización ya fue convertida en factura');
+        }
+        if (quote.clientId !== client.id) {
+          throw new BadRequestException('La factura debe ser del mismo cliente de la preventa');
         }
       }
 
       const invoice = await tx.invoice.create({
         data: {
           consecutive: this.generateConsecutive(),
+          quoteId: createInvoiceDto.quoteId,
           validationStatus:
             authUser.role === PrismaRole.VENDEDOR ? 'PENDIENTE' : 'VALIDADA',
           clientId: client.id,
@@ -536,6 +605,8 @@ export class FacturasService {
           createdByUserId: creatorId,
           createdByRole: creatorRole,
           createdByUsername: creatorUsername,
+          sellerUserId,
+          sellerUsername,
           source,
           saleMode,
           zone: createInvoiceDto.zone?.trim() || null,
@@ -570,12 +641,42 @@ export class FacturasService {
             invoiceId: invoice.id,
             clientId: client.id,
             dueDate: creditDueDate,
-            totalAmount: invoice.total,
+            totalAmount: creditAmount,
             paidAmount: 0,
-            balance: invoice.total,
+            balance: creditAmount,
             status: CreditStatus.PENDIENTE,
           },
         });
+      }
+
+      if (createInvoiceDto.quoteId) {
+        await tx.quote.update({
+          where: { id: createInvoiceDto.quoteId },
+          data: { status: 'CONVERTIDA' },
+        });
+      }
+
+      if (createInvoiceDto.paymentSupportData || createInvoiceDto.paymentNotes?.trim()) {
+        await tx.invoicePaymentSupport.create({
+          data: {
+            invoiceId: invoice.id,
+            notes: createInvoiceDto.paymentNotes?.trim() || undefined,
+            supportName: createInvoiceDto.paymentSupportData
+              ? (createInvoiceDto.paymentSupportName ?? 'soporte')
+              : undefined,
+            supportMimeType: createInvoiceDto.paymentSupportMimeType,
+            supportData: createInvoiceDto.paymentSupportData,
+          },
+        });
+      }
+
+      if (createInvoiceDto.payments?.length) {
+        await this.registerInvoicePayments(
+          tx,
+          invoice,
+          saleMode,
+          createInvoiceDto.payments,
+        );
       }
 
       await this.consumeReferralBenefits(
@@ -603,6 +704,7 @@ export class FacturasService {
         source: invoice.source,
         warehouseId: invoice.warehouseId,
         total: Number(invoice.total),
+        priceOverrides: createInvoiceDto.items.filter(hasExplicitUnitPrice).length,
       },
     });
     return invoice;
@@ -628,6 +730,33 @@ export class FacturasService {
       data: updateInvoiceDto,
       include: this.invoiceInclude,
     });
+  }
+
+  async paymentSupport(invoiceId: number) {
+    const support = await this.prisma.invoicePaymentSupport.findUnique({
+      where: { invoiceId },
+    });
+    if (!support?.supportData) {
+      throw new NotFoundException('La factura no tiene soporte de pago');
+    }
+    return support;
+  }
+
+  /** Saldo de bonus / miembro fiel disponible para pagar una venta. */
+  async bonusBalance(clientId: number) {
+    const benefits = await this.prisma.referralBenefit.findMany({
+      where: {
+        beneficiaryClientId: clientId,
+        status: ReferralBenefitStatus.DISPONIBLE,
+        remainingAmount: { gt: 0 },
+      },
+      select: { remainingAmount: true },
+    });
+    return {
+      available: this.roundMoney(
+        benefits.reduce((sum, benefit) => sum + Number(benefit.remainingAmount), 0),
+      ),
+    };
   }
 
   async validateInvoice(id: number, actor: AuthUser) {
@@ -665,9 +794,22 @@ export class FacturasService {
         throw new BadRequestException('La factura ya está anulada');
       }
 
+      // Lo ya devuelto por devoluciones parciales no se repone otra vez al anular.
+      const returnedRows = await tx.saleReturnItem.groupBy({
+        by: ['invoiceItemId'],
+        where: { saleReturn: { invoiceId: id } },
+        _sum: { quantity: true },
+      });
+      const returnedByItem = new Map(
+        returnedRows.map((row) => [
+          row.invoiceItemId,
+          Number(row._sum.quantity ?? 0),
+        ]),
+      );
       const invoiceItems = await tx.invoiceItem.findMany({
         where: { invoiceId: id },
         select: {
+          id: true,
           productId: true,
           warehouseId: true,
           quantity: true,
@@ -685,8 +827,13 @@ export class FacturasService {
 
       for (const item of invoiceItems) {
         if (!item.warehouseId || !item.productPrice) continue;
+        const pendingQuantity = Math.max(
+          0,
+          Number(item.quantity) - (returnedByItem.get(item.id) ?? 0),
+        );
+        if (pendingQuantity <= 0) continue;
         const stockUnits = this.convertPriceQuantity(
-          Number(item.quantity) * Number(item.productPrice.quantity),
+          pendingQuantity * Number(item.productPrice.quantity),
           item.productPrice.unit,
           item.product,
           item.product.unit,
@@ -778,11 +925,108 @@ export class FacturasService {
     },
     generatedReferralBenefits: true,
     delivery: true,
+    // Medios de pago y crédito: el ticket los muestra al imprimir y reimprimir.
+    bankMovement: {
+      select: {
+        amount: true,
+        description: true,
+        bankAccount: { select: { name: true } },
+      },
+    },
+    credit: { select: { totalAmount: true, dueDate: true } },
     benefitRedemptions: {
       include: { benefit: true },
       orderBy: { id: 'asc' },
     },
   } as const;
+
+  /**
+   * Pagos mixtos de una venta de contado. Corre dentro de la misma transacción
+   * que la factura: si un pago falla (saldo, cuenta inactiva, suma distinta),
+   * no queda ni factura ni movimiento bancario.
+   */
+  private async registerInvoicePayments(
+    tx: Prisma.TransactionClient,
+    invoice: { id: number; clientId: number; consecutive: string; total: Prisma.Decimal },
+    saleMode: SaleMode,
+    payments: CreateInvoicePaymentDto[],
+  ) {
+    const total = this.roundMoney(Number(invoice.total));
+    const paid = this.roundMoney(
+      payments.reduce((sum, payment) => sum + Number(payment.amount), 0),
+    );
+    // Contado: los pagos cubren todo. Crédito: lo pagado es un abono inicial y el
+    // resto queda como deuda (la validación del cupo ya se hizo sobre ese resto).
+    if (saleMode === SaleMode.CONTADO && Math.abs(paid - total) > 0.009) {
+      throw new BadRequestException(
+        `La suma de los pagos (${paid.toFixed(2)}) debe ser igual al total de la factura (${total.toFixed(2)})`,
+      );
+    }
+    if (paid > total + 0.009) {
+      throw new BadRequestException('Los pagos superan el total de la factura');
+    }
+    for (const payment of payments) {
+      const hasAccount = Boolean(payment.bankAccountId);
+      const hasAdvance = Boolean(payment.advanceId);
+      const hasBonus = Boolean(payment.bonus);
+      if (Number(hasAccount) + Number(hasAdvance) + Number(hasBonus) !== 1) {
+        throw new BadRequestException(
+          'Cada pago debe indicar una sola fuente: cuenta, saldo a favor o bonus',
+        );
+      }
+      if (hasBonus) {
+        const benefits = await tx.referralBenefit.findMany({
+          where: {
+            beneficiaryClientId: invoice.clientId,
+            status: ReferralBenefitStatus.DISPONIBLE,
+            remainingAmount: { gt: 0 },
+          },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        });
+        await this.consumeReferralBenefits(
+          tx,
+          invoice.id,
+          this.roundMoney(Number(payment.amount)),
+          benefits,
+        );
+        continue;
+      }
+      const note = payment.reference?.trim();
+      if (hasAccount) {
+        await postBankMovement(tx, {
+          bankAccountId: payment.bankAccountId!,
+          type: 'INGRESO',
+          amount: Number(payment.amount),
+          invoiceId: invoice.id,
+          description: `Recaudo venta ${invoice.consecutive}${note ? ` · ${note}` : ''}`,
+        });
+        continue;
+      }
+      const advance = await tx.clientAdvance.findUnique({
+        where: { id: payment.advanceId! },
+      });
+      if (!advance || advance.clientId !== invoice.clientId) {
+        throw new BadRequestException(
+          'El anticipo no existe o pertenece a otro cliente',
+        );
+      }
+      const balance = Number(advance.balance);
+      if (advance.status !== 'DISPONIBLE' || Number(payment.amount) > balance + 0.009) {
+        throw new BadRequestException(
+          `El anticipo ${advance.consecutive} no tiene saldo suficiente (disponible ${balance.toFixed(2)})`,
+        );
+      }
+      const nextBalance = this.roundMoney(balance - Number(payment.amount));
+      await tx.clientAdvance.update({
+        where: { id: advance.id },
+        data: {
+          balance: nextBalance,
+          appliedAmount: { increment: Number(payment.amount) },
+          status: nextBalance <= 0.009 ? 'APLICADO' : 'DISPONIBLE',
+        },
+      });
+    }
+  }
 
   private async assignStoreWarehouses(
     tx: Prisma.TransactionClient,
@@ -986,6 +1230,7 @@ export class FacturasService {
       quantity: number;
       warehouseId?: number;
       unitPrice?: number;
+      unitPriceGross?: number;
       product: ResolvedInvoiceProduct;
     }>,
   ) {
@@ -998,13 +1243,14 @@ export class FacturasService {
         quantity: number;
         warehouseId?: number;
         unitPrice?: number;
+        unitPriceGross?: number;
         product: ResolvedInvoiceProduct;
       }
     >();
 
     // Agrupa líneas repetidas solo cuando usan el mismo producto y precio.
     for (const item of items) {
-      const key = `${item.productId}:${item.priceLevel ?? item.productPriceId ?? 'default'}:${item.warehouseId ?? 'none'}:${item.unitPrice ?? 'catalog'}`;
+      const key = `${item.productId}:${item.priceLevel ?? item.productPriceId ?? 'default'}:${item.warehouseId ?? 'none'}:${item.unitPriceGross ?? item.unitPrice ?? 'catalog'}`;
       const current = groupedItems.get(key);
 
       groupedItems.set(key, {
@@ -1014,6 +1260,7 @@ export class FacturasService {
         quantity: (current?.quantity ?? 0) + item.quantity,
         warehouseId: item.warehouseId,
         unitPrice: item.unitPrice,
+        unitPriceGross: item.unitPriceGross,
         product: item.product,
       });
     }
@@ -1137,7 +1384,24 @@ export class FacturasService {
   }
 
   private roundMoney(value: number) {
-    return Math.round((value + Number.EPSILON) * 100) / 100;
+    return roundMoney(value);
+  }
+
+  private async ensurePriceOverrideAllowed(authUser: AuthUser) {
+    if (authUser.role === PrismaRole.ADMIN) return;
+
+    const overrides = await this.prisma.userPermission.findMany({
+      where: { userId: authUser.sub },
+      select: { code: true, isAllowed: true },
+    });
+    const allowed = new Set(
+      effectivePermissionCodes(authUser.role, overrides),
+    );
+    if (!allowed.has('SALES_PRICE_OVERRIDE')) {
+      throw new ForbiddenException(
+        'No tienes permiso para editar el precio unitario de una venta',
+      );
+    }
   }
 
   private generateConsecutive() {

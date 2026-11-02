@@ -9,6 +9,9 @@ import {
   resolvePagination,
 } from '../../common/utils/pagination.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { nextConsecutive } from '../../common/utils/bank-ledger.util';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { assertClientCreditCapacity } from './credit-limit.util';
 import {
   CreateCreditPaymentDto,
@@ -19,7 +22,10 @@ import { ListCreditsQueryDto } from './dto/list-credits-query.dto';
 
 @Injectable()
 export class CreditosService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async createDirect(dto: CreateInvoiceCreditDto) {
     if (!dto.clientId) {
@@ -129,8 +135,29 @@ export class CreditosService {
     });
   }
 
-  pay(id: number, dto: CreateCreditPaymentDto) {
-    return this.prisma.$transaction(async (tx) => {
+  async paymentSupport(paymentId: number) {
+    const payment = await this.prisma.creditPayment.findUnique({
+      where: { id: paymentId },
+      select: {
+        id: true,
+        receiptNumber: true,
+        supportName: true,
+        supportMimeType: true,
+        supportData: true,
+      },
+    });
+    if (!payment?.supportData) {
+      throw new NotFoundException('El abono no tiene soporte adjunto');
+    }
+    return payment;
+  }
+
+  async pay(id: number, dto: CreateCreditPaymentDto, actor?: AuthUser) {
+    let createdReceipt = '';
+    if (dto.supportData && !/^data:(image\/|application\/pdf)/i.test(dto.supportData)) {
+      throw new BadRequestException('El soporte debe ser una imagen o un PDF');
+    }
+    const result = await this.prisma.$transaction(async (tx) => {
       const credit = await tx.invoiceCredit.findUnique({ where: { id } });
       if (!credit) throw new NotFoundException('Crédito no encontrado');
       const balance = Number(credit.balance);
@@ -166,14 +193,22 @@ export class CreditosService {
         });
         bankMovementId = movement.id;
       }
+      const receiptNumber = nextConsecutive('RC');
       await tx.creditPayment.create({
         data: {
           invoiceCreditId: id,
           amount: dto.amount,
           notes: dto.notes,
           bankMovementId,
+          receiptNumber,
+          reference: dto.reference?.trim() || undefined,
+          supportName: dto.supportData ? dto.supportName : undefined,
+          supportMimeType: dto.supportData ? dto.supportMimeType : undefined,
+          supportData: dto.supportData,
+          createdByUserId: actor?.sub,
         },
       });
+      createdReceipt = receiptNumber;
       const paidAmount = Number(credit.paidAmount) + dto.amount;
       const nextBalance = balance - dto.amount;
       const finalBalance = nextBalance <= 0.000001 ? 0 : nextBalance;
@@ -187,6 +222,17 @@ export class CreditosService {
         include: this.include,
       });
     });
+    await this.auditLogService.log({
+      actor,
+      module: 'CREDITOS',
+      action: 'PAYMENT',
+      entityType: 'InvoiceCredit',
+      entityId: id,
+      entityLabel: createdReceipt,
+      description: `Registro el abono ${createdReceipt} por ${dto.amount} al crédito ${id}`,
+      metadata: { receiptNumber: createdReceipt, reference: dto.reference ?? null },
+    });
+    return result;
   }
 
   async updateStatus(id: number, dto: UpdateCreditStatusDto) {
@@ -201,7 +247,11 @@ export class CreditosService {
   private readonly include = {
     invoice: { include: { client: true } },
     client: true,
-    payments: { include: { bankMovement: true }, orderBy: { id: 'desc' } },
+    payments: {
+      include: { bankMovement: true },
+      omit: { supportData: true },
+      orderBy: { id: 'desc' },
+    },
   } as const;
   private withDueStatus(credit) {
     return Number(credit.balance) > 0 && credit.dueDate < new Date()

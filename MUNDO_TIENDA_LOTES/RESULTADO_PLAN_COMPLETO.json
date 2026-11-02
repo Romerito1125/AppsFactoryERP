@@ -1,0 +1,635 @@
+{
+  "at": "2026-11-02T17:05:37.281Z",
+  "results": [
+    {
+      "lote": "PERM",
+      "name": "cajero GET /clientes",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /clientes",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /clientes",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /clientes",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "cajero GET /proveedores",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /proveedores",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /proveedores",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /proveedores",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "cajero GET /productos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /productos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /productos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /productos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "cajero GET /compras",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /compras",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /compras",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /compras",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "cajero GET /cuentas-bancarias",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /cuentas-bancarias",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /cuentas-bancarias",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /cuentas-bancarias",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "cajero GET /movimientos-bancarios",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /movimientos-bancarios",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /movimientos-bancarios",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /movimientos-bancarios",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "cajero GET /devoluciones",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /devoluciones",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /devoluciones",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /devoluciones",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "cajero GET /anticipos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /anticipos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /anticipos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /anticipos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "cajero GET /retenciones",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /retenciones",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /retenciones",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /retenciones",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "cajero GET /usuarios",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /usuarios",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /usuarios",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /usuarios",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "cajero GET /auditoria",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /auditoria",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /auditoria",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /auditoria",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "cajero GET /inventario/traslados/sugeridos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "vendedor GET /inventario/traslados/sugeridos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "bodegaNorte GET /inventario/traslados/sugeridos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "contador GET /inventario/traslados/sugeridos",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /cotizaciones → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /clientes → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /facturas → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /compras → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /cuentas-bancarias → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /movimientos-bancarios → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /anticipos → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /devoluciones → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /inventario → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /proveedores → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /borradores → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /notificaciones → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /domicilios → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token /creditos → 401",
+      "ok": true
+    },
+    {
+      "lote": "PERM",
+      "name": "sin token → 401",
+      "ok": true
+    },
+    {
+      "lote": "01",
+      "name": "IVA 0% x1: total = base + impuestos y tarifa correcta",
+      "ok": true
+    },
+    {
+      "lote": "01",
+      "name": "IVA 0% x3: total = base + impuestos y tarifa correcta",
+      "ok": true
+    },
+    {
+      "lote": "01",
+      "name": "IVA 0% x10: total = base + impuestos y tarifa correcta",
+      "ok": true
+    },
+    {
+      "lote": "01",
+      "name": "IVA 5% x1: total = base + impuestos y tarifa correcta",
+      "ok": true
+    },
+    {
+      "lote": "01",
+      "name": "IVA 5% x3: total = base + impuestos y tarifa correcta",
+      "ok": true
+    },
+    {
+      "lote": "01",
+      "name": "IVA 5% x10: total = base + impuestos y tarifa correcta",
+      "ok": true
+    },
+    {
+      "lote": "01",
+      "name": "IVA 19% x1: total = base + impuestos y tarifa correcta",
+      "ok": true
+    },
+    {
+      "lote": "01",
+      "name": "IVA 19% x3: total = base + impuestos y tarifa correcta",
+      "ok": true
+    },
+    {
+      "lote": "01",
+      "name": "IVA 19% x10: total = base + impuestos y tarifa correcta",
+      "ok": true
+    },
+    {
+      "lote": "01",
+      "name": "precio con IVA incluido en producto = base × (1+IVA)",
+      "ok": true
+    },
+    {
+      "lote": "02",
+      "name": "utilidades del producto (4 precios con margen)",
+      "ok": true
+    },
+    {
+      "lote": "02",
+      "name": "precio 0 es rechazado",
+      "ok": true
+    },
+    {
+      "lote": "02",
+      "name": "editar precio persiste",
+      "ok": true
+    },
+    {
+      "lote": "02",
+      "name": "inventario por bodega suma el total del producto",
+      "ok": true
+    },
+    {
+      "lote": "03",
+      "name": "venta de contado paga con cuenta: sube el saldo exactamente",
+      "ok": true
+    },
+    {
+      "lote": "03",
+      "name": "contado con pago mixto en dos cuentas",
+      "ok": true
+    },
+    {
+      "lote": "03",
+      "name": "contado con pago insuficiente es rechazado",
+      "ok": true
+    },
+    {
+      "lote": "03",
+      "name": "cliente sin crédito no puede vender a crédito",
+      "ok": true
+    },
+    {
+      "lote": "03",
+      "name": "crédito sobre el tope del cliente es rechazado",
+      "ok": true
+    },
+    {
+      "lote": "03",
+      "name": "stock insuficiente es rechazado",
+      "ok": true
+    },
+    {
+      "lote": "04",
+      "name": "venta a crédito crea la cuenta por cobrar",
+      "ok": true
+    },
+    {
+      "lote": "04",
+      "name": "cobro parcial baja el saldo y sube la cuenta",
+      "ok": true
+    },
+    {
+      "lote": "04",
+      "name": "sobrepago de cartera es rechazado",
+      "ok": true
+    },
+    {
+      "lote": "04",
+      "name": "número de documento repetido es rechazado",
+      "ok": true
+    },
+    {
+      "lote": "04",
+      "name": "anticipo recibido sube la cuenta y queda disponible",
+      "ok": true
+    },
+    {
+      "lote": "04",
+      "name": "anticipo aplicado a venta de contado no mueve la cuenta",
+      "ok": true
+    },
+    {
+      "lote": "04",
+      "name": "anular recibo revierte el cobro",
+      "ok": true
+    },
+    {
+      "lote": "05",
+      "name": "devolución parcial de contado con reintegro a cuenta",
+      "ok": true
+    },
+    {
+      "lote": "05",
+      "name": "devolución: dinero baja la cuenta, stock sube, no excede lo vendido",
+      "ok": true
+    },
+    {
+      "lote": "05",
+      "name": "devolución a saldo a favor crea anticipo con origen devolución",
+      "ok": true
+    },
+    {
+      "lote": "05",
+      "name": "devolución sobre crédito reduce la deuda (no mueve cuentas)",
+      "ok": true
+    },
+    {
+      "lote": "05",
+      "name": "historial de devoluciones y permiso RETURNS_VIEW (contador solo ve)",
+      "ok": true
+    },
+    {
+      "lote": "06",
+      "name": "cajero factura con vendedor distinto: createdBy≠seller (bodega de encabezado = la del cajero)",
+      "ok": true
+    },
+    {
+      "lote": "06",
+      "name": "borradores: aislamiento por usuario, ADMIN ve todos",
+      "ok": true
+    },
+    {
+      "lote": "07",
+      "name": "contador crea compra con términos y retención del proveedor",
+      "ok": true
+    },
+    {
+      "lote": "07",
+      "name": "proveedor sin retención no retiene",
+      "ok": true
+    },
+    {
+      "lote": "07",
+      "name": "proveedor autorretenedor no retiene",
+      "ok": true
+    },
+    {
+      "lote": "07",
+      "name": "base mínima: compra pequeña no retiene",
+      "ok": true
+    },
+    {
+      "lote": "07",
+      "name": "proveedor sugerido por historial / marca / principal",
+      "ok": true
+    },
+    {
+      "lote": "07",
+      "name": "orden→recibir→pagar: stock sube y pago a crédito parcial",
+      "ok": true
+    },
+    {
+      "lote": "07",
+      "name": "compra: roles sin PURCHASES_EDIT no crean (cajero 403)",
+      "ok": true
+    },
+    {
+      "lote": "07",
+      "name": "borradores de compra (kind COMPRA) CRUD",
+      "ok": true
+    },
+    {
+      "lote": "08",
+      "name": "base editada: ADMIN/CONTADOR con motivo OK",
+      "ok": true
+    },
+    {
+      "lote": "08",
+      "name": "base editada sin motivo → 400",
+      "ok": true
+    },
+    {
+      "lote": "08",
+      "name": "base editada por BODEGA → 403",
+      "ok": true
+    },
+    {
+      "lote": "08",
+      "name": "BODEGA crea compra con base automática (sin permiso especial)",
+      "ok": true
+    },
+    {
+      "lote": "08",
+      "name": "compra anulada no suma stock y sale del reporte de pagos",
+      "ok": true
+    },
+    {
+      "lote": "09",
+      "name": "vendedor crea preventa con líneas en Norte y Sur",
+      "ok": true
+    },
+    {
+      "lote": "09",
+      "name": "aviso por bodega: cada bodeguero recibe solo su línea",
+      "ok": true
+    },
+    {
+      "lote": "09",
+      "name": "BODEGA solo ve las líneas de su bodega en la preventa (y su total)",
+      "ok": true
+    },
+    {
+      "lote": "09",
+      "name": "cotizaciones: BODEGA no puede borrar ni cambiar estado",
+      "ok": true
+    },
+    {
+      "lote": "09",
+      "name": "surtido: solo el bodeguero de la bodega de la línea",
+      "ok": true
+    },
+    {
+      "lote": "09",
+      "name": "cajero factura la preventa: descuenta de cada bodega y queda CONVERTIDA",
+      "ok": true
+    },
+    {
+      "lote": "09",
+      "name": "traslados sugeridos: ADMIN ve ruta Norte→Sur; BODEGA Sur solo su destino",
+      "ok": true
+    },
+    {
+      "lote": "09",
+      "name": "traslado múltiple: cantidad mayor al disponible es rechazada y válida mueve stock",
+      "ok": true
+    },
+    {
+      "lote": "09",
+      "name": "BODEGA no ve finanzas (cuentas/movimientos 403)",
+      "ok": true
+    },
+    {
+      "lote": "10",
+      "name": "4x1000 automático: pago de compra desde cuenta con autoGmf cobra 0,4 % aparte",
+      "ok": true
+    },
+    {
+      "lote": "10",
+      "name": "4x1000: transferencia desde cuenta autoGmf cobra GMF; cuenta sin autoGmf no",
+      "ok": true
+    },
+    {
+      "lote": "10",
+      "name": "datos de reportes: facturas (barrio/marca/proveedor/bodega/vendedor), devoluciones, anticipos, movimientos",
+      "ok": true
+    },
+    {
+      "lote": "10",
+      "name": "cierre del día: ventas contado + cobros + anticipos − devoluciones − pagos − GMF = movimiento de caja",
+      "ok": true
+    },
+    {
+      "lote": "INT",
+      "name": "saldo de cada cuenta QA = saldo inicial + suma de movimientos",
+      "ok": true
+    },
+    {
+      "lote": "INT",
+      "name": "auditoría registra operaciones recientes",
+      "ok": true
+    },
+    {
+      "lote": "INT",
+      "name": "doble envío: dos facturas idénticas simultáneas no sobrevenden stock",
+      "ok": true
+    }
+  ]
+}

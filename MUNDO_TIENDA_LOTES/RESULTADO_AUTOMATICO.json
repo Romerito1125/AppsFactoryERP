@@ -1,0 +1,117 @@
+{
+  "at": "2026-11-02T15:44:14.999Z",
+  "tag": "QA-AUTO-1793634196781",
+  "results": [
+    {
+      "lote": 6,
+      "name": "Factura guarda cajero = autenticado y vendedor elegido",
+      "ok": true
+    },
+    {
+      "lote": 6,
+      "name": "GET /facturas/:id incluye bankMovement y credit para el ticket",
+      "ok": true
+    },
+    {
+      "lote": 6,
+      "name": "Borradores: crear, listar, leer, actualizar y borrar (VENTA)",
+      "ok": true
+    },
+    {
+      "lote": 6,
+      "name": "Borradores: kind inválido es rechazado",
+      "ok": true
+    },
+    {
+      "lote": 7,
+      "name": "Compra con descuentos, flete y retención calcula totales",
+      "ok": true
+    },
+    {
+      "lote": 8,
+      "name": "Base de retención editada exige motivo",
+      "ok": true
+    },
+    {
+      "lote": 8,
+      "name": "Base de retención editada con motivo (ADMIN) se guarda",
+      "ok": true
+    },
+    {
+      "lote": 8,
+      "name": "Base automática sin editar no exige motivo",
+      "ok": true
+    },
+    {
+      "lote": 7,
+      "name": "Actualizar borrador de compra recalcula",
+      "ok": true
+    },
+    {
+      "lote": 7,
+      "name": "Proveedor sugerido responde (historial/marca/principal)",
+      "ok": true
+    },
+    {
+      "lote": 7,
+      "name": "Compra recibida y pagada: aplica 4x1000 automático (L10 #35)",
+      "ok": true
+    },
+    {
+      "lote": 10,
+      "name": "Egreso en cuenta autoGmf genera movimiento GMF aparte",
+      "ok": true
+    },
+    {
+      "lote": 10,
+      "name": "Egreso con saldo justo falla porque incluye GMF",
+      "ok": true
+    },
+    {
+      "lote": 10,
+      "name": "autoGmf se puede apagar por cuenta",
+      "ok": true
+    },
+    {
+      "lote": 9,
+      "name": "Preventa se crea con bodega por línea y tipo PREVENTA",
+      "ok": true
+    },
+    {
+      "lote": 9,
+      "name": "Surtido por línea: ATENDIDO → SURTIDO",
+      "ok": true
+    },
+    {
+      "lote": 9,
+      "name": "Preventa genera aviso a bodega (BODEGA_TAREA)",
+      "ok": true
+    },
+    {
+      "lote": 6,
+      "name": "Facturar preventa con quoteId la marca CONVERTIDA y bloquea doble conversión (#47)",
+      "ok": true
+    },
+    {
+      "lote": 6,
+      "name": "Facturar con quoteId de otro cliente es rechazado",
+      "ok": true
+    },
+    {
+      "lote": 9,
+      "name": "Traslados sugeridos: bodega B bajo mínimo recibe de A con excedente",
+      "ok": true
+    },
+    {
+      "lote": 10,
+      "name": "Datos de reportes: facturas con items/cliente/barrio, devoluciones, anticipos y movimientos",
+      "ok": true
+    },
+    {
+      "lote": 8,
+      "name": "Compras exponen campos para reporte de retenciones",
+      "ok": true
+    }
+  ],
+  "cleanupNotes": []
+}

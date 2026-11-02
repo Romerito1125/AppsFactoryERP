@@ -28,6 +28,11 @@ import { TiendaModule } from './modules/tienda/tienda.module';
 import { ComprasModule } from './modules/compras/compras.module';
 import { AuditLogModule } from './modules/audit-log/audit-log.module';
 import { RetencionesModule } from './modules/retenciones/retenciones.module';
+import { AnticiposModule } from './modules/anticipos/anticipos.module';
+import { DevolucionesModule } from './modules/devoluciones/devoluciones.module';
+import { RecibosModule } from './modules/recibos/recibos.module';
+import { NotasModule } from './modules/notas/notas.module';
+import { BorradoresModule } from './modules/borradores/borradores.module';
 
 @Module({
   imports: [
@@ -58,6 +63,11 @@ import { RetencionesModule } from './modules/retenciones/retenciones.module';
     TiendaModule,
     AuditLogModule,
     RetencionesModule,
+    AnticiposModule,
+    DevolucionesModule,
+    RecibosModule,
+    NotasModule,
+    BorradoresModule,
   ],
   controllers: [AppController],
   providers: [AppService],

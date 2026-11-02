@@ -17,6 +17,8 @@ export class CreateBankAccountDto {
   @IsOptional() @IsString() accountType?: string;
   @IsOptional() @Type(() => Number) @IsNumber() currentBalance?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) gmfRate?: number;
+  // 4x1000 automático: toda salida de esta cuenta genera su cargo por separado.
+  @IsOptional() @IsBoolean() autoGmf?: boolean;
 }
 
 export class UpdateBankAccountDto {
@@ -25,6 +27,7 @@ export class UpdateBankAccountDto {
   @IsOptional() @IsString() accountNumber?: string;
   @IsOptional() @IsString() accountType?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) gmfRate?: number;
+  @IsOptional() @IsBoolean() autoGmf?: boolean;
 }
 
 export class BankAmountDto {

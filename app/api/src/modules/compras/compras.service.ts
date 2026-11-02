@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -18,6 +19,8 @@ import {
   convertProductQuantityToBase,
   convertProductUnitCost,
 } from '../../common/utils/product-quantity.util';
+import { postBankMovement } from '../../common/utils/bank-ledger.util';
+import { purchaseNoteAdjustments } from '../../common/utils/purchase-notes.util';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { NotificacionesService } from '../notificaciones/notificaciones.service';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
@@ -123,23 +126,19 @@ export class ComprasService {
     );
   }
 
-  create(dto: CreatePurchaseOrderDto) {
+  create(dto: CreatePurchaseOrderDto, actor?: AuthUser) {
     return this.prisma.$transaction(async (tx) => {
       await this.ensureActiveProvider(tx, dto.providerId);
       await this.ensureActiveWarehouse(tx, dto.warehouseId);
       const items = await this.buildItems(tx, dto.items);
-      const totals = this.calculateTotals(items);
-      const provider = await tx.provider.findUniqueOrThrow({
-        where: { id: dto.providerId },
-        select: {
-          withholdingType: true,
-          withholdingRate: true,
-          withholdingMinimumBase: true,
-          isSelfWithholding: true,
-          hasIslrWithholding: true,
-        },
-      });
-      const retention = this.calculateRetention(provider, totals);
+      const { subtotal: grossSubtotal } = this.calculateTotals(items);
+      const { totals, retention, terms } = await this.commercialTerms(
+        tx,
+        dto,
+        grossSubtotal,
+        dto.providerId,
+        actor,
+      );
 
       const created = await tx.purchaseOrder.create({
         data: {
@@ -155,6 +154,7 @@ export class ComprasService {
           documentData: dto.documentData || undefined,
           ...totals,
           ...retention,
+          ...terms,
           items: { create: items },
         },
         include: this.detailInclude,
@@ -163,7 +163,7 @@ export class ComprasService {
     });
   }
 
-  updateDraft(id: number, dto: UpdatePurchaseOrderDto) {
+  updateDraft(id: number, dto: UpdatePurchaseOrderDto, actor?: AuthUser) {
     this.ensurePositiveId(id);
     if (Object.keys(dto).length === 0) {
       throw new BadRequestException(
@@ -202,25 +202,43 @@ export class ComprasService {
         items = await this.buildItems(tx, dto.items);
       }
 
-      const totals = items ? this.calculateTotals(items) : undefined;
-      const shouldRecalculateRetention =
+      const termKeys = [
+        'discount1Percent', 'discount2Percent', 'freight', 'retentionBase', 'retentionBaseReason', 'retentionBaseEdited',
+        'retentionRate', 'paymentCondition', 'invoiceDate', 'dueDate', 'operationType', 'purchaseOrderRef',
+      ];
+      const termsChanged = termKeys.some((key) => (dto as Record<string, unknown>)[key] !== undefined);
+      const recompute =
         Boolean(items) ||
+        termsChanged ||
         (dto.providerId !== undefined && dto.providerId !== current.providerId);
-      const retention = shouldRecalculateRetention
-        ? this.calculateRetention(
-            await tx.provider.findUniqueOrThrow({
-              where: { id: providerId },
-              select: {
-                withholdingType: true,
-                withholdingRate: true,
-                withholdingMinimumBase: true,
-                isSelfWithholding: true,
-                hasIslrWithholding: true,
-              },
-            }),
-            totals ?? { subtotal: current.subtotal, total: current.total },
-          )
-        : undefined;
+      let totals: { subtotal: Prisma.Decimal; total: Prisma.Decimal } | undefined;
+      let retention: ReturnType<ComprasService['calculateRetention']> | undefined;
+      let terms: Awaited<ReturnType<ComprasService['commercialTerms']>>['terms'] | undefined;
+      if (recompute) {
+        const gross = items
+          ? this.calculateTotals(items).subtotal
+          : current.items.reduce((sum, item) => sum.plus(item.subtotal), this.zero);
+        const result = await this.commercialTerms(
+          tx,
+          {
+            discount1Percent: Number(current.discount1Percent),
+            discount2Percent: Number(current.discount2Percent),
+            freight: Number(current.freight),
+            paymentCondition: current.paymentCondition,
+            invoiceDate: current.invoiceDate,
+            dueDate: current.dueDate,
+            operationType: current.operationType,
+            purchaseOrderRef: current.purchaseOrderRef,
+            ...(dto as Record<string, unknown>),
+          },
+          gross,
+          providerId,
+          actor,
+        );
+        totals = result.totals;
+        retention = result.retention;
+        terms = result.terms;
+      }
       if (items) {
         await tx.purchaseOrderItem.deleteMany({
           where: { purchaseOrderId: id },
@@ -257,6 +275,7 @@ export class ComprasService {
             dto.documentData === null ? null : dto.documentData ?? undefined,
           ...totals,
           ...retention,
+          ...terms,
           items: items ? { create: items } : undefined,
         },
         include: this.detailInclude,
@@ -284,6 +303,7 @@ export class ComprasService {
       const paidAmount = await this.getPaidAmount(
         tx,
         purchaseOrder.consecutive,
+        purchaseOrder.id,
       );
       const balance = Math.max(
         0,
@@ -309,25 +329,15 @@ export class ComprasService {
           'La cuenta bancaria no existe o está inactiva',
         );
       }
-      if (Number(account.currentBalance) < dto.amount) {
-        throw new BadRequestException('Saldo insuficiente en la cuenta bancaria');
-      }
-      await tx.bankAccount.update({
-        where: { id: dto.bankAccountId },
-        data: { currentBalance: { decrement: dto.amount } },
-      });
-      await tx.bankAccountMovement.create({
-        data: {
-          bankAccountId: dto.bankAccountId,
-          movementType: BankMovementType.EGRESO,
-          amount: dto.amount,
-          baseAmount: dto.amount,
-          totalAmount: dto.amount,
-          description: buildPurchasePaymentDescription(
-            purchaseOrder.consecutive,
-            dto.notes,
-          ),
-        },
+      // Pasa por el helper del banco: valida saldo y aplica el 4x1000 si la cuenta lo tiene automático.
+      await postBankMovement(tx, {
+        bankAccountId: dto.bankAccountId,
+        type: 'EGRESO',
+        amount: dto.amount,
+        description: buildPurchasePaymentDescription(
+          purchaseOrder.consecutive,
+          dto.notes,
+        ),
       });
 
       const saved = await tx.purchaseOrder.findUniqueOrThrow({
@@ -882,6 +892,162 @@ export class ComprasService {
     return payableTotal > 0 || total === 0 ? payableTotal : total;
   }
 
+  /**
+   * Condiciones comerciales de la compra («Total operación»): descuentos, flete, base de
+   * retención editable (solo ADMIN/CONTADOR, con motivo) y retención. El IVA no se toca.
+   */
+  private async commercialTerms(
+    tx: Prisma.TransactionClient,
+    input: {
+      discount1Percent?: number | null;
+      discount2Percent?: number | null;
+      freight?: number | null;
+      retentionBase?: number | null;
+      retentionBaseReason?: string | null;
+      retentionBaseEdited?: boolean | null;
+      retentionRate?: number | null;
+      paymentCondition?: string | null;
+      invoiceDate?: string | Date | null;
+      dueDate?: string | Date | null;
+      operationType?: string | null;
+      purchaseOrderRef?: string | null;
+    },
+    grossSubtotal: Prisma.Decimal,
+    providerId: number,
+    actor?: AuthUser,
+  ) {
+    const d1 = Number(input.discount1Percent ?? 0);
+    const d2 = Number(input.discount2Percent ?? 0);
+    const freight = new Prisma.Decimal(Number(input.freight ?? 0));
+    const afterDiscount = new Prisma.Decimal(grossSubtotal)
+      .mul(100 - d1)
+      .div(100)
+      .mul(100 - d2)
+      .div(100)
+      .toDecimalPlaces(2);
+    const total = afterDiscount.plus(freight).toDecimalPlaces(2);
+
+    const provider = await tx.provider.findUniqueOrThrow({
+      where: { id: providerId },
+      select: {
+        withholdingType: true,
+        withholdingRate: true,
+        withholdingMinimumBase: true,
+        isSelfWithholding: true,
+        hasIslrWithholding: true,
+      },
+    });
+
+    let base = afterDiscount;
+    let baseData: {
+      retentionBase: Prisma.Decimal | null;
+      retentionBaseReason: string | null;
+      retentionBaseEditedBy: string | null;
+    } = { retentionBase: null, retentionBaseReason: null, retentionBaseEditedBy: null };
+    if (input.retentionBase !== undefined && input.retentionBase !== null) {
+      const edited = new Prisma.Decimal(input.retentionBase);
+      if (input.retentionBaseEdited !== true) {
+        // Base calculada por la pantalla (antes de IVA): se conserva sin pedir permiso.
+        base = edited;
+        baseData = {
+          retentionBase: edited,
+          retentionBaseReason: null,
+          retentionBaseEditedBy: null,
+        };
+      } else {
+        if (!actor || ![Role.ADMIN, Role.CONTADOR].includes(actor.role)) {
+          throw new ForbiddenException(
+            'Solo el administrador o el contador pueden corregir la base de la retención',
+          );
+        }
+        const reason = input.retentionBaseReason?.trim() ?? '';
+        if (reason.length < 3) {
+          throw new BadRequestException('Escribe el motivo de la corrección de la base');
+        }
+        base = edited;
+        baseData = {
+          retentionBase: edited,
+          retentionBaseReason: reason,
+          retentionBaseEditedBy: actor.username,
+        };
+      }
+    }
+    const rateOverride =
+      input.retentionRate === undefined || input.retentionRate === null
+        ? undefined
+        : Number(input.retentionRate);
+    const retention = this.calculateRetention(
+      provider,
+      { subtotal: base, total },
+      rateOverride,
+    );
+    return {
+      totals: { subtotal: afterDiscount, total },
+      retention,
+      terms: {
+        discount1Percent: new Prisma.Decimal(d1),
+        discount2Percent: new Prisma.Decimal(d2),
+        freight,
+        ...baseData,
+        paymentCondition: input.paymentCondition === 'CONTADO' ? 'CONTADO' : 'CREDITO',
+        invoiceDate: input.invoiceDate ? new Date(input.invoiceDate) : null,
+        dueDate: input.dueDate ? new Date(input.dueDate) : null,
+        operationType: input.operationType?.trim() || null,
+        purchaseOrderRef: input.purchaseOrderRef?.trim() || null,
+      },
+    };
+  }
+
+  /** Proveedor que se sugiere para un producto: última compra recibida o proveedor principal. */
+  async suggestProvider(productId: number) {
+    this.ensurePositiveId(productId);
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true, brand: true, providerId: true },
+    });
+    if (!product) throw new NotFoundException('Producto no encontrado');
+    const last = await this.prisma.purchaseOrderItem.findFirst({
+      where: {
+        productId,
+        purchaseOrder: { status: { in: [PurchaseOrderStatus.RECIBIDA, PurchaseOrderStatus.ORDENADA] } },
+      },
+      orderBy: { purchaseOrder: { orderedAt: 'desc' } },
+      select: { purchaseOrder: { select: { providerId: true, provider: { select: { name: true } } } } },
+    });
+    if (last) {
+      return {
+        providerId: last.purchaseOrder.providerId,
+        name: last.purchaseOrder.provider.name,
+        source: 'HISTORIAL',
+      };
+    }
+    if (product.brand) {
+      const sameBrand = await this.prisma.purchaseOrderItem.findFirst({
+        where: {
+          product: { brand: product.brand },
+          purchaseOrder: { status: { in: [PurchaseOrderStatus.RECIBIDA, PurchaseOrderStatus.ORDENADA] } },
+        },
+        orderBy: { purchaseOrder: { orderedAt: 'desc' } },
+        select: { purchaseOrder: { select: { providerId: true, provider: { select: { name: true } } } } },
+      });
+      if (sameBrand) {
+        return {
+          providerId: sameBrand.purchaseOrder.providerId,
+          name: sameBrand.purchaseOrder.provider.name,
+          source: 'MARCA',
+        };
+      }
+    }
+    if (product.providerId) {
+      const provider = await this.prisma.provider.findUnique({
+        where: { id: product.providerId },
+        select: { id: true, name: true },
+      });
+      if (provider) return { providerId: provider.id, name: provider.name, source: 'PRINCIPAL' };
+    }
+    return { providerId: null, name: null, source: null };
+  }
+
   private calculateRetention(
     provider: {
       withholdingType: string | null;
@@ -891,15 +1057,21 @@ export class ComprasService {
       hasIslrWithholding: boolean;
     },
     totals: { subtotal: Prisma.Decimal; total: Prisma.Decimal },
+    rateOverride?: number,
   ) {
     const explicitRate = Number(provider.withholdingRate ?? 0);
     const textRate = Number(
       provider.withholdingType?.match(/[0-9]+(?:[.,][0-9]+)?/)?.[0]?.replace(',', '.') ?? 0,
     );
-    const rate = Math.min(100, Math.max(0, explicitRate || textRate));
+    const rate = Math.min(
+      100,
+      Math.max(0, rateOverride ?? (explicitRate || textRate)),
+    );
     const minimumBase = Math.max(0, Number(provider.withholdingMinimumBase ?? 0));
     const applies =
-      !provider.isSelfWithholding &&
+      rateOverride !== undefined
+        ? rate > 0
+        : !provider.isSelfWithholding &&
       (provider.hasIslrWithholding || Boolean(provider.withholdingType)) &&
       rate > 0 &&
       Number(totals.subtotal) >= minimumBase;
@@ -945,10 +1117,25 @@ export class ComprasService {
         totals.set(orderId, (totals.get(orderId) ?? 0) + Number(movement.amount));
       }
     }
+    // Las notas de débito/crédito de proveedor ajustan lo ya cubierto de cada compra.
+    const adjustments = await purchaseNoteAdjustments(
+      this.prisma,
+      purchaseOrders.map((purchaseOrder) => purchaseOrder.id),
+    );
+    for (const [orderId, adjustment] of adjustments) {
+      totals.set(orderId, (totals.get(orderId) ?? 0) + adjustment);
+    }
     return totals;
   }
 
-  private async getPaidAmount(tx: Prisma.TransactionClient, consecutive: string) {
+  private async getPaidAmount(
+    tx: Prisma.TransactionClient,
+    consecutive: string,
+    orderId?: number,
+  ) {
+    const adjustment = orderId
+      ? ((await purchaseNoteAdjustments(tx, [orderId])).get(orderId) ?? 0)
+      : 0;
     const movements = await tx.bankAccountMovement.findMany({
       where: {
         movementType: BankMovementType.EGRESO,
@@ -964,7 +1151,7 @@ export class ComprasService {
           description.startsWith(`Pago compra ${consecutive} - `)
         );
       })
-      .reduce((sum, movement) => sum + Number(movement.amount), 0);
+      .reduce((sum, movement) => sum + Number(movement.amount), adjustment);
   }
 
   private async buildItems(

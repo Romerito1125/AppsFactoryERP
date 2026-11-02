@@ -28,7 +28,6 @@ export function PosPage() {
         <PosPageHeader />
         <div className="new-pos-auth-message">
           <h1>Acceso a Caja POS</h1>
-          <p>Inicia sesión con permisos de ventas para entrar a la operación.</p>
         </div>
         <LoginDialog required onLoggedIn={() => setSession(getStoredSession())} />
       </div>

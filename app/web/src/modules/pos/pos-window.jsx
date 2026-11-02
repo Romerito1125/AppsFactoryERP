@@ -17,6 +17,16 @@ import {
 } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
+import {
+  activeSalePrices,
+  calculateLineTotals,
+  getPriceLevel as getCommercialPriceLevel,
+  grossFromNet,
+  netFromGross,
+  roundMoney,
+  salePriceById,
+  salePriceForLevel,
+} from "@/lib/commercial-pricing";
 import { NotificationBell } from "@/components/desktop/notification-center";
 import { TransientMessage } from "@/components/desktop/transient-message";
 
@@ -127,6 +137,38 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
   }, [onRequestLogin, session]);
 
   useEffect(() => {
+    let cancelled = false;
+    const handleCatalogChanged = async () => {
+      try {
+        const nextProducts = (await apiClient.getAllPages("/productos", {
+          estado: "activos",
+        })).filter(isSaleableProduct);
+        if (cancelled) return;
+        const productsById = new Map(
+          nextProducts.map((product) => [String(product.id), product]),
+        );
+        setProducts(nextProducts);
+        setOfferPrices({});
+        setCart((current) =>
+          current
+            .map((item) => {
+              const product = productsById.get(String(item.productId));
+              return product ? { ...item, product } : null;
+            })
+            .filter(Boolean),
+        );
+      } catch (requestError) {
+        if (!cancelled && isAuthError(requestError)) onRequestLogin?.();
+      }
+    };
+    window.addEventListener("catalog:changed", handleCatalogChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("catalog:changed", handleCatalogChanged);
+    };
+  }, [onRequestLogin]);
+
+  useEffect(() => {
     if (loading || !selectedClientId || !products.length) {
       return undefined;
     }
@@ -218,6 +260,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
 
   const selectedClient = clients.find((client) => String(client.id) === String(selectedClientId));
   const selectedWarehouse = warehouses.find((warehouse) => String(warehouse.id) === String(selectedWarehouseId));
+  const canOverridePrice = canEditSalePrice(session);
   const favoriteSet = useMemo(() => new Set(favoriteIds.map(String)), [favoriteIds]);
   const visibleProducts = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -239,7 +282,13 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
       const price = priceForClient(item.product, nextClient, selectedPriceLevel);
       if (!price) return item;
       const available = stockForWarehouse(item.product, selectedWarehouseId, price);
-      return { ...item, productPriceId: price.id, quantity: Math.min(item.quantity, available) };
+      return {
+        ...item,
+        productPriceId: price.id,
+        quantity: Math.min(item.quantity, available),
+        appliedUnitPrice: null,
+        unitPriceGrossOverride: null,
+      };
     }).filter((item) => item.quantity > 0));
   }
 
@@ -257,6 +306,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
           productPriceId: price.id,
           quantity: Math.min(item.quantity, available),
           appliedUnitPrice: null,
+          unitPriceGrossOverride: null,
         };
       }).filter((item) => item.quantity > 0),
     );
@@ -297,8 +347,8 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
     setSaleConfirmation(null);
     const appliedUnitPrice = offerPrices[String(product.id)];
     setCart((current) => {
-      if (existing) return current.map((item) => item.productId === product.id ? { ...item, quantity: item.quantity + 1, productPriceId: price.id, appliedUnitPrice: Number.isFinite(appliedUnitPrice) ? appliedUnitPrice : null } : item);
-      return [...current, { product, productId: product.id, productPriceId: price.id, appliedUnitPrice: Number.isFinite(appliedUnitPrice) ? appliedUnitPrice : null, quantity: 1 }];
+      if (existing) return current.map((item) => item.productId === product.id ? { ...item, quantity: item.quantity + 1, productPriceId: price.id, appliedUnitPrice: Number.isFinite(appliedUnitPrice) ? appliedUnitPrice : null, unitPriceGrossOverride: null } : item);
+      return [...current, { product, productId: product.id, productPriceId: price.id, appliedUnitPrice: Number.isFinite(appliedUnitPrice) ? appliedUnitPrice : null, unitPriceGrossOverride: null, quantity: 1 }];
     });
     setError("");
   }
@@ -312,6 +362,14 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
       const available = stockForWarehouse(item.product, selectedWarehouseId, price);
       return available > 0 ? [{ ...item, quantity: Math.min(safeQuantity, available) }] : [item];
     }));
+  }
+
+  function updatePrice(productId, nextGrossPrice) {
+    setCart((current) => current.map((item) =>
+      item.productId === productId
+        ? { ...item, unitPriceGrossOverride: nextGrossPrice }
+        : item,
+    ));
   }
 
   async function resolveBarcode(event) {
@@ -378,7 +436,15 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
         saleMode,
         ...(saleMode === "CREDITO" ? { creditDueDate: new Date(`${creditDueDate}T00:00:00`).toISOString() } : {}),
         priceLevel: Number(selectedPriceLevel),
-        items: cart.map((item) => ({ productId: item.productId, productPriceId: item.productPriceId, warehouseId: selectedWarehouseId ? Number(selectedWarehouseId) : undefined, quantity: item.quantity })),
+        items: cart.map((item) => ({
+          productId: item.productId,
+          productPriceId: item.productPriceId,
+          warehouseId: selectedWarehouseId ? Number(selectedWarehouseId) : undefined,
+          quantity: item.quantity,
+          ...(hasAppliedUnitPrice(item.unitPriceGrossOverride)
+            ? { unitPriceGross: Number(item.unitPriceGrossOverride) }
+            : {}),
+        })),
       });
       if (saleMode === "CONTADO") {
         await apiClient.post("/movimientos-bancarios/ingreso", { bankAccountId: Number(selectedAccountId), amount: Number(invoice.total), invoiceId: invoice.id, description: `Recaudo venta ${invoice.consecutive}` });
@@ -392,6 +458,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
       setCart(EMPTY_CART);
       setSaleConfirmation({ consecutive: invoice.consecutive, total: invoice.total, stockStatus: "updating" });
       window.dispatchEvent(new Event("notifications:refresh"));
+      window.dispatchEvent(new Event("sales:invoice-created"));
       void refreshSoldProducts(soldProductIds).then((inventoryUpdated) => {
         setSaleConfirmation((current) => current ? { ...current, stockStatus: inventoryUpdated ? "updated" : "pending" } : current);
       });
@@ -476,6 +543,8 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
             onAddProduct={addProduct}
             onToggleFavorite={toggleFavorite}
             onUpdateQuantity={updateQuantity}
+            onUpdatePrice={updatePrice}
+            canOverridePrice={canOverridePrice}
             onClearCart={() => setCart(EMPTY_CART)}
             onSaleModeChange={setSaleMode}
             onDueDateChange={setCreditDueDate}
@@ -566,6 +635,8 @@ function BillingView({
   onAddProduct,
   onToggleFavorite,
   onUpdateQuantity,
+  onUpdatePrice,
+  canOverridePrice,
   onClearCart,
   onSaleModeChange,
   onDueDateChange,
@@ -607,7 +678,7 @@ function BillingView({
 
       <aside className="new-pos-ticket" aria-label="Ticket de venta">
         <div className="new-pos-ticket-heading"><div><span className="new-pos-eyebrow">TICKET ACTUAL</span><h2><ShoppingCart size={17} /> Venta <span>{cart.length} líneas</span></h2></div>{cart.length > 0 && <button type="button" className="new-pos-icon-button" onClick={onClearCart} title="Limpiar ticket"><Trash2 size={15} /></button>}</div>
-        <div className="new-pos-ticket-lines">{cart.length ? cart.map((item) => <CartLine key={item.productId} item={item} onUpdateQuantity={onUpdateQuantity} selectedPriceLevel={selectedPriceLevel} />) : <EmptyState icon={<ShoppingCart size={26} />} title="Ticket vacío" detail="Agrega productos desde la búsqueda o escanea un código." />}</div>
+        <div className="new-pos-ticket-lines">{cart.length ? cart.map((item) => <CartLine key={item.productId} item={item} onUpdateQuantity={onUpdateQuantity} onUpdatePrice={onUpdatePrice} canOverridePrice={canOverridePrice} selectedPriceLevel={selectedPriceLevel} />) : <EmptyState icon={<ShoppingCart size={26} />} title="Ticket vacío" detail="Agrega productos desde la búsqueda o escanea un código." />}</div>
         <div className="new-pos-ticket-bottom">
           <div className="new-pos-total-lines"><span>Subtotal <b>{formatCurrency(totals.subtotal)}</b></span><span>IVA <b>{formatCurrency(totals.taxes)}</b></span><span className="is-total">Total <strong>{formatCurrency(totals.total)}</strong></span></div>
           <div className="new-pos-payment-heading"><span>Forma de pago</span><div className="new-pos-payment-switch"><button type="button" className={saleMode === "CONTADO" ? "is-active" : ""} onClick={() => onSaleModeChange("CONTADO")}>Contado</button><button type="button" className={saleMode === "CREDITO" ? "is-active" : ""} disabled={!hasCreditCapacity(selectedClient)} onClick={() => onSaleModeChange("CREDITO")}>Crédito</button></div></div>
@@ -741,16 +812,40 @@ function ProductCard({ product, inCart, favorite, favoriteLoading, onAdd, onTogg
   const outOfStock = stock <= 0;
   return <article className={`new-pos-product-card ${outOfStock ? "is-out-of-stock" : ""} ${inCart ? "is-in-cart" : ""}`}>
     <button type="button" className={`new-pos-favorite-button ${favorite ? "is-active" : ""}`} onClick={() => onToggleFavorite(product)} disabled={favoriteLoading} aria-label={favorite ? `Quitar ${product.name} de favoritos` : `Agregar ${product.name} a favoritos`}><Heart size={14} fill={favorite ? "currentColor" : "none"} /></button>
-    <button type="button" className="new-pos-product-main" onClick={() => onAdd(product)} disabled={outOfStock || inCart} aria-disabled={outOfStock || inCart}><div className="new-pos-product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt="" loading="lazy" /> : <PackagePlus size={22} />}</div><div className="new-pos-product-info"><strong title={product.name}>{product.name}</strong><span>{product.brand || "Sin marca"} · {productCode(product)}</span><div><b>{formatCurrency(price?.price)}</b><em>{activePriceCount} precio{activePriceCount === 1 ? "" : "s"} activo{activePriceCount === 1 ? "" : "s"}</em></div><small className={outOfStock ? "is-empty" : ""}>{outOfStock ? "Sin existencias" : `${stock} disponibles`}</small></div></button>
+    <button type="button" className="new-pos-product-main" onClick={() => onAdd(product)} disabled={outOfStock || inCart} aria-disabled={outOfStock || inCart}><div className="new-pos-product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt="" loading="lazy" /> : <PackagePlus size={22} />}</div><div className="new-pos-product-info"><strong title={product.name}>{product.name}</strong><span>{product.brand || "Sin marca"} · {productCode(product)}</span><div><b>{formatCurrency(grossFromNet(price?.price, product.taxRate))}</b><em>IVA incluido · {activePriceCount} precio{activePriceCount === 1 ? "" : "s"}</em></div><small className={outOfStock ? "is-empty" : ""}>{outOfStock ? "Sin existencias" : `${stock} disponibles`}</small></div></button>
     <div className="new-pos-product-actions"><button type="button" className="new-pos-add-button" onClick={() => onAdd(product)} disabled={outOfStock || inCart} aria-disabled={outOfStock || inCart}>{outOfStock ? "Sin existencias" : inCart ? "En factura" : <><Plus size={14} /> Agregar</>}</button></div>
   </article>;
 }
 
-function CartLine({ item, onUpdateQuantity, selectedPriceLevel }) {
+function CartLine({ item, onUpdateQuantity, onUpdatePrice, canOverridePrice, selectedPriceLevel }) {
   const [quantityDraft, setQuantityDraft] = useState(String(item.quantity));
+  const [priceDraft, setPriceDraft] = useState("");
   const catalogPrice = getPriceById(item.product, item.productPriceId) ?? priceForClient(item.product, null, selectedPriceLevel);
-  const price = hasAppliedUnitPrice(item.appliedUnitPrice) ? { ...catalogPrice, price: Number(item.appliedUnitPrice), name: "Oferta aplicada" } : catalogPrice;
-  return <div className="new-pos-cart-line"><div className="new-pos-cart-line-top"><div><strong>{item.product.name}</strong><span>{productCode(item.product)}</span></div><strong>{formatCurrency(Number(price?.price ?? 0) * item.quantity)}</strong></div><div className="new-pos-cart-line-bottom"><label className="new-pos-quantity"><span className="sr-only">Cantidad</span><input type="text" inputMode="decimal" min="0.001" step="any" value={quantityDraft} onChange={(event) => { const rawValue = event.target.value; if (!isQuantityDraft(rawValue)) return; setQuantityDraft(rawValue); const parsedValue = parseQuantityInput(rawValue); if (parsedValue !== null) onUpdateQuantity(item.productId, parsedValue); }} onBlur={() => { const parsedValue = parseQuantityInput(quantityDraft); if (parsedValue === null) setQuantityDraft(String(item.quantity)); else setQuantityDraft(String(parsedValue)); }} aria-label={`Cantidad de ${item.product.name}`} /></label><span className="new-pos-line-price">{priceLabel(getPriceLevel(catalogPrice))}</span></div></div>;
+  const unitPriceNet = cartUnitPriceNet(item, catalogPrice);
+  const lineTotals = calculateLineTotals({ unitPriceNet, quantity: item.quantity, taxRate: item.product.taxRate });
+  const unitPriceGross = grossFromNet(unitPriceNet, item.product.taxRate);
+
+  useEffect(() => {
+    setPriceDraft(String(unitPriceGross));
+  }, [unitPriceGross]);
+
+  function commitPrice() {
+    const parsedValue = parseMoneyInput(priceDraft);
+    if (parsedValue === null) {
+      setPriceDraft(String(unitPriceGross));
+      return;
+    }
+    const catalogGross = grossFromNet(
+      hasAppliedUnitPrice(item.appliedUnitPrice)
+        ? Number(item.appliedUnitPrice)
+        : Number(catalogPrice?.price ?? 0),
+      item.product.taxRate,
+    );
+    onUpdatePrice(item.productId, Math.abs(parsedValue - catalogGross) < 0.005 ? null : parsedValue);
+    setPriceDraft(String(parsedValue));
+  }
+
+  return <div className="new-pos-cart-line"><div className="new-pos-cart-line-top"><div><strong>{item.product.name}</strong><span>{productCode(item.product)}</span></div><strong>{formatCurrency(lineTotals.total)}</strong></div><div className="new-pos-cart-line-bottom"><label className="new-pos-quantity"><span className="sr-only">Cantidad</span><input type="text" inputMode="decimal" min="0.001" step="any" value={quantityDraft} onChange={(event) => { const rawValue = event.target.value; if (!isQuantityDraft(rawValue)) return; setQuantityDraft(rawValue); const parsedValue = parseQuantityInput(rawValue); if (parsedValue !== null) onUpdateQuantity(item.productId, parsedValue); }} onBlur={() => { const parsedValue = parseQuantityInput(quantityDraft); if (parsedValue === null) setQuantityDraft(String(item.quantity)); else setQuantityDraft(String(parsedValue)); }} aria-label={`Cantidad de ${item.product.name}`} /></label>{canOverridePrice ? <label className="new-pos-line-price-editor"><span>Precio final</span><input type="text" inputMode="decimal" value={priceDraft} onChange={(event) => { if (isMoneyDraft(event.target.value)) setPriceDraft(event.target.value); }} onBlur={commitPrice} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitPrice(); } }} aria-label={`Precio final con IVA de ${item.product.name}`} /></label> : <span className="new-pos-line-price">{priceLabel(getPriceLevel(catalogPrice))} · {formatCurrency(unitPriceGross)}</span>}</div></div>;
 }
 
 function PosLoadingState() {
@@ -762,21 +857,15 @@ function EmptyState({ icon, title, detail }) {
 }
 
 function activePrices(product) {
-  const now = Date.now();
-  return (product?.prices ?? []).filter((price) => price.isActive !== false && (!price.startsAt || new Date(price.startsAt).getTime() <= now) && (!price.endsAt || new Date(price.endsAt).getTime() >= now));
+  return activeSalePrices(product);
 }
 
 function priceForClient(product, _client, priceLevel = "0") {
-  const prices = activePrices(product);
-  if (!prices.length) return null;
-  return prices.find((price) => getPriceLevel(price) === Number(priceLevel)) ?? null;
+  return salePriceForLevel(product, priceLevel);
 }
 
 function getPriceLevel(price) {
-  if (price?.priceLevel !== null && price?.priceLevel !== undefined)
-    return Number(price.priceLevel);
-  const match = String(price?.name ?? "").match(/^precio\s*([0-3])$/i);
-  return match ? Number(match[1]) : null;
+  return getCommercialPriceLevel(price);
 }
 
 function priceLabel(level) {
@@ -793,7 +882,7 @@ function parseQuantityInput(value) {
 }
 
 function getPriceById(product, id) {
-  return activePrices(product).find((price) => Number(price.id) === Number(id));
+  return salePriceById(product, id);
 }
 
 function productSearchText(product) {
@@ -838,15 +927,44 @@ function saleStockQuantity(product, price, quantity) {
 function calculateTotals(cart) {
   return cart.reduce((total, item) => {
     const catalogPrice = getPriceById(item.product, item.productPriceId) ?? priceForClient(item.product, null);
-    const price = hasAppliedUnitPrice(item.appliedUnitPrice) ? { ...catalogPrice, price: Number(item.appliedUnitPrice) } : catalogPrice;
-    const subtotal = Number(price?.price ?? 0) * Number(item.quantity ?? 0);
-    const taxes = subtotal * (Number(item.product.taxRate ?? 0) / 100);
-    return { subtotal: total.subtotal + subtotal, taxes: total.taxes + taxes, total: total.total + subtotal + taxes };
+    const line = calculateLineTotals({
+      unitPriceNet: cartUnitPriceNet(item, catalogPrice),
+      quantity: item.quantity,
+      taxRate: item.product.taxRate,
+    });
+    return {
+      subtotal: roundMoney(total.subtotal + line.subtotal),
+      taxes: roundMoney(total.taxes + line.taxAmount),
+      total: roundMoney(total.total + line.total),
+    };
   }, { subtotal: 0, taxes: 0, total: 0 });
+}
+
+function cartUnitPriceNet(item, catalogPrice) {
+  if (hasAppliedUnitPrice(item.unitPriceGrossOverride)) {
+    return netFromGross(Number(item.unitPriceGrossOverride), item.product?.taxRate);
+  }
+  if (hasAppliedUnitPrice(item.appliedUnitPrice)) return Number(item.appliedUnitPrice);
+  return Number(catalogPrice?.price ?? 0);
 }
 
 function hasAppliedUnitPrice(value) {
   return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
+}
+
+function isMoneyDraft(value) {
+  return /^\d*([.,]\d{0,2})?$/.test(String(value ?? ""));
+}
+
+function parseMoneyInput(value) {
+  const normalized = String(value ?? "").trim().replace(",", ".");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed >= 0 ? roundMoney(parsed) : null;
+}
+
+function canEditSalePrice(session) {
+  return session?.role === "ADMIN" || session?.permissions?.includes("SALES_PRICE_OVERRIDE");
 }
 
 function isSaleableProduct(product) {
@@ -906,7 +1024,7 @@ function defaultDueDate() {
 }
 
 function formatCurrency(value) {
-  return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(Number(value ?? 0));
+  return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value ?? 0));
 }
 
 function hasCreditCapacity(client) {

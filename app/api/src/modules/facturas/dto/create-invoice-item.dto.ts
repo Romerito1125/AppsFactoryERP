@@ -47,4 +47,10 @@ export class CreateInvoiceItemDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   unitPrice?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  unitPriceGross?: number;
 }

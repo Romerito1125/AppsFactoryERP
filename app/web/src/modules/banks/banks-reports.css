@@ -1,0 +1,182 @@
+.bank-report-dashboard {
+  --finance-ink: #1f334d;
+  --finance-muted: #718096;
+  --finance-border: #dce5ef;
+  --finance-bg: #eef3f8;
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 20px 22px 30px;
+  overflow: auto;
+  background: var(--finance-bg);
+  color: var(--finance-ink);
+}
+
+.bank-report-dashboard *,
+.bank-report-dashboard *::before,
+.bank-report-dashboard *::after { box-sizing: border-box; }
+
+.bank-report-dashboard .bank-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 18px;
+}
+
+.bank-report-kicker {
+  display: block;
+  margin-bottom: 5px;
+  color: #2b6cb0;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .14em;
+}
+
+.bank-report-dashboard h2 { margin: 0; color: var(--finance-ink); font-size: 24px; line-height: 1.15; }
+.bank-report-dashboard .bank-section-heading p { margin: 6px 0 0; color: var(--finance-muted); font-size: 13px; }
+.bank-report-dashboard .bank-section-heading > svg { flex: 0 0 auto; color: #2b6cb0; }
+
+.bank-report-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.bank-report-cards > div {
+  min-width: 0;
+  padding: 15px 16px;
+  border: 1px solid var(--finance-border);
+  border-top: 3px solid #2b6cb0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 5px 16px rgba(36, 60, 88, .06);
+}
+.bank-report-cards > div:nth-child(2) { border-top-color: #31a56d; }
+.bank-report-cards > div:nth-child(3) { border-top-color: #c45454; }
+.bank-report-cards > div:nth-child(4) { border-top-color: #d28a25; }
+.bank-report-cards span { display: block; color: var(--finance-muted); font-size: 12px; }
+.bank-report-cards strong { display: block; margin-top: 6px; color: var(--finance-ink); font-size: 22px; line-height: 1.1; }
+
+.bank-report-quick-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+.bank-report-quick-filters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 31px;
+  padding: 5px 11px;
+  border: 1px solid #c9d6e5;
+  border-radius: 7px;
+  background: #fff;
+  color: #435a74;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+.bank-report-quick-filters button:hover,
+.bank-report-quick-filters button.is-active { border-color: #2b6cb0; background: #2b6cb0; color: #fff; }
+
+.bank-report-toolbar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--finance-border);
+  border-radius: 10px;
+  background: #fff;
+}
+.bank-report-toolbar > label:not(.bank-report-search) {
+  display: grid;
+  gap: 4px;
+  color: #62748a;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .02em;
+}
+.bank-report-toolbar select,
+.bank-report-toolbar input {
+  min-height: 34px;
+  border: 1px solid #c9d6e5;
+  border-radius: 6px;
+  background: #fff;
+  color: #263c57;
+  font-size: 13px;
+}
+.bank-report-toolbar select { min-width: 150px; padding: 0 9px; }
+.bank-report-toolbar input { padding: 0 9px; }
+.bank-report-toolbar .bank-report-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+.bank-report-search svg { position: absolute; left: 10px; color: #8292a6; }
+.bank-report-search input { width: 100%; padding-left: 30px; }
+.bank-report-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+.bank-report-export.blue { background: #2b6cb0; }
+.bank-report-export.green { background: #2f9d61; }
+.bank-report-export.amber { background: #c98221; }
+.bank-report-export:hover { filter: brightness(.94); }
+.bank-report-note { display: flex; align-items: center; gap: 6px; margin: 10px 2px 14px; color: var(--finance-muted); font-size: 12px; }
+
+.bank-report-chart-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, .85fr); gap: 14px; margin-bottom: 14px; }
+.bank-report-chart-card,
+.bank-report-detail { min-width: 0; border: 1px solid var(--finance-border); border-radius: 10px; background: #fff; box-shadow: 0 5px 16px rgba(36, 60, 88, .05); }
+.bank-report-chart-card { padding: 15px 16px 10px; }
+.bank-report-card-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 5px; }
+.bank-report-card-title strong { color: var(--finance-ink); font-size: 15px; }
+.bank-report-card-title span { color: var(--finance-muted); font-size: 11px; }
+.bank-report-tooltip { min-width: 130px; padding: 8px 10px; border: 1px solid #dce5ef; border-radius: 7px; background: rgba(255,255,255,.98); box-shadow: 0 6px 18px rgba(21, 39, 63, .12); color: var(--finance-ink); font-size: 11px; }
+.bank-report-tooltip strong { display: block; margin-bottom: 5px; }
+.bank-report-tooltip div { display: flex; justify-content: space-between; gap: 12px; color: var(--finance-muted); }
+.bank-report-tooltip b { color: var(--finance-ink); }
+
+.bank-report-detail { overflow: hidden; }
+.bank-report-detail-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 16px 12px; border-bottom: 1px solid var(--finance-border); }
+.bank-report-detail-heading strong { font-size: 15px; }
+.bank-report-table-scroll { width: 100%; overflow-x: auto; }
+.bank-report-dashboard .bank-report-table-scroll .bank-table { min-width: 720px; margin: 0; border: 0; }
+.bank-report-dashboard .bank-report-table-scroll .bank-table thead th { position: sticky; top: 0; z-index: 1; background: #2b6cb0; color: #fff; white-space: nowrap; }
+.bank-report-dashboard .bank-report-table-scroll .bank-table tbody tr:hover { background: #f4f8fc; }
+.bank-report-pagination { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--finance-border); color: var(--finance-muted); font-size: 12px; }
+.bank-report-pagination label { display: inline-flex; align-items: center; gap: 6px; }
+.bank-report-pagination select,
+.bank-report-pagination button { min-height: 30px; padding: 4px 9px; border: 1px solid #c9d6e5; border-radius: 6px; background: #fff; color: #435a74; font-size: 12px; }
+.bank-report-pagination button { cursor: pointer; font-weight: 700; }
+.bank-report-pagination button:disabled { cursor: not-allowed; opacity: .45; }
+
+@media (max-width: 1000px) {
+  .bank-report-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .bank-report-chart-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 680px) {
+  .bank-report-dashboard { padding: 14px 12px 24px; }
+  .bank-report-cards { grid-template-columns: 1fr; }
+  .bank-report-dashboard .bank-section-heading { align-items: flex-start; }
+  .bank-report-dashboard h2 { font-size: 20px; }
+  .bank-report-toolbar > label,
+  .bank-report-toolbar > label select,
+  .bank-report-toolbar > label input { width: 100%; }
+  .bank-report-toolbar .bank-report-search { flex-basis: 100%; }
+  .bank-report-export { flex: 1 1 30%; justify-content: center; }
+  .bank-report-pagination { justify-content: flex-start; }
+}

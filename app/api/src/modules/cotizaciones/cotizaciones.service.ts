@@ -3,7 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InvoiceStatus, QuoteStatus, Role } from '@prisma/client';
+import {
+  InvoiceStatus,
+  NotificationPriority,
+  NotificationType,
+  QuoteStatus,
+  Role,
+} from '@prisma/client';
 import {
   buildPaginatedResponse,
   resolvePagination,
@@ -32,7 +38,15 @@ export class CotizacionesService {
     private readonly prisma: PrismaService,
     private readonly notificacionesService: NotificacionesService,
   ) {}
-  async findAll(query: ListQuotesQueryDto) {
+  /** Un bodeguero solo ve las líneas de preventa de su bodega (y el total de esas líneas). */
+  private scopeForActor<T extends { kind?: string; items?: any[] }>(quote: T, actor?: AuthUser): T {
+    if (actor?.role !== Role.BODEGA || quote.kind !== 'PREVENTA') return quote;
+    const items = (quote.items ?? []).filter((item) => item.warehouseId === actor.warehouseId);
+    const total = items.reduce((sum, item) => sum + Number(item.total ?? 0), 0);
+    return { ...quote, items, total } as T;
+  }
+
+  async findAll(query: ListQuotesQueryDto, actor?: AuthUser) {
     const where = {
       ...this.getStatusWhere(query.status),
       ...this.getSearchWhere(query.q),
@@ -49,31 +63,98 @@ export class CotizacionesService {
       }),
     ]);
 
-    return buildPaginatedResponse(data, total, page, limit);
+    return buildPaginatedResponse(
+      data.map((quote) => this.scopeForActor(quote, actor)),
+      total,
+      page,
+      limit,
+    );
   }
-  async findOne(id: number) {
+  async findOne(id: number, actor?: AuthUser) {
     const quote = await this.prisma.quote.findUnique({
       where: { id },
       include: this.include,
     });
     if (!quote) throw new NotFoundException('Cotización no encontrada');
-    return quote;
+    return this.scopeForActor(quote, actor);
   }
-  create(dto: CreateQuoteDto) {
+  create(dto: CreateQuoteDto, actor?: AuthUser) {
     return this.prisma.$transaction(async (tx) => {
       await this.ensureActiveClient(tx, dto.clientId);
       const items = await this.buildItems(tx, dto.items, dto.priceLevel);
       const totals = this.calculateTotals(items);
-      return tx.quote.create({
+      const kind = dto.kind === 'PREVENTA' ? 'PREVENTA' : 'COTIZACION';
+      const quote = await tx.quote.create({
         data: {
-          consecutive: this.generateConsecutive('COT'),
+          consecutive: this.generateConsecutive(kind === 'PREVENTA' ? 'PRE' : 'COT'),
           clientId: dto.clientId,
           expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : undefined,
+          kind,
+          sellerUserId: actor?.sub,
+          sellerUsername: actor?.username,
           ...totals,
           items: { create: items },
         },
         include: this.include,
       });
+      if (kind === 'PREVENTA') await this.notifyWarehouses(tx, quote);
+      return quote;
+    });
+  }
+
+  /** Cada bodega recibe solo las líneas de la preventa que debe surtir. */
+  private async notifyWarehouses(
+    tx: any,
+    quote: { id: number; consecutive: string; items: Array<{ warehouseId: number | null; quantity: unknown; product?: { name?: string } }> },
+  ) {
+    const byWarehouse = new Map<number, typeof quote.items>();
+    for (const item of quote.items) {
+      if (!item.warehouseId) continue;
+      byWarehouse.set(item.warehouseId, [...(byWarehouse.get(item.warehouseId) ?? []), item]);
+    }
+    for (const [warehouseId, lines] of byWarehouse) {
+      const warehouse = await tx.warehouse.findUnique({ where: { id: warehouseId } });
+      const recipients = await tx.user.findMany({
+        where: { role: Role.BODEGA, warehouseId, isActive: true, deletedAt: null },
+        select: { id: true },
+      });
+      const summary = lines
+        .map((line) => `${Number(line.quantity)} × ${line.product?.name ?? 'producto'}`)
+        .join(', ');
+      for (const recipient of recipients) {
+        await tx.notification.create({
+          data: {
+            type: NotificationType.BODEGA_TAREA,
+            title: 'Preventa para tu bodega',
+            message: `${quote.consecutive} · ${warehouse?.location ?? 'Bodega'} · ${summary}`,
+            actionLabel: 'Ver preventa',
+            actionModule: 'warehouse',
+            actionView: 'quote',
+            actionEntityId: quote.id,
+            recipientUserId: recipient.id,
+            priority: NotificationPriority.IMPORTANTE,
+          },
+        });
+      }
+    }
+  }
+
+  /** La bodega marca cada línea como atendida o surtida (queda quién y cuándo). */
+  async fulfillLine(id: number, itemId: number, status: string, actor: AuthUser) {
+    const item = await this.prisma.quoteItem.findFirst({ where: { id: itemId, quoteId: id } });
+    if (!item) throw new NotFoundException('Línea no encontrada');
+    if (actor.role !== Role.ADMIN) {
+      if (actor.role !== Role.BODEGA || !item.warehouseId || item.warehouseId !== actor.warehouseId) {
+        throw new BadRequestException('Solo la bodega asignada a la línea puede actualizar su surtido');
+      }
+    }
+    return this.prisma.quoteItem.update({
+      where: { id: itemId },
+      data: {
+        fulfillmentStatus: status,
+        fulfilledAt: status === 'SURTIDO' ? new Date() : null,
+        fulfilledByUsername: actor.username,
+      },
     });
   }
   async update(id: number, dto: UpdateQuoteDto) {
@@ -227,6 +308,7 @@ export class CotizacionesService {
         productId: item.productId,
         productPriceId: price.id,
         quantity: item.quantity,
+        warehouseId: item.warehouseId,
         unitPrice,
         taxRate,
         subtotal,

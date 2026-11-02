@@ -1,0 +1,114 @@
+/* «PRECIOS DEL PRODUCTO» — réplica de las capturas C24/C25 de Saint. */
+.price-dialog-backdrop {
+  z-index: 60;
+}
+
+.price-update-dialog {
+  width: min(560px, 94vw);
+  background: #e8e8e8;
+}
+
+.price-dialog-title {
+  justify-content: center;
+  text-align: center;
+}
+
+.price-dialog-body {
+  padding: 10px 14px 6px;
+}
+
+.price-dialog-costs {
+  display: grid;
+  grid-template-columns: auto 110px auto 110px;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.price-dialog-costs output,
+.price-dialog-costs input {
+  width: 100%;
+  box-sizing: border-box;
+  display: block;
+  padding: 2px 6px;
+  text-align: right;
+  font-weight: 700;
+  font-size: 12px;
+  background: #fff;
+  border: 1px solid #8d8d8d;
+}
+
+.price-dialog-costs output {
+  text-align: right;
+  font-weight: 700;
+  background: #8fb3cc;
+  border-color: #6f93ad;
+}
+
+.price-dialog-grid {
+  display: grid;
+  grid-template-columns: 80px minmax(130px, 1fr) 80px;
+  align-items: center;
+  gap: 5px 6px;
+  font-size: 12px;
+}
+
+.price-dialog-grid > b {
+  font-weight: 400;
+  text-align: left;
+}
+
+.price-dialog-level {
+  color: #1f1f1f;
+}
+
+.price-dialog-grid input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 2px 4px;
+  font-size: 12px;
+  text-align: right;
+  background: #fff;
+  border: 1px solid #8d8d8d;
+}
+
+.price-dialog-grid input:focus {
+  outline: 1px solid #1c5a96;
+  background: #fff;
+}
+
+.price-dialog-grid input.price-dialog-prev {
+  text-align: right;
+  font-weight: 700;
+  background: #fff;
+  border: 1px solid #6f93ad;
+}
+
+.price-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 14px 12px;
+}
+
+.price-dialog-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 12px;
+  font-size: 12px;
+  background: #f3f3f3;
+  border: 1px solid #8d8d8d;
+  cursor: pointer;
+}
+
+.price-dialog-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: #fff;
+  background: #1c5a96;
+  border-radius: 2px;
+}

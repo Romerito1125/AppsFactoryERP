@@ -94,6 +94,11 @@ export class InventarioController {
     return this.inventarioService.findMovement(id, request.user);
   }
 
+  @Get('traslados/sugeridos')
+  suggestTransfers(@Req() request: AuthRequest) {
+    return this.inventarioService.suggestTransfers(request.user);
+  }
+
   @Get('traslados/tickets')
   findTransferTickets(@Query() query: ListInventoryQueryDto, @Req() request: AuthRequest) {
     return this.inventarioService.findTransferTickets(query, request.user);

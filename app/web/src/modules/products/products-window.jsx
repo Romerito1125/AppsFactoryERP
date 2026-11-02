@@ -28,6 +28,11 @@ import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { SearchOptionsMenu } from "@/components/desktop/search-options-menu";
 import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
+import {
+  grossFromNet,
+  netFromGross,
+  roundMoney as roundCommercialMoney,
+} from "@/lib/commercial-pricing";
 
 const units = ["UND", "KG", "G", "LB", "L", "ML", "CAJA", "PAQUETE"];
 const PRICE_LEVELS = [0, 1, 2, 3];
@@ -590,6 +595,11 @@ export function ProductsWindow({
             )
           : [...current, normalized],
       );
+      window.dispatchEvent(
+        new CustomEvent("catalog:changed", {
+          detail: { productId: normalized.recordId },
+        }),
+      );
       setPendingImage(null);
       if (wasCreating) {
         setSelectedId(normalized.recordId);
@@ -868,6 +878,11 @@ export function ProductsWindow({
       } else await apiClient.post(`/productos/${selectedId}/precios`, body);
       await refreshProduct(selectedId);
       setPriceEditor(null);
+      window.dispatchEvent(
+        new CustomEvent("catalog:changed", {
+          detail: { productId: selectedId },
+        }),
+      );
     } catch (requestError) {
       handleRequestError(requestError);
     } finally {
@@ -887,6 +902,11 @@ export function ProductsWindow({
     try {
       await apiClient.delete(`/precios-producto/${price.id}`);
       await refreshProduct(selectedId);
+      window.dispatchEvent(
+        new CustomEvent("catalog:changed", {
+          detail: { productId: selectedId },
+        }),
+      );
     } catch (requestError) {
       handleRequestError(requestError);
     } finally {
@@ -901,6 +921,11 @@ export function ProductsWindow({
     try {
       await apiClient.patch(`/precios-producto/${price.id}/default`, {});
       await refreshProduct(selectedId);
+      window.dispatchEvent(
+        new CustomEvent("catalog:changed", {
+          detail: { productId: selectedId },
+        }),
+      );
     } catch (requestError) {
       handleRequestError(requestError);
     } finally {
@@ -1653,6 +1678,15 @@ function ProductDetails({
         accent
       />
       <ProductField
+        label="Inventario total (con IVA)"
+        value={formatCurrency(
+          Number(product.cost ?? 0) *
+            Number(product.stock ?? 0) *
+            (1 + Number(product.taxRate ?? 0) / 100),
+        )}
+        accent
+      />
+      <ProductField
         label="Bodega"
         value={product.warehouseId}
         displayValue={product.warehouse}
@@ -1701,6 +1735,7 @@ function ProductDetails({
       />
       <UnitsPanel
         product={product}
+        editing={editing}
         unitsEditor={actions.unitsEditor}
         onChangeUnits={actions.onChangeUnits}
         onSaveUnits={actions.onSaveUnits}
@@ -1732,7 +1767,6 @@ function InventoryPanel({
     <div className="provider-tab-panel data-panel inventory-panel">
       <PanelHeading
         title="Inventario por bodega"
-        description="Usa el costo de adquisición sin IVA."
         action={
           <div className="product-panel-heading-actions">
             <button
@@ -1762,9 +1796,6 @@ function InventoryPanel({
         }
       />
       <div className="provider-data-table-wrap">
-        <div className="provider-table-caption">
-          Existencias por bodega · doble clic para editar
-        </div>
         {inventory.length ? (
           <table className="provider-data-table inventory-data-table">
             <thead>
@@ -1775,6 +1806,7 @@ function InventoryPanel({
                 <th>Máximo</th>
                 <th>Costo adquisición (sin IVA)</th>
                 <th>Inventario total (sin IVA)</th>
+                <th>Inventario total (con IVA)</th>
               </tr>
             </thead>
             <tbody>
@@ -1817,6 +1849,13 @@ function InventoryPanel({
                     <td>{product.maximumStock ?? "—"}</td>
                     <td>{formatCurrency(product.cost)}</td>
                     <td>{formatCurrency(Number(product.cost ?? 0) * quantity)}</td>
+                    <td>
+                      {formatCurrency(
+                        Number(product.cost ?? 0) *
+                          quantity *
+                          (1 + Number(product.taxRate ?? 0) / 100),
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -1874,9 +1913,6 @@ function InventoryPanel({
               }
             />
           </div>
-          <p className="table-hint">
-            Se registrará un movimiento de ajuste en el inventario.
-          </p>
           <div className="inline-editor-actions">
             <button type="button" onClick={onCancelInventory}>
               Cancelar
@@ -1968,14 +2004,10 @@ function PricesPanel({
     );
   }
 
-  const configuredCount = priceRows.filter(
-    ({ price }) => parseDecimalInput(price.price) > 0,
-  ).length;
   return (
     <div className="provider-tab-panel data-panel">
       <PanelHeading
         title="Costos y precios"
-        description="Captura los cuatro precios generales en una sola ficha."
       />
       <div className="price-tax-setting">
         <ProductField
@@ -1986,10 +2018,6 @@ function PricesPanel({
           inputMode="decimal"
           error={fieldErrors?.taxRate}
         />
-        <p>
-          Escribe el precio final que verá el cliente, con IVA incluido. El
-          sistema calcula el valor antes de IVA y el IVA cobrado.
-        </p>
       </div>
       <div className="cost-summary">
         <CostMetric
@@ -2002,10 +2030,6 @@ function PricesPanel({
           value={previousCost(product.costs, product.cost)}
         />
       </div>
-      <p className="table-hint price-bulk-hint">
-        Puedes completar Precio 0, Precio 1, Precio 2 y Precio 3 antes de
-        guardar. Los campos se guardan juntos con el producto.
-      </p>
       <div className="product-price-bulk-wrap">
         <table className="product-price-bulk-table">
           <thead>
@@ -2045,7 +2069,6 @@ function PricesPanel({
                   <td>
                     <div className="price-input-preview">
                       <strong>{metrics.net == null ? "—" : formatCurrency(metrics.net)}</strong>
-                      <small>Calculado automáticamente</small>
                     </div>
                   </td>
                   <td>{metrics.tax == null ? "—" : formatCurrency(metrics.tax)}</td>
@@ -2115,16 +2138,13 @@ function PricesPanel({
       {productProfit?.warning && (
         <p className="table-hint">{productProfit.warning}</p>
       )}
-      <p className="table-hint">
-        {configuredCount} de 4 precios configurados. La ganancia sin IVA
-        compara el precio antes de IVA contra el costo de adquisición sin IVA.
-      </p>
     </div>
   );
 }
 
 function UnitsPanel({
   product,
+  editing = false,
   unitsEditor,
   onChangeUnits,
   onSaveUnits,
@@ -2139,7 +2159,6 @@ function UnitsPanel({
     <div className="provider-tab-panel data-panel">
       <PanelHeading
         title="Unidades y empaque"
-        description="Configuración de venta detallada del producto."
       />
       {!product.recordId && (
         <p className="table-hint">
@@ -2252,7 +2271,15 @@ function UnitsPanel({
                   <td>{priceLabel(level)}</td>
                   <td>{price?.unit ?? "—"}</td>
                   <td>{price?.quantity ?? "—"}</td>
-                  <td>{price ? formatCurrency(Number(price.price)) : "No configurado"}</td>
+                  <td>
+                    {price
+                      ? formatCurrency(
+                          editing
+                            ? Number(price.price)
+                            : grossPriceFromNet(Number(price.price), product.taxRate),
+                        )
+                      : "No configurado"}
+                  </td>
                 </tr>
                 );
               })}
@@ -2289,7 +2316,6 @@ function BarcodePanel({
     <div className="provider-tab-panel data-panel">
       <PanelHeading
         title="Códigos de barras"
-        description="Compatible con lector físico, cámara e imagen."
         action={
           <div className="barcode-actions">
             <button
@@ -2363,10 +2389,6 @@ function BarcodePanel({
         onRowDoubleClick={(index) => onEditBarcode(product.barcodes[index])}
         empty="No hay códigos de barras registrados."
       />
-      <p className="table-hint">
-        Doble clic sobre una fila para editarla. El lector físico funciona como
-        teclado.
-      </p>
       {barcodeEditor?.error && (
         <div className="inline-error">{barcodeEditor.error}</div>
       )}
@@ -2521,10 +2543,6 @@ function BarcodeReaderDialog({ open, onOpenChange, onDetected }) {
             <X size={14} />
           </button>
         </div>
-        <p>
-          Conecta el lector y escanea sobre este campo. El equipo lo recibe como
-          teclado.
-        </p>
         <input
           ref={inputRef}
           value={code}
@@ -2574,9 +2592,7 @@ function BarcodeScannerDialog({ open, onOpenChange, onDetected }) {
           playsInline
           autoPlay
         />
-        <p>
-          <Camera size={13} /> {message}
-        </p>
+        <span className="scanner-status"><Camera size={13} /> {message}</span>
         <div className="inline-editor-actions">
           <button type="button" onClick={() => onOpenChange(false)}>
             Cerrar
@@ -2687,7 +2703,6 @@ function PanelHeading({ title, description, action }) {
     <div className="product-panel-heading">
       <div>
         <strong>{title}</strong>
-        <span>{description}</span>
       </div>
       {action}
     </div>
@@ -2730,10 +2745,6 @@ function CatalogCreateDialog({ kind, onSave, onCancel }) {
             <X size={14} />
           </button>
         </div>
-        <p>
-          El registro se guardará en el catálogo y quedará seleccionado en el
-          formulario de productos.
-        </p>
         <label className="editor-field editor-field-wide">
           <span>{label}</span>
           <input
@@ -3314,21 +3325,15 @@ function toEditablePrices(prices, taxRate) {
 }
 
 function grossPriceFromNet(value, taxRate) {
-  const net = Number(value);
-  const rate = Number(taxRate) || 0;
-  if (!Number.isFinite(net)) return 0;
-  return roundMoney(net * (1 + rate / 100));
+  return grossFromNet(value, taxRate);
 }
 
 function netPriceFromGross(value, taxRate) {
-  const gross = Number(value);
-  const rate = Number(taxRate) || 0;
-  if (!Number.isFinite(gross)) return 0;
-  return roundMoney(gross / (1 + rate / 100));
+  return netFromGross(value, taxRate);
 }
 
 function roundMoney(value) {
-  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+  return roundCommercialMoney(value);
 }
 
 function formatInputAmount(value) {

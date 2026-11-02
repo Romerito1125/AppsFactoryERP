@@ -35,6 +35,20 @@ export class FacturasController {
     return this.facturasService.findAll(query, request.user);
   }
 
+  @Get(':id/soporte-pago')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.CAJERO, Role.VENDEDOR, Role.CONTADOR)
+  paymentSupport(@Param('id', ParseIntPipe) id: number) {
+    return this.facturasService.paymentSupport(id);
+  }
+
+  @Get('bonus/:clientId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.CAJERO, Role.VENDEDOR, Role.CONTADOR)
+  bonusBalance(@Param('clientId', ParseIntPipe) clientId: number) {
+    return this.facturasService.bonusBalance(clientId);
+  }
+
   @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.CAJERO, Role.VENDEDOR, Role.CONTADOR, Role.BODEGA)

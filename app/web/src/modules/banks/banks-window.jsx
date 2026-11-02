@@ -5,10 +5,15 @@ import {
   ArrowUpRight,
   Banknote,
   BarChart3,
+  CalendarDays,
   CreditCard,
+  Download,
+  FileSpreadsheet,
+  Filter,
   Landmark,
   LoaderCircle,
   Plus,
+  Printer,
   ReceiptText,
   Search,
   Trash2,
@@ -19,6 +24,8 @@ import {
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import "./banks-reports.css";
 
 const viewLabels = {
   home: "Finanzas",
@@ -37,6 +44,7 @@ const emptyAccount = {
   accountType: "CORRIENTE",
   currentBalance: "0",
   gmfRate: "0.4",
+  autoGmf: false,
 };
 
 let bankDataPromise;
@@ -275,7 +283,6 @@ function BankHomePanel({ onOpenView }) {
     <div className="bank-home-panel">
       <Landmark size={62} strokeWidth={1.1} />
       <strong>Mundo Tienda</strong>
-      <span>Administración de bancos y movimientos</span>
       <div>
         <button type="button" onClick={() => onOpenView("accounts")}>
           <Landmark size={15} /> Cuentas
@@ -350,6 +357,7 @@ function BankAccountsPanel({
         accountType: draft.accountType,
         currentBalance: Number(draft.currentBalance || 0),
         gmfRate: Number(draft.gmfRate || 0),
+        autoGmf: Boolean(draft.autoGmf),
       };
       const saved = draft.id
         ? await apiClient.patch(`/cuentas-bancarias/${draft.id}`, body)
@@ -392,7 +400,6 @@ function BankAccountsPanel({
     <div className="bank-child-window bank-accounts-panel">
       <div className="bank-child-titlebar">
         <strong>CUENTAS</strong>
-        <span>Cuentas bancarias disponibles para registrar movimientos</span>
       </div>
       <div className="bank-accounts-layout">
         <section className="bank-account-list">
@@ -469,6 +476,14 @@ function BankAccountsPanel({
                 onChange={(event) =>
                   updateDraft("bankName", event.target.value)
                 }
+              />
+            </label>
+            <label>
+              4x1000 automático
+              <input
+                type="checkbox"
+                checked={Boolean(draft.autoGmf)}
+                onChange={(event) => updateDraft("autoGmf", event.target.checked)}
               />
             </label>
             <label>
@@ -672,7 +687,6 @@ function BankTransactionsPanel({
     <div className="bank-child-window bank-transactions-panel">
       <div className="bank-child-titlebar">
         <strong>TRANSACCIONES</strong>
-        <span>Movimientos de cuentas bancarias</span>
       </div>
       <div className="bank-transaction-top">
         <div className="bank-pill">
@@ -985,22 +999,20 @@ function BankPayablesPanel({ purchases }) {
 
 function BankReportsPanel({ accounts, movements }) {
   const [accountFilter, setAccountFilter] = useState("TODOS");
-  const visibleMovements = useMemo(
-    () =>
-      movements
-        .filter(
-          (movement) =>
-            accountFilter === "TODOS" ||
-            String(movement.bankAccountId) === String(accountFilter),
-        )
-        .slice()
-        .sort(
-          (left, right) =>
-            new Date(right.createdAt ?? right.date ?? 0).getTime() -
-            new Date(left.createdAt ?? left.date ?? 0).getTime(),
-        ),
-    [accountFilter, movements],
-  );
+  const [period, setPeriod] = useState("30D");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [typeFilter, setTypeFilter] = useState("TODOS");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+  const range = useMemo(() => financeRange(period, from, to), [from, period, to]);
+  const visibleMovements = useMemo(() => movements.filter((movement) => {
+    const accountMatches = accountFilter === "TODOS" || String(movement.bankAccountId ?? movement.bankAccount?.id ?? "") === String(accountFilter);
+    const typeMatches = typeFilter === "TODOS" || movementTypeGroup(movement) === typeFilter;
+    const searchMatches = !query.trim() || `${movement.description ?? ""} ${movement.reference ?? ""} ${movementTypeLabel(movement)}`.toLowerCase().includes(query.trim().toLowerCase());
+    return accountMatches && typeMatches && searchMatches && inFinanceRange(movement.createdAt ?? movement.date ?? movement.movementDate, range);
+  }).slice().sort((left, right) => new Date(right.createdAt ?? right.date ?? 0).getTime() - new Date(left.createdAt ?? left.date ?? 0).getTime()), [accountFilter, movements, query, range, typeFilter]);
   const visibleAccounts =
     accountFilter === "TODOS"
       ? accounts
@@ -1023,12 +1035,24 @@ function BankReportsPanel({ accounts, movements }) {
         sum + Number(movement.totalAmount ?? movement.amount ?? 0),
       0,
     );
+  const net = income - expenses;
+  const totalPages = Math.max(1, Math.ceil(visibleMovements.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const paginatedMovements = visibleMovements.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const dailyRows = buildFinanceDailyRows(visibleMovements);
+  const typeRows = buildFinanceTypeRows(visibleMovements);
+
+  function updateFilter(setter, value) { setter(value); setPage(1); }
+  function exportCsv() { if (!visibleMovements.length) return; const rows = visibleMovements.map((movement) => [formatDate(movement.createdAt ?? movement.date), movementTypeLabel(movement), movement.description ?? "—", accounts.find((account) => account.id === movement.bankAccountId)?.name ?? movement.bankAccount?.name ?? "—", Number(movement.totalAmount ?? movement.amount ?? 0)]); downloadFinanceBlob([['Fecha', 'Tipo', 'Descripción', 'Cuenta', 'Monto'], ...rows], `reporte-finanzas-${period}.csv`, "csv"); }
+  async function exportExcel() { const XLSX = await import("xlsx"); const workbook = XLSX.utils.book_new(); const appendSheet = (name, rows, widths) => { const sheet = XLSX.utils.json_to_sheet(rows); sheet["!cols"] = widths.map((wch) => ({ wch })); if (rows.length) sheet["!autofilter"] = { ref: XLSX.utils.encode_range(XLSX.utils.decode_range(sheet["!ref"])) }; XLSX.utils.book_append_sheet(workbook, sheet, name); }; appendSheet("Resumen", [{ Indicador: "Periodo", Valor: range.label }, { Indicador: "Saldo", Valor: balance }, { Indicador: "Ingresos", Valor: income }, { Indicador: "Egresos", Valor: expenses }, { Indicador: "Movimiento neto", Valor: net }, { Indicador: "Movimientos", Valor: visibleMovements.length }], [28, 24]); appendSheet("Movimientos", visibleMovements.map((movement) => ({ Fecha: formatDate(movement.createdAt ?? movement.date), Tipo: movementTypeLabel(movement), Grupo: movementTypeGroup(movement), Descripción: movement.description ?? "—", Cuenta: accounts.find((account) => account.id === movement.bankAccountId)?.name ?? movement.bankAccount?.name ?? "—", Monto: Number(movement.totalAmount ?? movement.amount ?? 0) })), [16, 22, 16, 38, 28, 18]); appendSheet("Por cuenta", visibleAccounts.map((account) => ({ Cuenta: account.name, Banco: account.bankName ?? "—", Tipo: account.accountType ?? "—", Saldo: Number(account.currentBalance ?? 0) })), [28, 24, 16, 18]); appendSheet("Por día", dailyRows, [16, 18, 18, 18]); XLSX.writeFile(workbook, `reporte-finanzas-${period}.xlsx`); }
+  async function exportPdf() { const { jsPDF } = await import("jspdf"); const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" }); const pageWidth = doc.internal.pageSize.getWidth(); const margin = 34; doc.setFillColor(31, 51, 77); doc.rect(0, 0, pageWidth, 76, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("MUNDO TIENDA", margin, 32); doc.setFontSize(10); doc.text("REPORTE DE FINANZAS", margin, 51); doc.setFont("helvetica", "normal"); doc.text(`Periodo: ${range.label}`, pageWidth - margin, 32, { align: "right" }); let y = 108; const cards = [["Saldo", balance], ["Ingresos", income], ["Egresos", expenses], ["Movimiento neto", net]]; const gap = 10; const cardWidth = (pageWidth - margin * 2 - gap * 3) / 4; cards.forEach(([label, value], index) => { const x = margin + index * (cardWidth + gap); doc.setFillColor(246, 249, 252); doc.roundedRect(x, y, cardWidth, 52, 5, 5, "F"); doc.setTextColor(100, 118, 140); doc.setFontSize(9); doc.text(label, x + 10, y + 19); doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.text(formatCurrency(value), x + 10, y + 39); doc.setFont("helvetica", "normal"); }); y += 82; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("Detalle de movimientos", margin, y); y += 19; doc.setFillColor(43, 108, 176); doc.rect(margin, y - 12, pageWidth - margin * 2, 22, "F"); doc.setTextColor(255, 255, 255); doc.setFontSize(8); ["Fecha", "Tipo", "Descripción", "Cuenta", "Monto"].forEach((header, index) => doc.text(header, [margin + 7, margin + 80, margin + 175, margin + 440, pageWidth - margin - 7][index], y + 2, { align: index === 4 ? "right" : "left" })); y += 22; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "normal"); doc.setFontSize(8); visibleMovements.slice(0, 70).forEach((movement, index) => { if (y > 555) { doc.addPage(); y = 50; } if (index % 2 === 0) { doc.setFillColor(248, 250, 252); doc.rect(margin, y - 11, pageWidth - margin * 2, 19, "F"); } const values = [formatDate(movement.createdAt ?? movement.date), movementTypeLabel(movement), String(movement.description ?? "—").slice(0, 42), accounts.find((account) => account.id === movement.bankAccountId)?.name ?? movement.bankAccount?.name ?? "—", formatCurrency(movement.totalAmount ?? movement.amount)]; doc.text(values[0], margin + 7, y); doc.text(values[1], margin + 80, y); doc.text(values[2], margin + 175, y); doc.text(values[3], margin + 440, y); doc.text(values[4], pageWidth - margin - 7, y, { align: "right" }); y += 19; }); doc.save(`reporte-finanzas-${period}.pdf`); }
   return (
-    <div className="bank-report-shell">
+    <div className="bank-report-shell bank-report-dashboard">
       <div className="bank-section-heading">
         <div>
-          <span>Resumen del módulo de Bancos.</span>
-          <h2>REPORTES</h2>
+          <span className="bank-report-kicker">FINANZAS · CONTROL DE CAJA</span>
+          <h2>Reportes financieros</h2>
+          <p>Saldo, recaudos, egresos y movimientos con filtros por cuenta y periodo.</p>
         </div>
         <BarChart3 size={28} />
       </div>
@@ -1045,7 +1069,12 @@ function BankReportsPanel({ accounts, movements }) {
           <span>Total egresos</span>
           <strong>{formatCurrency(expenses)}</strong>
         </div>
+        <div>
+          <span>Movimiento neto</span>
+          <strong>{formatCurrency(net)}</strong>
+        </div>
       </div>
+      <div className="bank-report-quick-filters"><button type="button" className={period === "TODAY" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "TODAY"); }}>Hoy</button><button type="button" className={period === "7D" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "7D"); }}>7 días</button><button type="button" className={period === "30D" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "30D"); }}>30 días</button><button type="button" className={period === "90D" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "90D"); }}>90 días</button><button type="button" className={period === "ALL" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "ALL"); }}>Historial</button><button type="button" className={period === "CUSTOM" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "CUSTOM"); }}><CalendarDays size={13} /> Fechas</button></div>
       <div className="bank-report-toolbar">
         <label htmlFor="bank-report-account-filter">Cuenta</label>
         <select
@@ -1060,15 +1089,16 @@ function BankReportsPanel({ accounts, movements }) {
             </option>
           ))}
         </select>
-        <span>{visibleMovements.length} movimiento(s) en el detalle</span>
+        {period === "CUSTOM" && <><label>Desde<input type="date" value={from} onChange={(event) => updateFilter(setFrom, event.target.value)} /></label><label>Hasta<input type="date" value={to} onChange={(event) => updateFilter(setTo, event.target.value)} /></label></>}
+        <label>Tipo<select value={typeFilter} onChange={(event) => updateFilter(setTypeFilter, event.target.value)}><option value="TODOS">Todos</option><option value="INGRESO">Ingresos</option><option value="EGRESO">Egresos</option><option value="TRANSFERENCIA">Transferencias</option></select></label>
+        <label className="bank-report-search"><Search size={14} /><input value={query} onChange={(event) => updateFilter(setQuery, event.target.value)} placeholder="Buscar movimiento…" /></label>
+        <button type="button" className="bank-report-export blue" onClick={exportPdf}><Printer size={14} /> PDF</button><button type="button" className="bank-report-export green" onClick={exportExcel}><FileSpreadsheet size={14} /> Excel</button><button type="button" className="bank-report-export amber" onClick={exportCsv}><Download size={14} /> CSV</button>
       </div>
-      <div className="bank-report-note">
-        Selecciona una cuenta para filtrar el resumen y revisar sus movimientos.
-      </div>
+      <div className="bank-report-note"><Filter size={13} /> {visibleMovements.length} movimiento(s) · {range.label}</div>
+      <div className="bank-report-chart-grid"><section className="bank-report-chart-card"><div className="bank-report-card-title"><strong>Flujo diario</strong><span>Ingresos y egresos</span></div><ResponsiveContainer width="100%" height={235}><LineChart data={dailyRows} margin={{ top: 10, right: 10, left: -12, bottom: 4 }}><CartesianGrid vertical={false} stroke="#e9eef4" /><XAxis dataKey="date" tick={{ fill: "#7c8b9e", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={financeShortMoney} /><Tooltip content={<FinanceTooltip />} /><Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} /><Line type="monotone" dataKey="income" name="Ingresos" stroke="#31a56d" strokeWidth={3} dot={false} /><Line type="monotone" dataKey="expenses" name="Egresos" stroke="#c45454" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></section><section className="bank-report-chart-card"><div className="bank-report-card-title"><strong>Distribución</strong><span>Por tipo de movimiento</span></div><ResponsiveContainer width="100%" height={235}><PieChart><Pie data={typeRows} dataKey="value" nameKey="label" innerRadius="58%" outerRadius="78%" paddingAngle={3} stroke="none">{typeRows.map((row) => <Cell key={row.label} fill={row.color} />)}</Pie><Tooltip content={<FinanceTooltip currency />} /></PieChart></ResponsiveContainer></section></div>
       <div className="bank-report-detail">
         <div className="bank-report-detail-heading">
           <strong>Detalle de movimientos</strong>
-          <span>Ingresos, egresos, transferencias y ajustes registrados.</span>
         </div>
         <div className="bank-report-table-scroll">
           <table className="bank-table">
@@ -1082,7 +1112,7 @@ function BankReportsPanel({ accounts, movements }) {
               </tr>
             </thead>
             <tbody>
-              {visibleMovements.map((movement) => (
+              {paginatedMovements.map((movement) => (
                 <tr key={movement.id}>
                   <td>{formatDate(movement.createdAt ?? movement.date)}</td>
                   <td>{movementTypeLabel(movement)}</td>
@@ -1107,10 +1137,35 @@ function BankReportsPanel({ accounts, movements }) {
             </tbody>
           </table>
         </div>
+        {visibleMovements.length > 0 && <div className="bank-report-pagination"><span>Página {currentPage} de {totalPages}</span><label>Filas<select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value="15">15</option><option value="30">30</option><option value="50">50</option></select></label><button type="button" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</button><button type="button" disabled={currentPage >= totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Siguiente</button></div>}
       </div>
     </div>
   );
 }
+
+function financeRange(period, from, to) {
+  const end = period === "CUSTOM" && to ? new Date(`${to}T23:59:59`) : new Date();
+  end.setHours(23, 59, 59, 999);
+  if (period === "ALL") return { start: new Date(0), end, label: "Todo el historial" };
+  if (period === "CUSTOM") return { start: from ? new Date(`${from}T00:00:00`) : new Date(0), end, label: `${from || "inicio"} · ${to || "hoy"}` };
+  const days = { TODAY: 0, "7D": 6, "30D": 29, "90D": 89 }[period] ?? 29;
+  const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - days);
+  return { start, end, label: { TODAY: "Hoy", "7D": "Últimos 7 días", "30D": "Últimos 30 días", "90D": "Últimos 90 días" }[period] ?? "Periodo seleccionado" };
+}
+
+function inFinanceRange(value, range) { if (!value) return false; const dateValue = new Date(value); return dateValue >= range.start && dateValue <= range.end; }
+
+function movementTypeGroup(movement) { const type = String(movement?.movementType ?? ""); if (type.includes("INGRESO") || type.includes("ENTRANTE")) return "INGRESO"; if (type.includes("EGRESO") || type.includes("SALIENTE")) return "EGRESO"; if (type.includes("TRANSFERENCIA")) return "TRANSFERENCIA"; return "OTROS"; }
+
+function buildFinanceDailyRows(movements) { const rows = new Map(); movements.forEach((movement) => { const value = Number(movement.totalAmount ?? movement.amount ?? 0); const key = financeDateKey(movement.createdAt ?? movement.date ?? movement.movementDate); const row = rows.get(key) ?? { date: financeDayLabel(movement.createdAt ?? movement.date ?? movement.movementDate), income: 0, expenses: 0 }; if (isIncomeMovement(movement)) row.income += value; else if (isExpenseMovement(movement)) row.expenses += value; rows.set(key, row); }); return [...rows.entries()].sort(([left], [right]) => left.localeCompare(right)).slice(-14).map(([, row]) => row); }
+
+function buildFinanceTypeRows(movements) { const groups = [{ label: "Ingresos", key: "INGRESO", color: "#31a56d" }, { label: "Egresos", key: "EGRESO", color: "#c45454" }, { label: "Transferencias", key: "TRANSFERENCIA", color: "#2b6cb0" }, { label: "Otros", key: "OTROS", color: "#d28a25" }]; return groups.map((group) => ({ ...group, value: movements.filter((movement) => movementTypeGroup(movement) === group.key).reduce((sum, movement) => sum + Number(movement.totalAmount ?? movement.amount ?? 0), 0) })).filter((row) => row.value > 0); }
+
+function financeDateKey(value) { const dateValue = new Date(value); return `${dateValue.getFullYear()}-${String(dateValue.getMonth() + 1).padStart(2, "0")}-${String(dateValue.getDate()).padStart(2, "0")}`; }
+function financeDayLabel(value) { return new Intl.DateTimeFormat("es-CO", { day: "2-digit", month: "short" }).format(new Date(value)).replace(".", ""); }
+function financeShortMoney(value) { const amount = Number(value ?? 0); return amount >= 1000000 ? `$${(amount / 1000000).toFixed(1)}M` : amount >= 1000 ? `$${Math.round(amount / 1000)}k` : `$${Math.round(amount)}`; }
+function FinanceTooltip({ active, payload, label, currency = false }) { if (!active || !payload?.length) return null; return <div className="bank-report-tooltip"><strong>{label}</strong>{payload.map((row) => <div key={row.dataKey ?? row.name}><span>{row.name ?? row.dataKey}</span><b>{currency ? formatCurrency(row.value) : financeShortMoney(row.value)}</b></div>)}</div>; }
+function downloadFinanceBlob(rows, filename, type) { const content = rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n"); const url = URL.createObjectURL(new Blob([content], { type: type === "csv" ? "text/csv;charset=utf-8" : type })); const link = document.createElement("a"); link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
 function movementTypeLabel(movement) {
   const type = String(movement?.movementType ?? "");
@@ -1134,7 +1189,6 @@ function BankTablePanel({
     <div className="bank-child-window bank-table-panel">
       <div className="bank-child-titlebar">
         <strong>{title}</strong>
-        <span>{subtitle}</span>
       </div>
       {onSearch && (
         <div className="bank-list-toolbar">
@@ -1163,6 +1217,7 @@ function toAccountDraft(account) {
     accountType: account.accountType ?? "CORRIENTE",
     currentBalance: String(account.currentBalance ?? 0),
     gmfRate: String(account.gmfRate ?? 0.4),
+    autoGmf: Boolean(account.autoGmf),
   };
 }
 

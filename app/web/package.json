@@ -12,11 +12,14 @@
   "dependencies": {
     "@zxing/browser": "^0.2.1",
     "@zxing/library": "^0.23.0",
+    "jspdf": "4.2.1",
     "lucide-react": "^1.17.0",
     "pdfjs-dist": "^6.1.200",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "tesseract.js": "^7.0.0"
+    "recharts": "3.10.1",
+    "tesseract.js": "^7.0.0",
+    "xlsx": "0.18.5"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.1",

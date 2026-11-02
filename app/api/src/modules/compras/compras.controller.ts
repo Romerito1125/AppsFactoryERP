@@ -49,6 +49,11 @@ export class ComprasController {
     return this.comprasService.getSummary(query, request.user);
   }
 
+  @Get('proveedor-sugerido')
+  suggestProvider(@Query('productId', ParseIntPipe) productId: number) {
+    return this.comprasService.suggestProvider(productId);
+  }
+
   @Get('pendientes-hoy')
   @Roles(Role.ADMIN, Role.CONTADOR, Role.BODEGA)
   getPendingToday(@Req() request: Request & { user: AuthUser }) {
@@ -66,8 +71,11 @@ export class ComprasController {
   @Post()
   @Roles(Role.ADMIN, Role.CONTADOR, Role.BODEGA)
   @Permissions('PURCHASES_EDIT')
-  create(@Body() dto: CreatePurchaseOrderDto) {
-    return this.comprasService.create(dto);
+  create(
+    @Body() dto: CreatePurchaseOrderDto,
+    @Req() request: Request & { user: AuthUser },
+  ) {
+    return this.comprasService.create(dto, request.user);
   }
 
   @Patch(':id')
@@ -76,8 +84,9 @@ export class ComprasController {
   updateDraft(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdatePurchaseOrderDto,
+    @Req() request: Request & { user: AuthUser },
   ) {
-    return this.comprasService.updateDraft(id, dto);
+    return this.comprasService.updateDraft(id, dto, request.user);
   }
 
   @Post(':id/ordenar')

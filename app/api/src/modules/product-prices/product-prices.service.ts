@@ -107,10 +107,13 @@ export class ProductPricesService {
     }
 
     const price = await this.prisma.$transaction(async (tx) => {
-      const existingLevel = await tx.productPrice.findFirst({
-        where: { productId, priceLevel },
-        select: { id: true },
+      const siblingPrices = await tx.productPrice.findMany({
+        where: { productId },
+        select: { id: true, priceLevel: true, name: true },
       });
+      const existingLevel = siblingPrices.find(
+        (sibling) => this.getStoredPriceLevel(sibling) === priceLevel,
+      );
       if (existingLevel) {
         throw new BadRequestException(
           `El producto ya tiene configurado el Precio ${priceLevel}`,
@@ -172,14 +175,13 @@ export class ProductPricesService {
       current.priceLevel ??
       this.parsePriceLevel(current.name) ??
       0;
-    const duplicateLevel = await this.prisma.productPrice.findFirst({
-      where: {
-        productId: current.productId,
-        priceLevel,
-        id: { not: id },
-      },
-      select: { id: true },
+    const siblingPrices = await this.prisma.productPrice.findMany({
+      where: { productId: current.productId, id: { not: id } },
+      select: { id: true, priceLevel: true, name: true },
     });
+    const duplicateLevel = siblingPrices.find(
+      (sibling) => this.getStoredPriceLevel(sibling) === priceLevel,
+    );
     if (duplicateLevel) {
       throw new BadRequestException(
         `El producto ya tiene configurado el Precio ${priceLevel}`,
@@ -382,10 +384,10 @@ export class ProductPricesService {
 
     const prices = await this.prisma.productPrice.findMany({
       where: { productId, isActive: true },
-      select: { priceLevel: true },
+      select: { priceLevel: true, name: true },
     });
     const nextLevel = [0, 1, 2, 3].find(
-      (level) => !prices.some((price) => price.priceLevel === level),
+      (level) => !prices.some((price) => this.getStoredPriceLevel(price) === level),
     );
     if (nextLevel === undefined) {
       throw new BadRequestException(
@@ -398,6 +400,10 @@ export class ProductPricesService {
   private parsePriceLevel(name?: string) {
     const match = String(name ?? '').match(/^precio\s*([0-3])$/i);
     return match ? Number(match[1]) : undefined;
+  }
+
+  private getStoredPriceLevel(price: { priceLevel: number | null; name: string }) {
+    return price.priceLevel ?? this.parsePriceLevel(price.name) ?? 0;
   }
 
   private ensurePriceLevel(level: number) {
