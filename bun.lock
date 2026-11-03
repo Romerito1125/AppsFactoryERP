@@ -3,6 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
+      "name": "appsfactory-erp",
       "dependencies": {
         "turbo": "^2.9.17",
       },
