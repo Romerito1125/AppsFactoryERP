@@ -11,17 +11,12 @@ import {
 } from "@/lib/commercial-pricing";
 import { advanceFrom } from "@/lib/enter-advance";
 import "./price-update-dialog.css";
+import { formatCop } from "@/lib/cop";
+import { CopInput } from "@/components/money/cop-input";
 
 const LEVELS = [0, 1, 2, 3];
 
 // Formato de la captura Saint: 483,33 · 12,12 %
-function money(value) {
-  return new Intl.NumberFormat("es-CO", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
-}
-
 function parseDecimal(value) {
   const normalized = String(value ?? "").trim().replace(",", ".");
   if (!normalized) return null;
@@ -29,7 +24,8 @@ function parseDecimal(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-const asText = (value) => (value > 0 ? String(roundMoney(value)).replace(".", ",") : "");
+// En COP los precios son enteros: sin centavos ni coma decimal.
+const asText = (value) => (value > 0 ? String(Math.round(value)) : "");
 
 function catalogGross(product, level) {
   const price = (product?.prices ?? []).find(
@@ -181,17 +177,12 @@ export function PriceUpdateDialog({
         <div className="price-dialog-body">
           <div className="price-dialog-costs">
             <span>Costo anterior</span>
-            <output>{money(previousCost)}</output>
+            <output>{formatCop(previousCost)}</output>
             <span>Costo nuevo</span>
-            <input
-              value={newCostText}
-              inputMode="decimal"
+            <CopInput
               aria-label="Costo nuevo con IVA"
-              onChange={(event) => {
-                if (/^\d*([.,]\d{0,4})?$/.test(event.target.value)) {
-                  setNewCostText(event.target.value);
-                }
-              }}
+              value={parsedNewCost ?? 0}
+              onChange={(value) => setNewCostText(String(value))}
             />
           </div>
           <div className="price-dialog-grid">
@@ -203,13 +194,12 @@ export function PriceUpdateDialog({
                 <span key={`l${row.level}`} className="price-dialog-level">
                   Precio {row.level}
                 </span>,
-                <input
+                <CopInput
                   key={`p${row.level}`}
                   className="price-dialog-prev"
-                  inputMode="decimal"
                   aria-label={`Precio ${row.level} con IVA`}
-                  value={row.gross}
-                  onChange={(event) => update(row.level, "gross", event.target.value)}
+                  value={parseDecimal(row.gross) ?? 0}
+                  onChange={(value) => update(row.level, "gross", String(value))}
                 />,
                 <input
                   key={`u${row.level}`}

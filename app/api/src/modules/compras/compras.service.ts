@@ -924,8 +924,9 @@ export class ComprasService {
       .div(100)
       .mul(100 - d2)
       .div(100)
-      .toDecimalPlaces(2);
-    const total = afterDiscount.plus(freight).toDecimalPlaces(2);
+      .toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP);
+    // COP: totales en pesos enteros.
+    const total = afterDiscount.plus(freight).toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP);
 
     const provider = await tx.provider.findUniqueOrThrow({
       where: { id: providerId },
@@ -1079,14 +1080,14 @@ export class ComprasService {
       ? new Prisma.Decimal(totals.subtotal)
           .mul(rate)
           .div(100)
-          .toDecimalPlaces(2)
+          .toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP)
       : this.zero;
     return {
       retentionRate: new Prisma.Decimal(applies ? rate : 0).toDecimalPlaces(2),
       retentionAmount,
       payableTotal: new Prisma.Decimal(totals.total)
         .minus(retentionAmount)
-        .toDecimalPlaces(2),
+        .toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP),
     };
   }
 

@@ -6,8 +6,11 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '../../common/enums/role.enum';
@@ -36,22 +39,22 @@ export class MovimientosBancariosController {
   }
   @Post('ingreso')
   @Permissions('BANKS_EDIT')
-  income(@Body() dto: BankAmountDto) {
-    return this.service.income(dto.bankAccountId, dto);
+  income(@Body() dto: BankAmountDto, @Req() request: Request & { user: AuthUser }) {
+    return this.service.income(dto.bankAccountId, dto, request.user);
   }
   @Post('egreso')
   @Permissions('BANKS_EDIT')
-  expense(@Body() dto: BankAmountDto) {
-    return this.service.expense(dto.bankAccountId, dto);
+  expense(@Body() dto: BankAmountDto, @Req() request: Request & { user: AuthUser }) {
+    return this.service.expense(dto.bankAccountId, dto, request.user);
   }
   @Post('transferencia')
   @Permissions('BANKS_EDIT')
-  transfer(@Body() dto: BankTransferDto) {
-    return this.service.transfer(dto);
+  transfer(@Body() dto: BankTransferDto, @Req() request: Request & { user: AuthUser }) {
+    return this.service.transfer(dto, request.user);
   }
   @Post('ajuste')
   @Permissions('BANKS_EDIT')
-  adjustment(@Body() dto: BankAdjustmentDto) {
-    return this.service.adjustment(dto.bankAccountId, dto);
+  adjustment(@Body() dto: BankAdjustmentDto, @Req() request: Request & { user: AuthUser }) {
+    return this.service.adjustment(dto.bankAccountId, dto, request.user);
   }
 }

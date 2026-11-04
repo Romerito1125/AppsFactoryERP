@@ -1,3 +1,5 @@
+import { CopInput } from "@/components/money/cop-input";
+import { formatCop } from "@/lib/cop";
 import { useEffect, useMemo, useState } from "react";
 import {
   Check,
@@ -765,6 +767,7 @@ function ProviderDetails({
             label="Base mínima retención"
             value={provider.withholdingMinimumBase}
             editing={editing}
+            money
             onChange={(value) => onChange("withholdingMinimumBase", value)}
             error={fieldErrors?.withholdingMinimumBase}
           />
@@ -1166,6 +1169,7 @@ function DetailField({
   editing = false,
   onChange,
   error = "",
+  money = false,
 }) {
   return (
     <div
@@ -1195,6 +1199,14 @@ function DetailField({
               );
             })}
           </select>
+        ) : money ? (
+          <CopInput
+            className={`detail-input ${error ? "is-invalid" : ""}`}
+            value={Math.round(Number(value) || 0)}
+            aria-invalid={Boolean(error)}
+            title={error || undefined}
+            onChange={(amount) => onChange?.(String(amount))}
+          />
         ) : (
           <input
             className={`detail-input ${error ? "is-invalid" : ""}`}
@@ -1210,7 +1222,7 @@ function DetailField({
             select || date ? "detail-control select-like" : "detail-control"
           }
         >
-          <span>{value || " "}</span>
+          <span>{money ? formatCop(value) : value || " "}</span>
           {select && <ChevronDown size={13} />}
           {date && <CalendarDays size={13} />}
         </div>

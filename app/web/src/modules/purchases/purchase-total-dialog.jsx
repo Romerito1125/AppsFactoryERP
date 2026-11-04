@@ -4,11 +4,11 @@ import { X } from "lucide-react";
 import { advanceFrom } from "@/lib/enter-advance";
 import { apiClient } from "@/lib/api-client";
 import "./purchase-total-dialog.css";
+import { formatCop, readCopInput } from "@/lib/cop";
+import { CopInput } from "@/components/money/cop-input";
 
-const round = (value) => Math.round((Number(value) || 0) * 100) / 100;
-
-const money = (value) =>
-  new Intl.NumberFormat("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value ?? 0));
+// En COP los importes son pesos enteros: cada total se redondea al peso.
+const round = (value) => Math.round(Number(value) || 0);
 
 const num = (value) => {
   const parsed = Number(String(value ?? "").trim().replace(",", "."));
@@ -166,40 +166,38 @@ export function PurchaseTotalDialog({
         <div className="purchase-total-body">
           <label>
             <span>Total operación</span>
-            <output>{money(totals.total)}</output>
+            <output>{formatCop(totals.total)}</output>
           </label>
           <label>
             <span>Primer descuento</span>
             <div className="pt-pair">
               <input value={d1} placeholder="0,00" inputMode="decimal" onChange={(e) => isDraft(e.target.value) && setD1(e.target.value)} />
-              <b>{money(d1Amount)} · {money(num(d1))}%</b>
+              <b>{formatCop(d1Amount)} · {formatCop(num(d1))}%</b>
             </div>
           </label>
           <label>
             <span>Segundo descuento</span>
             <div className="pt-pair">
               <input value={d2} placeholder="0,00" inputMode="decimal" onChange={(e) => isDraft(e.target.value) && setD2(e.target.value)} />
-              <b>{money(d2Amount)} · {money(num(d2))}%</b>
+              <b>{formatCop(d2Amount)} · {formatCop(num(d2))}%</b>
             </div>
           </label>
           <label>
             <span>Flete</span>
-            <input value={freight} placeholder="0,00" inputMode="decimal" onChange={(e) => isDraft(e.target.value) && setFreight(e.target.value)} />
+            <CopInput value={readCopInput(freight).value} onChange={(amount) => setFreight(String(amount))} />
           </label>
           <label>
             <span>Total neto</span>
-            <output>{money(totalNet)}</output>
+            <output>{formatCop(totalNet)}</output>
           </label>
           <label>
             <span>Base imponible</span>
             <div className="pt-pair">
-              <input
-                value={baseText}
-                placeholder={money(calculatedBase)}
-                inputMode="decimal"
-                onChange={(e) => isDraft(e.target.value) && setBaseText(e.target.value)}
+              <CopInput
+                value={baseText === "" ? calculatedBase : readCopInput(baseText).value}
+                onChange={(amount) => setBaseText(String(amount))}
               />
-              <b>Antes de IVA: {money(calculatedBase)}</b>
+              <b>Antes de IVA: {formatCop(calculatedBase)}</b>
             </div>
           </label>
           {baseEdited && (
@@ -212,16 +210,16 @@ export function PurchaseTotalDialog({
             <span>Retenciones (% sobre la base)</span>
             <div className="pt-pair">
               <input value={rate} placeholder="0" inputMode="decimal" onChange={(e) => isDraft(e.target.value) && setRate(e.target.value)} />
-              <b>{money(retentionAmount)}</b>
+              <b>{formatCop(retentionAmount)}</b>
             </div>
           </label>
           <label>
             <span>Total a pagar</span>
-            <output>{money(payable)}</output>
+            <output>{formatCop(payable)}</output>
           </label>
           <label>
             <span>Efectivo</span>
-            <input value={cash} placeholder="0,00" inputMode="decimal" onChange={(e) => isDraft(e.target.value) && setCash(e.target.value)} />
+            <CopInput value={readCopInput(cash).value} onChange={(amount) => setCash(String(amount))} />
           </label>
           {paid > 0 && (
             <label>
@@ -235,11 +233,11 @@ export function PurchaseTotalDialog({
           )}
           <label>
             <span>Total pagado</span>
-            <output>{money(paid)}</output>
+            <output>{formatCop(paid)}</output>
           </label>
           <label>
             <span>Saldo pendiente</span>
-            <output className={pending < -0.009 ? "is-bad" : ""}>{money(pending)}</output>
+            <output className={pending < -0.009 ? "is-bad" : ""}>{formatCop(pending)}</output>
           </label>
           <label>
             <span>Orden de compra</span>

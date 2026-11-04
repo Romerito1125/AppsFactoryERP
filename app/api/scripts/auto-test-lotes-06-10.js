@@ -114,7 +114,7 @@ const fails = async (fn, status) => {
   await test(8, 'Base automática sin editar no exige motivo', async () => {
     const p = await api('POST', '/compras', {
       providerId: ctx.provider.id, warehouseId: ctx.whA.id, items: [{ productId: ctx.product.id, quantity: 1, unitCost: 1000 }],
-      retentionBase: 840.34, retentionBaseEdited: false, retentionRate: 2.5,
+      retentionBase: 840, retentionBaseEdited: false, retentionRate: 2.5,
     });
     cleanup.purchases.push(p.id);
     assert(p.retentionBaseReason == null, 'no debería tener motivo');

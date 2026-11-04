@@ -3,10 +3,9 @@ import { Download, Printer } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
 import { downloadCsv, downloadPdf } from "@/lib/simple-pdf";
+import { formatCop } from "@/lib/cop";
 
-const money = (value) =>
-  Number(value ?? 0).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const signed = (value) => (Number(value) < 0 ? `-$${money(Math.abs(value))}` : `$${money(value)}`);
+const signed = (value) => (Number(value) < 0 ? `-${formatCop(Math.abs(value))}` : `${formatCop(value)}`);
 const day = (value) => (value ? new Date(value).toLocaleDateString("es-CO") : "-");
 // Día local (no UTC): en Colombia después de las 7 p. m. el día UTC ya cambió.
 const dayKey = (value) => (value ? new Date(value).toLocaleDateString("en-CA") : "");
@@ -68,14 +67,14 @@ export function RetentionsReport({ purchases, inPeriod }) {
   );
   const totalRetention = rows.reduce((sum, row) => sum + row.retencion, 0);
   const headers = ["Fecha", "Documento", "Proveedor", "NIT", "Base", "Tasa %", "Retención", "Neto a pagar", "Base corregida"];
-  const body = rows.map((r) => [r.fecha, r.documento, r.proveedor, r.nit, `$${money(r.base)}`, money(r.tasa), `$${money(r.retencion)}`, `$${money(r.neto)}`, r.corregida]);
+  const body = rows.map((r) => [r.fecha, r.documento, r.proveedor, r.nit, `${formatCop(r.base)}`, formatCop(r.tasa), `${formatCop(r.retencion)}`, `${formatCop(r.neto)}`, r.corregida]);
   return (
     <>
       <Actions
         onCsv={() => downloadCsv("retenciones-compras", headers, rows.map((r) => [r.fecha, r.documento, r.proveedor, r.nit, r.base, r.tasa, r.retencion, r.neto, r.corregida]))}
-        onPdf={() => downloadPdf("retenciones-compras", ["MUNDO TIENDA - Retenciones de compras", "", ...rows.map((r) => `${r.fecha} | ${r.documento} | ${r.proveedor} | base ${money(r.base)} | ${money(r.tasa)}% | ret ${money(r.retencion)}`), "", `Total retenido: ${money(totalRetention)}`])}
+        onPdf={() => downloadPdf("retenciones-compras", ["MUNDO TIENDA - Retenciones de compras", "", ...rows.map((r) => `${r.fecha} | ${r.documento} | ${r.proveedor} | base ${formatCop(r.base)} | ${formatCop(r.tasa)}% | ret ${formatCop(r.retencion)}`), "", `Total retenido: ${formatCop(totalRetention)}`])}
       />
-      <Table headers={headers} rows={body} footer={["", "", "TOTAL RETENIDO", "", "", "", `$${money(totalRetention)}`, "", ""]} />
+      <Table headers={headers} rows={body} footer={["", "", "TOTAL RETENIDO", "", "", "", `${formatCop(totalRetention)}`, "", ""]} />
     </>
   );
 }
@@ -168,13 +167,13 @@ export function CrossSalesReport({ invoices, inPeriod, warehouses }) {
         </select>
         <Actions
           onCsv={() => downloadCsv("ventas-cruzadas", headers, rows)}
-          onPdf={() => downloadPdf("ventas-cruzadas", ["MUNDO TIENDA - Ventas cruzadas por " + headers[0], "", ...rows.map((r) => `${r[0]} | fact ${r[1]} | und ${r[2]} | venta ${money(r[3])} | dev ${money(r[4])} | neto ${money(r[5])}`), "", `Neto total: ${money(totalNet)}`])}
+          onPdf={() => downloadPdf("ventas-cruzadas", ["MUNDO TIENDA - Ventas cruzadas por " + headers[0], "", ...rows.map((r) => `${r[0]} | fact ${r[1]} | und ${r[2]} | venta ${formatCop(r[3])} | dev ${formatCop(r[4])} | neto ${formatCop(r[5])}`), "", `Neto total: ${formatCop(totalNet)}`])}
         />
       </div>
       <Table
         headers={headers}
-        rows={rows.map((r) => [r[0], r[1], r[2], `$${money(r[3])}`, `$${money(r[4])}`, `$${money(r[5])}`])}
-        footer={["TOTAL", "", "", "", "", `$${money(totalNet)}`]}
+        rows={rows.map((r) => [r[0], r[1], r[2], `${formatCop(r[3])}`, `${formatCop(r[4])}`, `${formatCop(r[5])}`])}
+        footer={["TOTAL", "", "", "", "", `${formatCop(totalNet)}`]}
       />
     </>
   );
@@ -246,7 +245,7 @@ export function DayCloseReport() {
         <label>Día <input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <Actions
           onCsv={() => downloadCsv(`cierre-${date}`, headers, rows)}
-          onPdf={() => downloadPdf(`cierre-${date}`, [`MUNDO TIENDA - Cierre del dia ${date}`, "", ...rows.map((r) => `${r[0]} | docs ${r[1]} | ${money(r[2])} | ${r[3]}`), "", `Movimiento neto de caja: ${money(cashEffect)}`])}
+          onPdf={() => downloadPdf(`cierre-${date}`, [`MUNDO TIENDA - Cierre del dia ${date}`, "", ...rows.map((r) => `${r[0]} | docs ${r[1]} | ${formatCop(r[2])} | ${r[3]}`), "", `Movimiento neto de caja: ${formatCop(cashEffect)}`])}
         />
       </div>
       {data.loading ? (

@@ -1,0 +1,46 @@
+{
+  "at": "2026-11-04T14:28:04.220Z",
+  "tag": "QA-FIN-1793802475850",
+  "results": [
+    {
+      "name": "crear cuenta con saldo inicial genera movimiento «Saldo inicial»",
+      "ok": true
+    },
+    {
+      "name": "PATCH con currentBalance no cambia el saldo (validación en lista blanca)",
+      "ok": true
+    },
+    {
+      "name": "ajuste a la baja guarda la diferencia con signo negativo",
+      "ok": true
+    },
+    {
+      "name": "ajuste a la alza guarda la diferencia con signo positivo",
+      "ok": true
+    },
+    {
+      "name": "ajuste sin motivo útil es rechazado",
+      "ok": true
+    },
+    {
+      "name": "ajuste al mismo valor es rechazado",
+      "ok": true
+    },
+    {
+      "name": "ingreso y egreso manuales se auditan con el usuario",
+      "ok": true
+    },
+    {
+      "name": "el ajuste queda en auditoría",
+      "ok": true
+    },
+    {
+      "name": "cambios de cuenta (crear, editar, desactivar) quedan en auditoría",
+      "ok": true
+    },
+    {
+      "name": "saldo final = inicial + ajustes + ingreso − egreso (conciliación)",
+      "ok": true
+    }
+  ]
+}

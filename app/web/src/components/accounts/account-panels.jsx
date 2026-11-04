@@ -1,14 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import "./account-panels.css";
+import { formatCop } from "@/lib/cop";
 
 const round = (value) => Math.round((Number(value) || 0) * 100) / 100;
-
-export const money = (value) =>
-  new Intl.NumberFormat("es-CO", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
 
 // Saint muestra fechas cortas: 19/08/26.
 export const shortDate = (value) =>
@@ -172,7 +167,7 @@ export function LedgerPanel({
                 <td />
                 <td />
                 <td />
-                <td className="n">{money(data.opening)}</td>
+                <td className="n">{formatCop(data.opening)}</td>
               </tr>
             ) : null}
             {rows.map((row) => (
@@ -183,9 +178,9 @@ export function LedgerPanel({
               >
                 <td>{rowLabel(row)}</td>
                 <td>{shortDate(row.date)}</td>
-                <td className="n">{row.debit ? money(row.debit) : ""}</td>
-                <td className="n">{row.credit ? money(row.credit) : ""}</td>
-                <td className="n">{money(row.balance)}</td>
+                <td className="n">{row.debit ? formatCop(row.debit) : ""}</td>
+                <td className="n">{row.credit ? formatCop(row.credit) : ""}</td>
+                <td className="n">{formatCop(row.balance)}</td>
               </tr>
             ))}
             {!rows.length && !data?.opening && (
@@ -219,9 +214,9 @@ export function LedgerPanel({
           </span>
         </div>
         <div className="saint-footer-info">
-          <span>Monto <b>{selected?.docAmount != null ? money(selected.docAmount) : ""}</b></span>
+          <span>Monto <b>{selected?.docAmount != null ? formatCop(selected.docAmount) : ""}</b></span>
           <span>Emisión <b>{selected ? longDate(selected.date) : ""}</b></span>
-          <span>Saldo <b>{selected?.docBalance != null ? money(selected.docBalance) : ""}</b></span>
+          <span>Saldo <b>{selected?.docBalance != null ? formatCop(selected.docBalance) : ""}</b></span>
           <span>Vence <b>{selected?.dueDate ? longDate(selected.dueDate) : ""}</b></span>
         </div>
       </div>
@@ -266,7 +261,7 @@ export function PendingList({ rows, onPay, canEdit }) {
                   <td>{row.detail}</td>
                   <td>{shortDate(row.dueAt)}</td>
                   <td className="n">{days === null ? "" : Math.max(days, 0)}</td>
-                  <td className="n">{money(row.balance)}</td>
+                  <td className="n">{formatCop(row.balance)}</td>
                 </tr>
               );
             })}
@@ -287,9 +282,9 @@ export function PendingList({ rows, onPay, canEdit }) {
           </span>
         </div>
         <div className="saint-footer-info">
-          <span>Monto <b>{selected ? money(selected.amount) : ""}</b></span>
+          <span>Monto <b>{selected ? formatCop(selected.amount) : ""}</b></span>
           <span>Emisión <b>{selected ? longDate(selected.issuedAt) : ""}</b></span>
-          <span>Saldo <b>{selected ? money(selected.balance) : ""}</b></span>
+          <span>Saldo <b>{selected ? formatCop(selected.balance) : ""}</b></span>
           <span>Vencimiento <b>{selected?.dueAt ? longDate(selected.dueAt) : ""}</b></span>
         </div>
       </div>
@@ -372,19 +367,19 @@ export function AgingAnalysis({ rows }) {
           {analysis.overdue.map((item) => (
             <div className="saint-aging-row" key={item.label}>
               <span>{item.label}</span>
-              <b>{money(item.value)}</b>
+              <b>{formatCop(item.value)}</b>
               <i>{pct(item.value, analysis.totalOverdue)} %</i>
             </div>
           ))}
           <div className="saint-aging-row is-total">
             <span>Total vencido</span>
-            <b>{money(analysis.totalOverdue)}</b>
+            <b>{formatCop(analysis.totalOverdue)}</b>
             <i>{analysis.totalOverdue > 0 ? "100,00" : "0,00"} %</i>
           </div>
           <h4>Cuentas por vencer</h4>
           <div className="saint-aging-row is-total">
             <span>Total por vencer</span>
-            <b>{money(analysis.notDue)}</b>
+            <b>{formatCop(analysis.notDue)}</b>
             <i />
           </div>
         </div>

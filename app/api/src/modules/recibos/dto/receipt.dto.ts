@@ -1,3 +1,4 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -6,7 +7,6 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
-  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
@@ -22,15 +22,15 @@ const SUPPORT_PATTERN = /^data:(image\/[a-z0-9.+-]+|application\/pdf);base64,/i;
 
 export class ReceiptInstrumentDto {
   @Type(() => Number) @IsInt() @IsPositive() bankAccountId: number;
-  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @IsPositive() amount: number;
+  @Type(() => Number) @IsCop() @IsPositive() amount: number;
   @IsOptional() @IsString() @MaxLength(120) reference?: string;
 }
 
 export class ReceiptAllocationDto {
   @IsOptional() @Type(() => Number) @IsInt() @IsPositive() creditId?: number;
   @IsOptional() @Type(() => Number) @IsInt() @IsPositive() purchaseOrderId?: number;
-  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @IsPositive() amount: number;
-  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) retention?: number;
+  @Type(() => Number) @IsCop() @IsPositive() amount: number;
+  @IsOptional() @Type(() => Number) @IsCop() @Min(0) retention?: number;
 }
 
 export class CreateReceiptDto {
@@ -48,7 +48,7 @@ export class CreateReceiptDto {
   @Type(() => ReceiptAllocationDto)
   allocations: ReceiptAllocationDto[];
 
-  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) cashAmount?: number;
+  @IsOptional() @Type(() => Number) @IsCop() @Min(0) cashAmount?: number;
   @IsOptional() @Type(() => Number) @IsInt() @IsPositive() cashAccountId?: number;
 
   @IsOptional()

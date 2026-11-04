@@ -1,12 +1,6 @@
+import { formatCop } from "@/lib/cop";
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
-
-const money = (value) =>
-  new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    minimumFractionDigits: 2,
-  }).format(Number(value ?? 0));
 
 const date = (value) =>
   value ? new Intl.DateTimeFormat("es-CO", { dateStyle: "short" }).format(new Date(value)) : "—";
@@ -21,13 +15,13 @@ export function printReceipt(receipt, { party = "", copies = 1 } = {}) {
   const rows = (receipt.allocations ?? [])
     .map(
       (line) =>
-        `<tr><td>${esc(line.number)}</td><td class="n">${money(line.amount)}</td><td class="n">${money(line.retention ?? 0)}</td></tr>`,
+        `<tr><td>${esc(line.number)}</td><td class="n">${formatCop(line.amount)}</td><td class="n">${formatCop(line.retention ?? 0)}</td></tr>`,
     )
     .join("");
   const instruments = (receipt.instruments ?? [])
     .map(
       (item) =>
-        `<tr><td>${esc(item.name)}${item.reference ? ` · ${esc(item.reference)}` : ""}</td><td class="n">${money(item.amount)}</td></tr>`,
+        `<tr><td>${esc(item.name)}${item.reference ? ` · ${esc(item.reference)}` : ""}</td><td class="n">${formatCop(item.amount)}</td></tr>`,
     )
     .join("");
   const page = (index) => `
@@ -51,7 +45,7 @@ export function printReceipt(receipt, { party = "", copies = 1 } = {}) {
         <thead><tr><th>Medio de pago</th><th>Valor</th></tr></thead>
         <tbody>${instruments}</tbody>
       </table>
-      <p class="total">Total ${isCollection ? "acreditado" : "pagado"}: <b>${money(receipt.totalAmount)}</b></p>
+      <p class="total">Total ${isCollection ? "acreditado" : "pagado"}: <b>${formatCop(receipt.totalAmount)}</b></p>
       ${receipt.comments ? `<p class="notes">Comentarios: ${esc(receipt.comments)}</p>` : ""}
       <p class="sign">_____________________ Firma</p>
     </section>`;

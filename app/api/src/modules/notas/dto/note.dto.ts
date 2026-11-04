@@ -1,9 +1,9 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { Type } from 'class-transformer';
 import {
   IsDateString,
   IsEnum,
   IsInt,
-  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
@@ -21,7 +21,7 @@ export class CreateNoteDto {
   @IsOptional() @Type(() => Number) @IsInt() @IsPositive() purchaseOrderId?: number;
   @IsString() @MinLength(1) @MaxLength(40) documentNumber: string;
   @IsString() @MinLength(2) @MaxLength(300) detail: string;
-  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @IsPositive() amount: number;
+  @Type(() => Number) @IsCop() @IsPositive() amount: number;
   @IsOptional() @IsDateString() dueDate?: string;
   // Cuenta de la que sale el anticipo a un proveedor.
   @IsOptional() @Type(() => Number) @IsInt() @IsPositive() bankAccountId?: number;
@@ -29,7 +29,7 @@ export class CreateNoteDto {
 
 export class ApplyAdvanceNoteDto {
   @Type(() => Number) @IsInt() @IsPositive() purchaseOrderId: number;
-  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @IsPositive() amount: number;
+  @Type(() => Number) @IsCop() @IsPositive() amount: number;
 }
 
 export class VoidNoteDto {

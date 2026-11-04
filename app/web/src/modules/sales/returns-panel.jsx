@@ -3,14 +3,7 @@ import { RotateCcw, Search } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
 import "./returns-panel.css";
-
-const money = (value) =>
-  new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
+import { formatCop } from "@/lib/cop";
 
 const dateTime = (value) =>
   value
@@ -133,7 +126,7 @@ export function ReturnsPanel({ invoices, bankAccounts, canCreate, onCreated }) {
     if (reason.trim().length < 3) return setError("Escribe el motivo de la devolución.");
     if (estimate.remainder > 0.009 && !refundMethod) {
       return setError(
-        `Elige cómo se devuelven ${money(estimate.remainder)} ya pagados: de una cuenta o como saldo a favor.`,
+        `Elige cómo se devuelven ${formatCop(estimate.remainder)} ya pagados: de una cuenta o como saldo a favor.`,
       );
     }
     if (refundMethod === "CUENTA" && estimate.remainder > 0.009 && !bankAccountId) {
@@ -154,7 +147,7 @@ export function ReturnsPanel({ invoices, bankAccounts, canCreate, onCreated }) {
             }
           : {}),
       });
-      setNotice(`Devolución ${created.consecutive} registrada por ${money(created.total)}.`);
+      setNotice(`Devolución ${created.consecutive} registrada por ${formatCop(created.total)}.`);
       setReason("");
       setQuantities({});
       setRefundMethod("");
@@ -190,7 +183,7 @@ export function ReturnsPanel({ invoices, bankAccounts, canCreate, onCreated }) {
               <option value="">Selecciona una factura</option>
               {candidates.map((invoice) => (
                 <option key={invoice.id} value={invoice.id}>
-                  {invoice.consecutive} · {clientLabel(invoice.client)} · {money(invoice.total)}
+                  {invoice.consecutive} · {clientLabel(invoice.client)} · {formatCop(invoice.total)}
                 </option>
               ))}
             </select>
@@ -201,7 +194,7 @@ export function ReturnsPanel({ invoices, bankAccounts, canCreate, onCreated }) {
                 <span>Cliente: <b>{clientLabel(detail.invoice.client)}</b></span>
                 <span>Modalidad: <b>{detail.invoice.saleMode}</b></span>
                 {detail.invoice.creditBalance !== null && (
-                  <span>Deuda pendiente: <b>{money(detail.invoice.creditBalance)}</b></span>
+                  <span>Deuda pendiente: <b>{formatCop(detail.invoice.creditBalance)}</b></span>
                 )}
               </div>
               <table className="returns-table">
@@ -222,7 +215,7 @@ export function ReturnsPanel({ invoices, bankAccounts, canCreate, onCreated }) {
                       <td>{item.sold}</td>
                       <td>{item.returned}</td>
                       <td>{item.available}</td>
-                      <td>{money(item.unitTotal)}</td>
+                      <td>{formatCop(item.unitTotal)}</td>
                       <td>
                         <input
                           inputMode="decimal"
@@ -244,7 +237,7 @@ export function ReturnsPanel({ invoices, bankAccounts, canCreate, onCreated }) {
                 {estimate.remainder > 0.009 && (
                   <>
                     <label>
-                      <span>Valor ya pagado a devolver: {money(estimate.remainder)}</span>
+                      <span>Valor ya pagado a devolver: {formatCop(estimate.remainder)}</span>
                       <select
                         value={refundMethod}
                         onChange={(event) => setRefundMethod(event.target.value)}
@@ -274,9 +267,9 @@ export function ReturnsPanel({ invoices, bankAccounts, canCreate, onCreated }) {
                 )}
               </div>
               <div className="returns-summary">
-                <span>Total a devolver <b>{money(estimate.total)}</b></span>
-                <span>Reduce deuda <b>{money(estimate.creditApplied)}</b></span>
-                <span>Dinero / saldo a favor <b>{money(estimate.remainder)}</b></span>
+                <span>Total a devolver <b>{formatCop(estimate.total)}</b></span>
+                <span>Reduce deuda <b>{formatCop(estimate.creditApplied)}</b></span>
+                <span>Dinero / saldo a favor <b>{formatCop(estimate.remainder)}</b></span>
                 <button
                   type="button"
                   className="primary-action"
@@ -338,10 +331,10 @@ export function ReturnsPanel({ invoices, bankAccounts, canCreate, onCreated }) {
                     .join(", ")}
                 </td>
                 <td>{row.reason}</td>
-                <td>{money(row.total)}</td>
-                <td>{money(row.creditApplied)}</td>
-                <td>{money(row.refundedAmount)}</td>
-                <td>{money(row.advanceAmount)}</td>
+                <td>{formatCop(row.total)}</td>
+                <td>{formatCop(row.creditApplied)}</td>
+                <td>{formatCop(row.refundedAmount)}</td>
+                <td>{formatCop(row.advanceAmount)}</td>
                 <td>{row.createdByUsername ?? "—"}</td>
               </tr>
             ))}

@@ -2,13 +2,8 @@ import { useState } from "react";
 import { Banknote, Plus, X } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
-
-const money = (value) =>
-  new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
+import { formatCop, readCopInput } from "@/lib/cop";
+import { CopInput } from "@/components/money/cop-input";
 
 const dateText = (value) =>
   value ? new Intl.DateTimeFormat("es-CO").format(new Date(value)) : "—";
@@ -96,7 +91,7 @@ export function AdvancesPanel({
     <div className="provider-tab-panel data-panel">
       <div className="payable-filter-row">
         <label>Anticipos y saldos a favor</label>
-        <span>Disponible: {money(available)}</span>
+        <span>Disponible: {formatCop(available)}</span>
         <button
           type="button"
           disabled={!canEdit || !client}
@@ -128,9 +123,9 @@ export function AdvancesPanel({
                   <td>{advance.consecutive}</td>
                   <td>{dateText(advance.createdAt)}</td>
                   <td>{advance.source === "DEVOLUCION" ? "Devolución" : "Anticipo"}</td>
-                  <td>{money(advance.amount)}</td>
-                  <td>{money(advance.appliedAmount)}</td>
-                  <td>{money(advance.balance)}</td>
+                  <td>{formatCop(advance.amount)}</td>
+                  <td>{formatCop(advance.appliedAmount)}</td>
+                  <td>{formatCop(advance.balance)}</td>
                   <td>{statusText[advance.status] ?? advance.status}</td>
                   <td>
                     {advance.status === "DISPONIBLE" && canEdit && (
@@ -198,12 +193,9 @@ export function AdvancesPanel({
               {dialog.type === "create" && (
                 <label className="editor-field">
                   <span>Monto</span>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={dialog.amount}
-                    onChange={(event) => setDialog({ ...dialog, amount: event.target.value })}
+                  <CopInput
+                    value={readCopInput(dialog.amount).value}
+                    onChange={(amount) => setDialog({ ...dialog, amount: String(amount) })}
                   />
                 </label>
               )}
@@ -232,19 +224,16 @@ export function AdvancesPanel({
                       {openCredits.map((credit) => (
                         <option key={credit.id} value={credit.id}>
                           {credit.invoice?.consecutive ?? `CR-${credit.id}`} · saldo{" "}
-                          {money(credit.balance)}
+                          {formatCop(credit.balance)}
                         </option>
                       ))}
                     </select>
                   </label>
                   <label className="editor-field">
-                    <span>Monto (máx. {money(dialog.advance.balance)})</span>
-                    <input
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      value={dialog.amount}
-                      onChange={(event) => setDialog({ ...dialog, amount: event.target.value })}
+                    <span>Monto (máx. {formatCop(dialog.advance.balance)})</span>
+                    <CopInput
+                      value={readCopInput(dialog.amount).value}
+                      onChange={(amount) => setDialog({ ...dialog, amount: String(amount) })}
                     />
                   </label>
                 </>
@@ -271,7 +260,7 @@ export function AdvancesPanel({
               )}
               {dialog.type === "refund" && (
                 <p className="receivable-payment-hint">
-                  Se devolverán <strong>{money(dialog.advance.balance)}</strong> en dinero.
+                  Se devolverán <strong>{formatCop(dialog.advance.balance)}</strong> en dinero.
                 </p>
               )}
               {dialog.type === "create" && (

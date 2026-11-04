@@ -1,0 +1,12 @@
+/* Input de dinero en COP. Los módulos conservan su estilo; esto solo marca errores. */
+.cop-input.is-invalid {
+  outline: 1px solid #c45454;
+  background: #fdf0ef;
+}
+
+.cop-input-error {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: #a1281f;
+}

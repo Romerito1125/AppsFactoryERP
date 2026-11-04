@@ -5,7 +5,6 @@ import {
   AccountOperations,
   AgingAnalysis,
   LedgerPanel,
-  money,
   PendingList,
 } from "@/components/accounts/account-panels";
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
@@ -16,6 +15,7 @@ import { printReceipt } from "@/components/payments/print-receipt";
 import { ReceiptEditDialog } from "@/components/payments/receipt-dialogs";
 import { viewReceiptSupport } from "@/components/payments/support-file";
 import { apiClient } from "@/lib/api-client";
+import { formatCop } from "@/lib/cop";
 
 // Mismas pestañas y pantallas que Cuentas por cobrar (captura 34 del PDF).
 const tabs = [
@@ -209,7 +209,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
     setStatementKey((key) => key + 1);
     setActiveTab("statement");
     setNotice(
-      `Pago ${receipt.documentNumber} registrado por ${money(receipt.totalAmount)}; el banco quedó actualizado.`,
+      `Pago ${receipt.documentNumber} registrado por ${formatCop(receipt.totalAmount)}; el banco quedó actualizado.`,
     );
   }
 
@@ -570,7 +570,7 @@ function BalanceField({ label, value, accent = false, muted = false }) {
       className={`payable-balance ${accent ? "is-accent" : ""} ${muted ? "is-muted" : ""}`}
     >
       <span>{label}</span>
-      <strong>{money(value)}</strong>
+      <strong>{formatCop(value)}</strong>
     </div>
   );
 }

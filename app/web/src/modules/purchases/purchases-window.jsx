@@ -38,6 +38,8 @@ import { PurchaseTotalDialog } from "./purchase-total-dialog";
 import { DraftsDialog, saveDraft } from "@/components/drafts/drafts-dialog";
 import { downloadPdf } from "@/lib/simple-pdf";
 import "./purchases-reports.css";
+import { formatCop, readCopInput } from "@/lib/cop";
+import { CopInput } from "@/components/money/cop-input";
 
 const viewLabels = {
   purchases: "Compras",
@@ -1308,18 +1310,11 @@ function PurchaseDocumentPanel({
                   </small>
                 </td>
                 <td>
-                  <input
+                  <CopInput
                     className="table-number-input table-cost-input"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={item.unitCost}
-                    onChange={(event) =>
-                      onUpdateItem(
-                        item.productId,
-                        "unitCost",
-                        event.target.value,
-                      )
+                    value={Math.round(Number(item.unitCost) || 0)}
+                    onChange={(amount) =>
+                      onUpdateItem(item.productId, "unitCost", String(amount))
                     }
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" || event.shiftKey) return;
@@ -1344,7 +1339,7 @@ function PurchaseDocumentPanel({
                   />
                 ))}
                 <td className="number-cell">
-                  {formatCurrency(lineTotal(item))}
+                  {formatCop(lineTotal(item))}
                 </td>
                 <td>
                   <button
@@ -1413,11 +1408,11 @@ function PurchaseDocumentPanel({
               <dt>IVA</dt><dd>{formatQuantity(infoItem.product?.taxRate ?? 0)} %</dd>
               <dt>Existencia</dt><dd>{formatQuantity(productStock(infoItem.product))}</dd>
               <dt>Costo anterior</dt>
-              <dd>{formatCurrency(defaultCostForUnit(infoItem.product, infoItem.unit))}</dd>
+              <dd>{formatCop(defaultCostForUnit(infoItem.product, infoItem.unit))}</dd>
               {[0, 1, 2, 3].map((level) => (
                 <Fragment key={level}>
                   <dt>Precio {level}</dt>
-                  <dd>{formatCurrency(levelGross(infoItem, level))}</dd>
+                  <dd>{formatCop(levelGross(infoItem, level))}</dd>
                 </Fragment>
               ))}
             </dl>
@@ -1452,25 +1447,25 @@ function PurchaseTotalsPanel({ title, totals }) {
       </div>
       <div className="purchase-number-row">
         <span>Total renglones</span>
-        <strong>{formatCurrency(totals.lines)}</strong>
+        <strong>{formatCop(totals.lines)}</strong>
       </div>
       <div className="purchase-number-row">
         <span>Impuestos</span>
-        <strong>{formatCurrency(totals.taxes)}</strong>
+        <strong>{formatCop(totals.taxes)}</strong>
       </div>
       <div className="purchase-number-row purchase-grand-total">
         <span>Total</span>
-        <strong>{formatCurrency(totals.total)}</strong>
+        <strong>{formatCop(totals.total)}</strong>
       </div>
       {hasRetention && (
         <>
           <div className="purchase-number-row">
             <span>Retención ({formatQuantity(totals.retentionRate)}%)</span>
-            <strong>-{formatCurrency(totals.retentionAmount)}</strong>
+            <strong>-{formatCop(totals.retentionAmount)}</strong>
           </div>
           <div className="purchase-number-row">
             <span>Total a pagar</span>
-            <strong>{formatCurrency(totals.payableTotal ?? totals.total)}</strong>
+            <strong>{formatCop(totals.payableTotal ?? totals.total)}</strong>
           </div>
         </>
       )}
@@ -1503,25 +1498,22 @@ function PurchasePriceCell({ item, level, onChange }) {
       : null;
 
   function commit() {
-    const parsed = Number(String(draft).trim().replace(",", "."));
-    if (!draft.trim() || !Number.isFinite(parsed) || parsed <= 0) {
+    const parsed = readCopInput(draft).value;
+    if (parsed <= 0) {
       setDraft(gross > 0 ? String(gross) : "");
       return;
     }
-    onChange(item.productId, level, Math.round(parsed * 100) / 100);
+    onChange(item.productId, level, parsed);
   }
 
   return (
     <td className={`number-cell purchase-price-cell ${pending > 0 ? "is-edited" : ""}`}>
-      <input
+      <CopInput
         className="table-number-input"
-        inputMode="decimal"
-        value={draft}
         placeholder="—"
         aria-label={`Precio ${level} con IVA de ${productName(item.product)}`}
-        onChange={(event) => {
-          if (/^\d*([.,]\d{0,2})?$/.test(event.target.value)) setDraft(event.target.value);
-        }}
+        value={readCopInput(draft).value}
+        onChange={(amount) => setDraft(String(amount))}
         onBlur={commit}
         onKeyDown={(event) => {
           if (event.key === "Enter") commit();
@@ -1607,7 +1599,7 @@ function PurchaseOrdersPanel({
                   {warehouseName(order.warehouse)}
                 </td>
                 <td>{formatDate(order.orderedAt ?? order.createdAt)}</td>
-                <td className="number-cell">{formatCurrency(order.total)}</td>
+                <td className="number-cell">{formatCop(order.total)}</td>
                 <td>
                   <span
                     className={`purchase-status status-${String(order.status ?? "").toLowerCase()}`}
@@ -1723,11 +1715,11 @@ function PurchaseReportsPanel({ orders, providers = [], warehouses = [], onViewP
   function updateFilter(setter, value) { setter(value); setPage(1); }
   function exportCsv() { const rows = filteredOrders.map((order) => [formatDate(order.orderedAt ?? order.createdAt), orderNumber(order), order.provider?.name ?? "—", order.warehouse?.location ?? "—", statusLabels[order.status] ?? order.status ?? "—", Number(order.subtotal ?? 0).toFixed(2), (Number(order.total ?? 0) - Number(order.subtotal ?? 0)).toFixed(2), Number(order.total ?? 0).toFixed(2), Number(order.balance ?? order.payableTotal ?? 0).toFixed(2)]); downloadPurchaseReport([['Fecha', 'Compra', 'Proveedor', 'Bodega', 'Estado', 'Subtotal', 'Impuestos', 'Total', 'Saldo'], ...rows], `compras-${period.toLowerCase()}.csv`, "text/csv;charset=utf-8"); }
   async function exportExcel() { const XLSX = await import("xlsx"); const workbook = XLSX.utils.book_new(); const appendSheet = (name, rows, widths) => { const sheet = XLSX.utils.json_to_sheet(rows); sheet["!cols"] = widths.map((wch) => ({ wch })); if (rows.length) sheet["!autofilter"] = { ref: XLSX.utils.encode_range(XLSX.utils.decode_range(sheet["!ref"])) }; XLSX.utils.book_append_sheet(workbook, sheet, name); }; appendSheet("Resumen", [{ Indicador: "Periodo", Valor: range.label }, { Indicador: "Compras", Valor: totals.count }, { Indicador: "Subtotal", Valor: totals.subtotal }, { Indicador: "Impuestos", Valor: totals.taxes }, { Indicador: "Total", Valor: totals.total }, { Indicador: "Pendientes", Valor: totals.pending }, { Indicador: "Recibidas", Valor: totals.received }, { Indicador: "Saldo", Valor: totals.balance }], [28, 24]); appendSheet("Compras", filteredOrders.map((order) => ({ Fecha: formatDate(order.orderedAt ?? order.createdAt), Compra: orderNumber(order), Proveedor: order.provider?.name ?? "—", Bodega: order.warehouse?.location ?? "—", Estado: statusLabels[order.status] ?? order.status ?? "—", Subtotal: Number(order.subtotal ?? 0), Impuestos: Number(order.total ?? 0) - Number(order.subtotal ?? 0), Total: Number(order.total ?? 0), Saldo: Number(order.balance ?? order.payableTotal ?? 0) })), [15, 20, 28, 24, 16, 16, 16, 16, 16]); appendSheet("Proveedores", providerRows.map((row) => ({ Proveedor: row.name, Compras: row.orders, Total: row.total, "Días promedio": row.lead, "Entrega a tiempo": row.onTime == null ? "—" : `${row.onTime}%` })), [30, 14, 18, 16, 20]); appendSheet("Productos", topProducts.map((row) => ({ Producto: row.name, Solicitadas: row.quantity, Recibidas: row.received, Total: row.total })), [34, 16, 16, 18]); appendSheet("Evolución", timelineRows.map((row) => ({ Periodo: row.date, Compras: row.orders, Subtotal: row.subtotal, Impuestos: row.taxes, Total: row.total })), [16, 14, 18, 18, 18]); XLSX.writeFile(workbook, `reporte-compras-${period.toLowerCase()}.xlsx`); }
-  async function exportPdf() { const { jsPDF } = await import("jspdf"); const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" }); const pageWidth = doc.internal.pageSize.getWidth(); const margin = 34; doc.setFillColor(31, 51, 77); doc.rect(0, 0, pageWidth, 76, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("MUNDO TIENDA", margin, 32); doc.setFontSize(10); doc.text("REPORTE DE COMPRAS", margin, 51); doc.setFont("helvetica", "normal"); doc.text(`Periodo: ${range.label}`, pageWidth - margin, 32, { align: "right" }); let y = 108; const cards = [["Compras", totals.count], ["Subtotal", formatCurrency(totals.subtotal)], ["Impuestos", formatCurrency(totals.taxes)], ["Total", formatCurrency(totals.total)], ["Pendientes", totals.pending]]; const gap = 9; const cardWidth = (pageWidth - margin * 2 - gap * 4) / 5; cards.forEach(([label, value], index) => { const x = margin + index * (cardWidth + gap); doc.setFillColor(246, 249, 252); doc.roundedRect(x, y, cardWidth, 52, 5, 5, "F"); doc.setTextColor(103, 119, 139); doc.setFontSize(8); doc.text(label, x + 10, y + 19); doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text(String(value), x + 10, y + 39); doc.setFont("helvetica", "normal"); }); y += 82; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("Detalle de compras", margin, y); y += 19; doc.setFillColor(43, 108, 176); doc.rect(margin, y - 12, pageWidth - margin * 2, 22, "F"); doc.setTextColor(255, 255, 255); doc.setFontSize(8); ["Fecha", "Compra", "Proveedor", "Estado", "Total"].forEach((header, index) => doc.text(header, [margin + 7, margin + 80, margin + 220, margin + 470, pageWidth - margin - 7][index], y + 2, { align: index === 4 ? "right" : "left" })); y += 22; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "normal"); doc.setFontSize(8); filteredOrders.slice(0, 75).forEach((order, index) => { if (y > 555) { doc.addPage(); y = 50; } if (index % 2 === 0) { doc.setFillColor(248, 250, 252); doc.rect(margin, y - 11, pageWidth - margin * 2, 19, "F"); } doc.text(formatDate(order.orderedAt ?? order.createdAt), margin + 7, y); doc.text(orderNumber(order), margin + 80, y); doc.text(String(order.provider?.name ?? "—").slice(0, 28), margin + 220, y); doc.text(statusLabels[order.status] ?? order.status ?? "—", margin + 470, y); doc.text(formatCurrency(order.total), pageWidth - margin - 7, y, { align: "right" }); y += 19; }); doc.save(`reporte-compras-${period.toLowerCase()}.pdf`); }
+  async function exportPdf() { const { jsPDF } = await import("jspdf"); const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" }); const pageWidth = doc.internal.pageSize.getWidth(); const margin = 34; doc.setFillColor(31, 51, 77); doc.rect(0, 0, pageWidth, 76, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("MUNDO TIENDA", margin, 32); doc.setFontSize(10); doc.text("REPORTE DE COMPRAS", margin, 51); doc.setFont("helvetica", "normal"); doc.text(`Periodo: ${range.label}`, pageWidth - margin, 32, { align: "right" }); let y = 108; const cards = [["Compras", totals.count], ["Subtotal", formatCop(totals.subtotal)], ["Impuestos", formatCop(totals.taxes)], ["Total", formatCop(totals.total)], ["Pendientes", totals.pending]]; const gap = 9; const cardWidth = (pageWidth - margin * 2 - gap * 4) / 5; cards.forEach(([label, value], index) => { const x = margin + index * (cardWidth + gap); doc.setFillColor(246, 249, 252); doc.roundedRect(x, y, cardWidth, 52, 5, 5, "F"); doc.setTextColor(103, 119, 139); doc.setFontSize(8); doc.text(label, x + 10, y + 19); doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text(String(value), x + 10, y + 39); doc.setFont("helvetica", "normal"); }); y += 82; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("Detalle de compras", margin, y); y += 19; doc.setFillColor(43, 108, 176); doc.rect(margin, y - 12, pageWidth - margin * 2, 22, "F"); doc.setTextColor(255, 255, 255); doc.setFontSize(8); ["Fecha", "Compra", "Proveedor", "Estado", "Total"].forEach((header, index) => doc.text(header, [margin + 7, margin + 80, margin + 220, margin + 470, pageWidth - margin - 7][index], y + 2, { align: index === 4 ? "right" : "left" })); y += 22; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "normal"); doc.setFontSize(8); filteredOrders.slice(0, 75).forEach((order, index) => { if (y > 555) { doc.addPage(); y = 50; } if (index % 2 === 0) { doc.setFillColor(248, 250, 252); doc.rect(margin, y - 11, pageWidth - margin * 2, 19, "F"); } doc.text(formatDate(order.orderedAt ?? order.createdAt), margin + 7, y); doc.text(orderNumber(order), margin + 80, y); doc.text(String(order.provider?.name ?? "—").slice(0, 28), margin + 220, y); doc.text(statusLabels[order.status] ?? order.status ?? "—", margin + 470, y); doc.text(formatCop(order.total), pageWidth - margin - 7, y, { align: "right" }); y += 19; }); doc.save(`reporte-compras-${period.toLowerCase()}.pdf`); }
 
   return <div className="purchase-report-shell purchase-report-dashboard">
     <div className="purchase-report-hero"><div><span className="purchase-report-kicker">MÓDULO DE COMPRAS · ANALÍTICA</span><h2>Reportes de compras</h2><p>Controla inversión, proveedores, recepción, impuestos y saldos pendientes.</p></div><BarChart3 size={28} /></div>
-    <div className="purchase-report-cards"><PurchaseReportKpi label="Compras filtradas" value={totals.count} tone="blue" /><PurchaseReportKpi label="Subtotal" value={formatCurrency(totals.subtotal)} tone="navy" /><PurchaseReportKpi label="Impuestos" value={formatCurrency(totals.taxes)} tone="amber" /><PurchaseReportKpi label="Total" value={formatCurrency(totals.total)} tone="green" /><PurchaseReportKpi label="Saldo pendiente" value={formatCurrency(totals.balance)} tone="red" /></div>
+    <div className="purchase-report-cards"><PurchaseReportKpi label="Compras filtradas" value={totals.count} tone="blue" /><PurchaseReportKpi label="Subtotal" value={formatCop(totals.subtotal)} tone="navy" /><PurchaseReportKpi label="Impuestos" value={formatCop(totals.taxes)} tone="amber" /><PurchaseReportKpi label="Total" value={formatCop(totals.total)} tone="green" /><PurchaseReportKpi label="Saldo pendiente" value={formatCop(totals.balance)} tone="red" /></div>
     <div className="purchase-report-quick-filters"><button type="button" className={period === "TODAY" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "TODAY")}>Hoy</button><button type="button" className={period === "7D" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "7D")}>7 días</button><button type="button" className={period === "30D" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "30D")}>30 días</button><button type="button" className={period === "90D" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "90D")}>90 días</button><button type="button" className={period === "ALL" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "ALL")}>Historial</button><button type="button" className={period === "CUSTOM" ? "is-active" : ""} onClick={() => updateFilter(setPeriod, "CUSTOM")}><CalendarDays size={13} /> Fechas</button></div>
     <div className="purchase-report-toolbar"><label>Periodo<select value={period} onChange={(event) => updateFilter(setPeriod, event.target.value)}><option value="TODAY">Hoy</option><option value="7D">Últimos 7 días</option><option value="30D">Últimos 30 días</option><option value="90D">Últimos 90 días</option><option value="ALL">Todo el historial</option><option value="CUSTOM">Personalizado</option></select></label>{period === "CUSTOM" && <><label>Desde<input type="date" value={from} onChange={(event) => updateFilter(setFrom, event.target.value)} /></label><label>Hasta<input type="date" value={to} onChange={(event) => updateFilter(setTo, event.target.value)} /></label></>}<label>Proveedor<select value={providerId} onChange={(event) => updateFilter(setProviderId, event.target.value)}><option value="ALL">Todos</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label><label>Bodega<select value={warehouseId} onChange={(event) => updateFilter(setWarehouseId, event.target.value)}><option value="ALL">Todas</option>{warehouses.map((warehouse) => <option key={warehouse.id} value={warehouse.id}>{warehouse.location ?? warehouse.name}</option>)}</select></label><label>Estado<select value={status} onChange={(event) => updateFilter(setStatus, event.target.value)}><option value="ALL">Todos</option>{Object.entries(statusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label className="purchase-report-search"><Search size={14} /><input value={query} onChange={(event) => updateFilter(setQuery, event.target.value)} placeholder="Buscar compra, proveedor o bodega…" /></label><button type="button" className="purchase-report-export blue" onClick={exportPdf}><Printer size={14} /> PDF</button><button type="button" className="purchase-report-export green" onClick={() => void exportExcel()}><FileSpreadsheet size={14} /> Excel</button><button type="button" className="purchase-report-export amber" onClick={exportCsv}><Download size={14} /> CSV</button></div>
     <div className="purchase-report-note"><Filter size={13} /> {filteredOrders.length} operación(es) · {range.label}{summaryLoading ? " · actualizando indicadores" : ""}</div>
@@ -1735,14 +1727,14 @@ function PurchaseReportsPanel({ orders, providers = [], warehouses = [], onViewP
     {activeTab === "summary" && <div className="purchase-report-chart-grid"><section className="purchase-report-card"><div className="purchase-report-card-title"><strong>Compras por periodo</strong><span>Subtotal, impuestos y total.</span></div><ResponsiveContainer width="100%" height={260}><BarChart data={timelineRows} margin={{ top: 10, right: 8, left: -14, bottom: 4 }}><CartesianGrid vertical={false} stroke="#e7edf3" /><XAxis dataKey="date" tick={{ fill: "#718096", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={purchaseShortMoney} /><Tooltip content={<PurchaseReportTooltip currency />} /><Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} /><Bar dataKey="subtotal" name="Subtotal" fill="#2b6cb0" radius={[4, 4, 0, 0]} /><Bar dataKey="taxes" name="Impuestos" fill="#d28a25" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></section><section className="purchase-report-card"><div className="purchase-report-card-title"><strong>Estado del proceso</strong><span>Valor según estado.</span></div><ResponsiveContainer width="100%" height={260}><PieChart><Pie data={localStatus} dataKey="value" nameKey="label" innerRadius="55%" outerRadius="78%" paddingAngle={3} stroke="none">{localStatus.map((row, index) => <Cell key={row.key} fill={["#d28a25", "#2b6cb0", "#31a56d", "#c45454"][index % 4]} />)}</Pie><Tooltip content={<PurchaseReportTooltip currency />} /><Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} /></PieChart></ResponsiveContainer></section><section className="purchase-report-card purchase-report-wide"><div className="purchase-report-card-title"><strong>Proveedores con mayor inversión</strong><span>Compras recibidas, promedio de entrega y cumplimiento.</span></div><ResponsiveContainer width="100%" height={250}><BarChart data={providerRows.slice(0, 8)} layout="vertical" margin={{ top: 5, right: 16, left: 10, bottom: 5 }}><CartesianGrid horizontal={false} stroke="#e7edf3" /><XAxis type="number" hide /><YAxis type="category" dataKey="name" width={150} tick={{ fill: "#596b82", fontSize: 10 }} axisLine={false} tickLine={false} /><Tooltip content={<PurchaseReportTooltip currency />} /><Bar dataKey="total" name="Total comprado" fill="#31a56d" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></section></div>}
     {activeTab === "providers" && <PurchaseProviderTable rows={providerRows} />}
     {activeTab === "products" && <PurchaseProductTable rows={topProducts} />}
-    {activeTab === "detail" && <section className="purchase-report-detail"><div className="purchase-report-detail-heading"><strong>Detalle de operaciones</strong><span>{pageRows.length} de {filteredOrders.length}</span></div><div className="purchase-report-table-scroll"><table className="purchase-table"><thead><tr><th>Fecha</th><th>Compra</th><th>Proveedor</th><th>Bodega</th><th>Estado</th><th>Subtotal</th><th>Impuestos</th><th>Total</th><th>Saldo</th><th>Acción</th></tr></thead><tbody>{pageRows.map((order) => <tr key={order.id} className="purchase-report-row" tabIndex="0" onDoubleClick={() => onViewPdf?.(order)} onKeyDown={(event) => { if (event.key === "Enter") onViewPdf?.(order); }}><td>{formatDate(order.orderedAt ?? order.createdAt)}</td><td><strong>{orderNumber(order)}</strong></td><td>{order.provider?.name ?? "—"}</td><td>{order.warehouse?.location ?? "—"}</td><td><span className={`purchase-report-status ${String(order.status ?? "").toLowerCase()}`}>{statusLabels[order.status] ?? order.status ?? "—"}</span></td><td className="number-cell">{formatCurrency(order.subtotal)}</td><td className="number-cell">{formatCurrency(Number(order.total ?? 0) - Number(order.subtotal ?? 0))}</td><td className="number-cell">{formatCurrency(order.total)}</td><td className="number-cell">{formatCurrency(order.balance ?? order.payableTotal ?? 0)}</td><td><button type="button" className="purchase-report-view" onClick={() => onViewPdf?.(order)}><Eye size={13} /> Ver</button></td></tr>)}{!pageRows.length && <tr><td colSpan="10">No hay compras para los filtros seleccionados.</td></tr>}</tbody></table></div>{filteredOrders.length > 0 && <div className="purchase-report-pagination"><span>Página {currentPage} de {totalPages}</span><label>Filas<select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value="15">15</option><option value="30">30</option><option value="50">50</option></select></label><button type="button" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</button><button type="button" disabled={currentPage >= totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Siguiente</button></div>}</section>}
+    {activeTab === "detail" && <section className="purchase-report-detail"><div className="purchase-report-detail-heading"><strong>Detalle de operaciones</strong><span>{pageRows.length} de {filteredOrders.length}</span></div><div className="purchase-report-table-scroll"><table className="purchase-table"><thead><tr><th>Fecha</th><th>Compra</th><th>Proveedor</th><th>Bodega</th><th>Estado</th><th>Subtotal</th><th>Impuestos</th><th>Total</th><th>Saldo</th><th>Acción</th></tr></thead><tbody>{pageRows.map((order) => <tr key={order.id} className="purchase-report-row" tabIndex="0" onDoubleClick={() => onViewPdf?.(order)} onKeyDown={(event) => { if (event.key === "Enter") onViewPdf?.(order); }}><td>{formatDate(order.orderedAt ?? order.createdAt)}</td><td><strong>{orderNumber(order)}</strong></td><td>{order.provider?.name ?? "—"}</td><td>{order.warehouse?.location ?? "—"}</td><td><span className={`purchase-report-status ${String(order.status ?? "").toLowerCase()}`}>{statusLabels[order.status] ?? order.status ?? "—"}</span></td><td className="number-cell">{formatCop(order.subtotal)}</td><td className="number-cell">{formatCop(Number(order.total ?? 0) - Number(order.subtotal ?? 0))}</td><td className="number-cell">{formatCop(order.total)}</td><td className="number-cell">{formatCop(order.balance ?? order.payableTotal ?? 0)}</td><td><button type="button" className="purchase-report-view" onClick={() => onViewPdf?.(order)}><Eye size={13} /> Ver</button></td></tr>)}{!pageRows.length && <tr><td colSpan="10">No hay compras para los filtros seleccionados.</td></tr>}</tbody></table></div>{filteredOrders.length > 0 && <div className="purchase-report-pagination"><span>Página {currentPage} de {totalPages}</span><label>Filas<select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value="15">15</option><option value="30">30</option><option value="50">50</option></select></label><button type="button" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</button><button type="button" disabled={currentPage >= totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>Siguiente</button></div>}</section>}
   </div>;
 }
 
 function PurchaseReportKpi({ label, value, tone }) { return <article className={`purchase-report-kpi ${tone}`}><span>{label}</span><strong>{value}</strong></article>; }
-function PurchaseProviderTable({ rows }) { return <section className="purchase-report-detail"><div className="purchase-report-detail-heading"><strong>Rendimiento por proveedor</strong><span>{rows.length} proveedor(es)</span></div><div className="purchase-report-table-scroll"><table className="purchase-table"><thead><tr><th>Proveedor</th><th>Compras</th><th>Total</th><th>Días promedio</th><th>Entrega a tiempo</th></tr></thead><tbody>{rows.map((row) => <tr key={row.name}><td><strong>{row.name}</strong></td><td>{row.orders}</td><td className="number-cell">{formatCurrency(row.total)}</td><td>{row.lead ? `${row.lead.toFixed(1)} días` : "—"}</td><td>{row.onTime == null ? "—" : `${row.onTime}%`}</td></tr>)}{!rows.length && <tr><td colSpan="5">No hay proveedores para este filtro.</td></tr>}</tbody></table></div></section>; }
-function PurchaseProductTable({ rows }) { return <section className="purchase-report-detail"><div className="purchase-report-detail-heading"><strong>Productos comprados</strong><span>{rows.length} producto(s)</span></div><div className="purchase-report-table-scroll"><table className="purchase-table"><thead><tr><th>Producto</th><th>Solicitadas</th><th>Recibidas</th><th>Pendientes</th><th>Total</th></tr></thead><tbody>{rows.map((row) => <tr key={row.name}><td><strong>{row.name}</strong></td><td>{row.quantity}</td><td>{row.received}</td><td>{Math.max(0, row.quantity - row.received)}</td><td className="number-cell">{formatCurrency(row.total)}</td></tr>)}{!rows.length && <tr><td colSpan="5">No hay productos recibidos en este periodo.</td></tr>}</tbody></table></div></section>; }
-function PurchaseReportTooltip({ active, payload, label, currency = false }) { if (!active || !payload?.length) return null; return <div className="purchase-report-tooltip"><strong>{label}</strong>{payload.map((row) => <div key={row.dataKey ?? row.name}><span>{row.name ?? row.dataKey}</span><b>{currency ? formatCurrency(row.value) : row.value}</b></div>)}</div>; }
+function PurchaseProviderTable({ rows }) { return <section className="purchase-report-detail"><div className="purchase-report-detail-heading"><strong>Rendimiento por proveedor</strong><span>{rows.length} proveedor(es)</span></div><div className="purchase-report-table-scroll"><table className="purchase-table"><thead><tr><th>Proveedor</th><th>Compras</th><th>Total</th><th>Días promedio</th><th>Entrega a tiempo</th></tr></thead><tbody>{rows.map((row) => <tr key={row.name}><td><strong>{row.name}</strong></td><td>{row.orders}</td><td className="number-cell">{formatCop(row.total)}</td><td>{row.lead ? `${row.lead.toFixed(1)} días` : "—"}</td><td>{row.onTime == null ? "—" : `${row.onTime}%`}</td></tr>)}{!rows.length && <tr><td colSpan="5">No hay proveedores para este filtro.</td></tr>}</tbody></table></div></section>; }
+function PurchaseProductTable({ rows }) { return <section className="purchase-report-detail"><div className="purchase-report-detail-heading"><strong>Productos comprados</strong><span>{rows.length} producto(s)</span></div><div className="purchase-report-table-scroll"><table className="purchase-table"><thead><tr><th>Producto</th><th>Solicitadas</th><th>Recibidas</th><th>Pendientes</th><th>Total</th></tr></thead><tbody>{rows.map((row) => <tr key={row.name}><td><strong>{row.name}</strong></td><td>{row.quantity}</td><td>{row.received}</td><td>{Math.max(0, row.quantity - row.received)}</td><td className="number-cell">{formatCop(row.total)}</td></tr>)}{!rows.length && <tr><td colSpan="5">No hay productos recibidos en este periodo.</td></tr>}</tbody></table></div></section>; }
+function PurchaseReportTooltip({ active, payload, label, currency = false }) { if (!active || !payload?.length) return null; return <div className="purchase-report-tooltip"><strong>{label}</strong>{payload.map((row) => <div key={row.dataKey ?? row.name}><span>{row.name ?? row.dataKey}</span><b>{currency ? formatCop(row.value) : row.value}</b></div>)}</div>; }
 function purchaseReportRange(period, from, to) { const end = period === "CUSTOM" && to ? new Date(`${to}T23:59:59`) : new Date(); end.setHours(23, 59, 59, 999); if (period === "ALL") return { start: new Date(0), end, label: "Todo el historial" }; if (period === "CUSTOM") return { start: from ? new Date(`${from}T00:00:00`) : new Date(0), end, label: `${from || "inicio"} · ${to || "hoy"}` }; const days = { TODAY: 0, "7D": 6, "30D": 29, "90D": 89 }[period] ?? 29; const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - days); return { start, end, label: { TODAY: "Hoy", "7D": "Últimos 7 días", "30D": "Últimos 30 días", "90D": "Últimos 90 días" }[period] ?? "Periodo seleccionado" }; }
 function inPurchaseRange(value, range) { if (!value) return false; const dateValue = new Date(value); return dateValue >= range.start && dateValue <= range.end; }
 function purchaseDayLabel(value) { const dateValue = new Date(value); return Number.isNaN(dateValue.getTime()) ? String(value ?? "—") : new Intl.DateTimeFormat("es-CO", { day: "2-digit", month: "short" }).format(dateValue).replace(".", ""); }
@@ -1878,7 +1870,7 @@ function PurchaseLookupDialog({
                       <td>{item.className ?? item.providerType ?? ""}</td>
                       <td>{item.taxId ?? ""}</td>
                       <td className="number-cell">
-                        {formatCurrency(item.pendingBalance)}
+                        {formatCop(item.pendingBalance)}
                       </td>
                     </>
                   )}
@@ -1890,7 +1882,7 @@ function PurchaseLookupDialog({
                       <td>{item.reference ?? ""}</td>
                       <td className="number-cell">{productStock(item)}</td>
                       <td className="number-cell">
-                        {formatCurrency(defaultCost(item))}
+                        {formatCop(defaultCost(item))}
                       </td>
                     </>
                   )}
@@ -1900,7 +1892,7 @@ function PurchaseLookupDialog({
                       <td>{warehouseName(item.warehouse)}</td>
                       <td>{formatDate(purchaseOrderDate(item))}</td>
                       <td className="number-cell">
-                        {formatCurrency(item.total)}
+                        {formatCop(item.total)}
                       </td>
                     </>
                   )}
@@ -1974,7 +1966,7 @@ function PurchasePdfPreview({ order, onClose }) {
     })),
     order.provider,
   );
-  const fmt = (value) => formatCurrency(Number(value ?? 0));
+  const fmt = (value) => formatCop(Number(value ?? 0));
   const payable = Number(order.payableTotal ?? 0) || totals.payableTotal;
   const retention = Number(order.retentionAmount ?? totals.retentionAmount);
   const paidTotal = Number(order.paidTotal ?? order.paidAmount ?? 0);
@@ -2015,7 +2007,7 @@ function PurchasePdfPreview({ order, onClose }) {
       `Orden de compra ${orderNumber(order)}`,
       `Proveedor: ${order.provider?.name ?? "—"}`,
       `Depósito: ${warehouseName(order.warehouse)}`,
-      `Total a pagar: ${formatCurrency(Number(order.payableTotal ?? 0) || totals.payableTotal)}`,
+      `Total a pagar: ${formatCop(Number(order.payableTotal ?? 0) || totals.payableTotal)}`,
       "El PDF se adjunta desde la vista previa de la orden.",
     ].join("\n");
     window.open(
@@ -2058,24 +2050,24 @@ function PurchasePdfPreview({ order, onClose }) {
                   <td>{productCode(item.product)}</td>
                   <td>{productName(item.product)}</td>
                   <td className="number-cell">{item.quantity}</td>
-                  <td className="number-cell">{formatCurrency(item.unitCost)}</td>
-                  <td className="number-cell">{formatCurrency(lineTotal(item))}</td>
+                  <td className="number-cell">{formatCop(item.unitCost)}</td>
+                  <td className="number-cell">{formatCop(lineTotal(item))}</td>
                 </tr>
               ))}
               {!items.length && <tr><td colSpan="5">No hay productos cargados en esta orden.</td></tr>}
             </tbody>
           </table>
           <div className="purchase-pdf-total">
-            <span>Total a pagar</span><strong>{formatCurrency(Number(order.payableTotal ?? 0) || totals.payableTotal)}</strong>
+            <span>Total a pagar</span><strong>{formatCop(Number(order.payableTotal ?? 0) || totals.payableTotal)}</strong>
           </div>
           <div className="purchase-pdf-total">
             <span>Total sin IVA / IVA</span>
-            <strong>{formatCurrency(totals.lines)} / {formatCurrency(totals.taxes)}</strong>
+            <strong>{formatCop(totals.lines)} / {formatCop(totals.taxes)}</strong>
           </div>
           {Number(order.retentionAmount ?? totals.retentionAmount) > 0 && (
             <div className="purchase-pdf-total purchase-pdf-retention">
               <span>Retención ({formatRate(order.retentionRate ?? totals.retentionRate)}%)</span>
-              <strong>-{formatCurrency(order.retentionAmount ?? totals.retentionAmount)}</strong>
+              <strong>-{formatCop(order.retentionAmount ?? totals.retentionAmount)}</strong>
             </div>
           )}
         </article>
@@ -2170,7 +2162,7 @@ function QuickPurchaseProductDialog({
           <label><span>Nombre</span><input autoFocus value={draft.name} onChange={(event) => update("name", event.target.value)} /></label>
           <label><span>Marca</span><input value={draft.brand} onChange={(event) => update("brand", event.target.value)} /></label>
           <label><span>Unidad base</span><select value={draft.unit} onChange={(event) => update("unit", event.target.value)}>{["UND", "KG", "G", "LB", "L", "ML"].map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select></label>
-          <label><span>Precio inicial</span><input type="number" min="0.01" step="0.01" value={draft.price} onChange={(event) => update("price", event.target.value)} /></label>
+          <label><span>Precio inicial</span><CopInput value={readCopInput(draft.price).value} onChange={(amount) => update("price", String(amount))} /></label>
           <label><span>IVA venta %</span><input type="number" min="0" step="0.01" value={draft.taxRate} onChange={(event) => update("taxRate", event.target.value)} /></label>
           <label><span>Código de barras</span><input value={draft.barcode} onChange={(event) => update("barcode", event.target.value)} /></label>
           <label><span>Descripción (opcional)</span><input value={draft.description} onChange={(event) => update("description", event.target.value)} /></label>
@@ -2275,7 +2267,7 @@ function PurchaseQuoteImportDialog({ products, onApply, onClose }) {
                       return (
                         <li key={`${item.code}-${index}`}>
                           <span>
-                            {item.description || item.code || "Producto sin descripción"} · {item.quantity} x {formatCurrency(item.unitCost)}
+                            {item.description || item.code || "Producto sin descripción"} · {item.quantity} x {formatCop(item.unitCost)}
                           </span>
                           <small className={matchedProduct ? "is-matched" : "is-unmatched"}>
                             {matchedProduct ? `Se agregará: ${productName(matchedProduct)}` : "No coincide con un producto existente"}
@@ -2577,13 +2569,6 @@ function isActive(item) {
 function numberOrValue(value) {
   const number = Number(value);
   return Number.isNaN(number) ? value : number;
-}
-
-function formatCurrency(value) {
-  return new Intl.NumberFormat("es-CO", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
 }
 
 function readFileAsDataUrl(file) {

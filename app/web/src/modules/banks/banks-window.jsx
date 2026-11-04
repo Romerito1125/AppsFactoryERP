@@ -26,6 +26,8 @@ import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import "./banks-reports.css";
+import { formatCop, readCopInput } from "@/lib/cop";
+import { CopInput } from "@/components/money/cop-input";
 
 const viewLabels = {
   home: "Finanzas",
@@ -355,9 +357,10 @@ function BankAccountsPanel({
         bankName: draft.bankName,
         accountNumber: draft.accountNumber,
         accountType: draft.accountType,
-        currentBalance: Number(draft.currentBalance || 0),
         gmfRate: Number(draft.gmfRate || 0),
         autoGmf: Boolean(draft.autoGmf),
+        // El saldo solo cambia con movimientos; al crear se envía como saldo inicial.
+        ...(draft.id ? {} : { currentBalance: Number(draft.currentBalance || 0) }),
       };
       const saved = draft.id
         ? await apiClient.patch(`/cuentas-bancarias/${draft.id}`, body)
@@ -520,12 +523,7 @@ function BankAccountsPanel({
             </label>
             <label>
               Saldo actual
-              <input
-                type="number"
-                step="0.01"
-                value={draft.currentBalance}
-                readOnly
-              />
+              <CopInput value={readCopInput(draft.currentBalance).value} readOnly />
             </label>
           </div>
           <small className="bank-editor-hint">
@@ -735,10 +733,10 @@ function BankTransactionsPanel({
                       "—"}
                   </td>
                   <td className="number-cell">
-                    {isIncome ? "" : formatCurrency(amount)}
+                    {isIncome ? "" : formatCop(amount)}
                   </td>
                   <td className="number-cell">
-                    {isIncome ? formatCurrency(amount) : ""}
+                    {isIncome ? formatCop(amount) : ""}
                   </td>
                 </tr>
               );
@@ -811,15 +809,12 @@ function BankTransactionsPanel({
           </label>
           <label>
             {transactionType === "AJUSTE" ? "Saldo real" : "Monto"}
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={draft.amount}
-              onChange={(event) =>
+            <CopInput
+              value={readCopInput(draft.amount).value}
+              onChange={(amount) =>
                 setDraft((current) => ({
                   ...current,
-                  amount: event.target.value,
+                  amount: String(amount),
                 }))
               }
             />
@@ -937,9 +932,9 @@ function BankReceivablesPanel({ credits }) {
               </td>
               <td>{formatDate(credit.dueDate)}</td>
               <td className="number-cell">
-                {formatCurrency(credit.totalAmount)}
+                {formatCop(credit.totalAmount)}
               </td>
-              <td className="number-cell">{formatCurrency(credit.balance)}</td>
+              <td className="number-cell">{formatCop(credit.balance)}</td>
             </tr>
           ))}
           {!pendingCredits.length && (
@@ -982,7 +977,7 @@ function BankPayablesPanel({ purchases }) {
               <td>{formatDate(purchase.orderedAt ?? purchase.createdAt)}</td>
               <td>{purchase.status ?? "Borrador"}</td>
               <td className="number-cell">
-                {formatCurrency(purchase.balance ?? purchase.total)}
+                {formatCop(purchase.balance ?? purchase.total)}
               </td>
             </tr>
           ))}
@@ -1045,7 +1040,7 @@ function BankReportsPanel({ accounts, movements }) {
   function updateFilter(setter, value) { setter(value); setPage(1); }
   function exportCsv() { if (!visibleMovements.length) return; const rows = visibleMovements.map((movement) => [formatDate(movement.createdAt ?? movement.date), movementTypeLabel(movement), movement.description ?? "—", accounts.find((account) => account.id === movement.bankAccountId)?.name ?? movement.bankAccount?.name ?? "—", Number(movement.totalAmount ?? movement.amount ?? 0)]); downloadFinanceBlob([['Fecha', 'Tipo', 'Descripción', 'Cuenta', 'Monto'], ...rows], `reporte-finanzas-${period}.csv`, "csv"); }
   async function exportExcel() { const XLSX = await import("xlsx"); const workbook = XLSX.utils.book_new(); const appendSheet = (name, rows, widths) => { const sheet = XLSX.utils.json_to_sheet(rows); sheet["!cols"] = widths.map((wch) => ({ wch })); if (rows.length) sheet["!autofilter"] = { ref: XLSX.utils.encode_range(XLSX.utils.decode_range(sheet["!ref"])) }; XLSX.utils.book_append_sheet(workbook, sheet, name); }; appendSheet("Resumen", [{ Indicador: "Periodo", Valor: range.label }, { Indicador: "Saldo", Valor: balance }, { Indicador: "Ingresos", Valor: income }, { Indicador: "Egresos", Valor: expenses }, { Indicador: "Movimiento neto", Valor: net }, { Indicador: "Movimientos", Valor: visibleMovements.length }], [28, 24]); appendSheet("Movimientos", visibleMovements.map((movement) => ({ Fecha: formatDate(movement.createdAt ?? movement.date), Tipo: movementTypeLabel(movement), Grupo: movementTypeGroup(movement), Descripción: movement.description ?? "—", Cuenta: accounts.find((account) => account.id === movement.bankAccountId)?.name ?? movement.bankAccount?.name ?? "—", Monto: Number(movement.totalAmount ?? movement.amount ?? 0) })), [16, 22, 16, 38, 28, 18]); appendSheet("Por cuenta", visibleAccounts.map((account) => ({ Cuenta: account.name, Banco: account.bankName ?? "—", Tipo: account.accountType ?? "—", Saldo: Number(account.currentBalance ?? 0) })), [28, 24, 16, 18]); appendSheet("Por día", dailyRows, [16, 18, 18, 18]); XLSX.writeFile(workbook, `reporte-finanzas-${period}.xlsx`); }
-  async function exportPdf() { const { jsPDF } = await import("jspdf"); const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" }); const pageWidth = doc.internal.pageSize.getWidth(); const margin = 34; doc.setFillColor(31, 51, 77); doc.rect(0, 0, pageWidth, 76, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("MUNDO TIENDA", margin, 32); doc.setFontSize(10); doc.text("REPORTE DE FINANZAS", margin, 51); doc.setFont("helvetica", "normal"); doc.text(`Periodo: ${range.label}`, pageWidth - margin, 32, { align: "right" }); let y = 108; const cards = [["Saldo", balance], ["Ingresos", income], ["Egresos", expenses], ["Movimiento neto", net]]; const gap = 10; const cardWidth = (pageWidth - margin * 2 - gap * 3) / 4; cards.forEach(([label, value], index) => { const x = margin + index * (cardWidth + gap); doc.setFillColor(246, 249, 252); doc.roundedRect(x, y, cardWidth, 52, 5, 5, "F"); doc.setTextColor(100, 118, 140); doc.setFontSize(9); doc.text(label, x + 10, y + 19); doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.text(formatCurrency(value), x + 10, y + 39); doc.setFont("helvetica", "normal"); }); y += 82; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("Detalle de movimientos", margin, y); y += 19; doc.setFillColor(43, 108, 176); doc.rect(margin, y - 12, pageWidth - margin * 2, 22, "F"); doc.setTextColor(255, 255, 255); doc.setFontSize(8); ["Fecha", "Tipo", "Descripción", "Cuenta", "Monto"].forEach((header, index) => doc.text(header, [margin + 7, margin + 80, margin + 175, margin + 440, pageWidth - margin - 7][index], y + 2, { align: index === 4 ? "right" : "left" })); y += 22; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "normal"); doc.setFontSize(8); visibleMovements.slice(0, 70).forEach((movement, index) => { if (y > 555) { doc.addPage(); y = 50; } if (index % 2 === 0) { doc.setFillColor(248, 250, 252); doc.rect(margin, y - 11, pageWidth - margin * 2, 19, "F"); } const values = [formatDate(movement.createdAt ?? movement.date), movementTypeLabel(movement), String(movement.description ?? "—").slice(0, 42), accounts.find((account) => account.id === movement.bankAccountId)?.name ?? movement.bankAccount?.name ?? "—", formatCurrency(movement.totalAmount ?? movement.amount)]; doc.text(values[0], margin + 7, y); doc.text(values[1], margin + 80, y); doc.text(values[2], margin + 175, y); doc.text(values[3], margin + 440, y); doc.text(values[4], pageWidth - margin - 7, y, { align: "right" }); y += 19; }); doc.save(`reporte-finanzas-${period}.pdf`); }
+  async function exportPdf() { const { jsPDF } = await import("jspdf"); const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" }); const pageWidth = doc.internal.pageSize.getWidth(); const margin = 34; doc.setFillColor(31, 51, 77); doc.rect(0, 0, pageWidth, 76, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("MUNDO TIENDA", margin, 32); doc.setFontSize(10); doc.text("REPORTE DE FINANZAS", margin, 51); doc.setFont("helvetica", "normal"); doc.text(`Periodo: ${range.label}`, pageWidth - margin, 32, { align: "right" }); let y = 108; const cards = [["Saldo", balance], ["Ingresos", income], ["Egresos", expenses], ["Movimiento neto", net]]; const gap = 10; const cardWidth = (pageWidth - margin * 2 - gap * 3) / 4; cards.forEach(([label, value], index) => { const x = margin + index * (cardWidth + gap); doc.setFillColor(246, 249, 252); doc.roundedRect(x, y, cardWidth, 52, 5, 5, "F"); doc.setTextColor(100, 118, 140); doc.setFontSize(9); doc.text(label, x + 10, y + 19); doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.text(formatCop(value), x + 10, y + 39); doc.setFont("helvetica", "normal"); }); y += 82; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text("Detalle de movimientos", margin, y); y += 19; doc.setFillColor(43, 108, 176); doc.rect(margin, y - 12, pageWidth - margin * 2, 22, "F"); doc.setTextColor(255, 255, 255); doc.setFontSize(8); ["Fecha", "Tipo", "Descripción", "Cuenta", "Monto"].forEach((header, index) => doc.text(header, [margin + 7, margin + 80, margin + 175, margin + 440, pageWidth - margin - 7][index], y + 2, { align: index === 4 ? "right" : "left" })); y += 22; doc.setTextColor(31, 51, 77); doc.setFont("helvetica", "normal"); doc.setFontSize(8); visibleMovements.slice(0, 70).forEach((movement, index) => { if (y > 555) { doc.addPage(); y = 50; } if (index % 2 === 0) { doc.setFillColor(248, 250, 252); doc.rect(margin, y - 11, pageWidth - margin * 2, 19, "F"); } const values = [formatDate(movement.createdAt ?? movement.date), movementTypeLabel(movement), String(movement.description ?? "—").slice(0, 42), accounts.find((account) => account.id === movement.bankAccountId)?.name ?? movement.bankAccount?.name ?? "—", formatCop(movement.totalAmount ?? movement.amount)]; doc.text(values[0], margin + 7, y); doc.text(values[1], margin + 80, y); doc.text(values[2], margin + 175, y); doc.text(values[3], margin + 440, y); doc.text(values[4], pageWidth - margin - 7, y, { align: "right" }); y += 19; }); doc.save(`reporte-finanzas-${period}.pdf`); }
   return (
     <div className="bank-report-shell bank-report-dashboard">
       <div className="bank-section-heading">
@@ -1059,19 +1054,19 @@ function BankReportsPanel({ accounts, movements }) {
       <div className="bank-report-cards">
         <div>
           <span>Saldo en cuentas</span>
-          <strong>{formatCurrency(balance)}</strong>
+          <strong>{formatCop(balance)}</strong>
         </div>
         <div>
           <span>Total ingresos</span>
-          <strong>{formatCurrency(income)}</strong>
+          <strong>{formatCop(income)}</strong>
         </div>
         <div>
           <span>Total egresos</span>
-          <strong>{formatCurrency(expenses)}</strong>
+          <strong>{formatCop(expenses)}</strong>
         </div>
         <div>
           <span>Movimiento neto</span>
-          <strong>{formatCurrency(net)}</strong>
+          <strong>{formatCop(net)}</strong>
         </div>
       </div>
       <div className="bank-report-quick-filters"><button type="button" className={period === "TODAY" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "TODAY"); }}>Hoy</button><button type="button" className={period === "7D" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "7D"); }}>7 días</button><button type="button" className={period === "30D" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "30D"); }}>30 días</button><button type="button" className={period === "90D" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "90D"); }}>90 días</button><button type="button" className={period === "ALL" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "ALL"); }}>Historial</button><button type="button" className={period === "CUSTOM" ? "is-active" : ""} onClick={() => { updateFilter(setPeriod, "CUSTOM"); }}><CalendarDays size={13} /> Fechas</button></div>
@@ -1125,7 +1120,7 @@ function BankReportsPanel({ accounts, movements }) {
                       "—"}
                   </td>
                   <td className="number-cell">
-                    {formatCurrency(movement.totalAmount ?? movement.amount)}
+                    {formatCop(movement.totalAmount ?? movement.amount)}
                   </td>
                 </tr>
               ))}
@@ -1164,7 +1159,7 @@ function buildFinanceTypeRows(movements) { const groups = [{ label: "Ingresos", 
 function financeDateKey(value) { const dateValue = new Date(value); return `${dateValue.getFullYear()}-${String(dateValue.getMonth() + 1).padStart(2, "0")}-${String(dateValue.getDate()).padStart(2, "0")}`; }
 function financeDayLabel(value) { return new Intl.DateTimeFormat("es-CO", { day: "2-digit", month: "short" }).format(new Date(value)).replace(".", ""); }
 function financeShortMoney(value) { const amount = Number(value ?? 0); return amount >= 1000000 ? `$${(amount / 1000000).toFixed(1)}M` : amount >= 1000 ? `$${Math.round(amount / 1000)}k` : `$${Math.round(amount)}`; }
-function FinanceTooltip({ active, payload, label, currency = false }) { if (!active || !payload?.length) return null; return <div className="bank-report-tooltip"><strong>{label}</strong>{payload.map((row) => <div key={row.dataKey ?? row.name}><span>{row.name ?? row.dataKey}</span><b>{currency ? formatCurrency(row.value) : financeShortMoney(row.value)}</b></div>)}</div>; }
+function FinanceTooltip({ active, payload, label, currency = false }) { if (!active || !payload?.length) return null; return <div className="bank-report-tooltip"><strong>{label}</strong>{payload.map((row) => <div key={row.dataKey ?? row.name}><span>{row.name ?? row.dataKey}</span><b>{currency ? formatCop(row.value) : financeShortMoney(row.value)}</b></div>)}</div>; }
 function downloadFinanceBlob(rows, filename, type) { const content = rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n"); const url = URL.createObjectURL(new Blob([content], { type: type === "csv" ? "text/csv;charset=utf-8" : type })); const link = document.createElement("a"); link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
 
 function movementTypeLabel(movement) {
@@ -1238,13 +1233,6 @@ function isExpenseMovement(movement) {
 function numberOrValue(value) {
   const number = Number(value);
   return Number.isNaN(number) ? value : number;
-}
-
-function formatCurrency(value) {
-  return new Intl.NumberFormat("es-CO", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
 }
 
 function formatDate(value) {

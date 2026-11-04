@@ -1,7 +1,7 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { Type } from 'class-transformer';
 import {
   IsInt,
-  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
@@ -10,7 +10,7 @@ import {
 
 export class CreatePurchasePaymentDto {
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsCop()
   @IsPositive()
   amount: number;
 

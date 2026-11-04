@@ -1,3 +1,4 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { BarcodeType, UnitType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
@@ -30,7 +31,7 @@ export class CreateInitialProductPriceDto {
   priceLevel?: number;
 
   @Type(() => Number)
-  @IsNumber()
+  @IsCop()
   @IsPositive()
   price: number;
 

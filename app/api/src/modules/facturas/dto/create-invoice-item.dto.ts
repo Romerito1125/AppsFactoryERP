@@ -1,3 +1,4 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { Type } from 'class-transformer';
 import {
   IsInt,
@@ -44,13 +45,13 @@ export class CreateInvoiceItemDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsCop()
   @Min(0)
   unitPrice?: number;
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsCop()
   @Min(0)
   unitPriceGross?: number;
 }

@@ -4,22 +4,12 @@ import { Paperclip, X } from "lucide-react";
 import { advanceFrom } from "@/lib/enter-advance";
 import { readSupportFile } from "./support-file";
 import "./totalize-dialog.css";
+import { formatCop, readCopInput } from "@/lib/cop";
+import { CopInput } from "@/components/money/cop-input";
 
 const round = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
-function money(value) {
-  return new Intl.NumberFormat("es-CO", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
-}
-
-function parseAmount(value) {
-  const parsed = Number(String(value ?? "").trim().replace(",", "."));
-  return Number.isFinite(parsed) && parsed > 0 ? round(parsed) : 0;
-}
-
-const isAmountDraft = (value) => /^\d*([.,]\d{0,2})?$/.test(value);
+const parseAmount = (value) => readCopInput(value).value;
 
 function defaultCashAccount(accounts) {
   return (
@@ -120,15 +110,15 @@ export function TotalizeDialog({
       if (detail.trim().length < 2) return "Escribe el detalle del documento.";
       if (mode === "receipt" && !seller.trim()) return "Escribe el vendedor.";
       if (Math.abs(remainder) > 0.009) {
-        return `El desglose (${money(paid)}) debe ser igual al total (${money(total)}).`;
+        return `El desglose (${formatCop(paid)}) debe ser igual al total (${formatCop(total)}).`;
       }
     } else {
       if (remainder < -0.009) return "Lo pagado supera el total de la operación.";
       if (remainder > 0.009 && !hasCredit) {
-        return `Faltan ${money(remainder)} por pagar: este cliente no tiene crédito.`;
+        return `Faltan ${formatCop(remainder)} por pagar: este cliente no tiene crédito.`;
       }
       if (creditAmount > 0 && creditAmount > creditAvailable + 0.009) {
-        return `El crédito (${money(creditAmount)}) supera el disponible (${money(creditAvailable)}).`;
+        return `El crédito (${formatCop(creditAmount)}) supera el disponible (${formatCop(creditAvailable)}).`;
       }
       if (creditAmount > 0 && !dueDate) return "Indica el vencimiento del crédito.";
     }
@@ -254,14 +244,10 @@ export function TotalizeDialog({
                       />
                     </td>
                     <td>
-                      <input
+                      <CopInput
                         className="is-amount"
-                        inputMode="decimal"
-                        value={instruments[account.id]?.amount ?? ""}
-                        onChange={(event) =>
-                          isAmountDraft(event.target.value) &&
-                          setInstrument(account.id, "amount", event.target.value)
-                        }
+                        value={parseAmount(instruments[account.id]?.amount)}
+                        onChange={(value) => setInstrument(account.id, "amount", String(value))}
                       />
                     </td>
                   </tr>
@@ -269,16 +255,13 @@ export function TotalizeDialog({
                 {isSale && bonusAvailable > 0 && (
                   <tr className="is-special">
                     <td>BON</td>
-                    <td>Bonus / miembro fiel · disponible {money(bonusAvailable)}</td>
+                    <td>Bonus / miembro fiel · disponible {formatCop(bonusAvailable)}</td>
                     <td>Se descuenta del saldo del cliente</td>
                     <td>
-                      <input
+                      <CopInput
                         className="is-amount"
-                        inputMode="decimal"
-                        value={bonus}
-                        onChange={(event) =>
-                          isAmountDraft(event.target.value) && setBonus(event.target.value)
-                        }
+                        value={parseAmount(bonus)}
+                        onChange={(value) => setBonus(String(value))}
                       />
                     </td>
                   </tr>
@@ -288,19 +271,17 @@ export function TotalizeDialog({
                     <tr className="is-special" key={`adv${advance.id}`}>
                       <td>SAF</td>
                       <td>
-                        Saldo a favor {advance.consecutive} · {money(advance.balance)}
+                        Saldo a favor {advance.consecutive} · {formatCop(advance.balance)}
                       </td>
                       <td>Se descuenta del anticipo</td>
                       <td>
-                        <input
+                        <CopInput
                           className="is-amount"
-                          inputMode="decimal"
-                          value={advanceAmounts[advance.id] ?? ""}
-                          onChange={(event) =>
-                            isAmountDraft(event.target.value) &&
+                          value={parseAmount(advanceAmounts[advance.id])}
+                          onChange={(value) =>
                             setAdvanceAmounts((current) => ({
                               ...current,
-                              [advance.id]: event.target.value,
+                              [advance.id]: String(value),
                             }))
                           }
                         />
@@ -311,16 +292,16 @@ export function TotalizeDialog({
             </table>
             <div className="totalize-instruments-total">
               <span>Total instrumentos</span>
-              <strong>{money(round(instrumentsTotal + bonusN + advancesTotal))}</strong>
+              <strong>{formatCop(round(instrumentsTotal + bonusN + advancesTotal))}</strong>
             </div>
           </div>
         ) : (
           <div className="totalize-body">
             {isSale && (
               <div className="totalize-credit-box">
-                <div><span>Límite crédito</span><b>{hasCredit ? money(creditLimit) : "Sin crédito"}</b></div>
-                <div><span>Saldo anterior</span><b>{money(previousBalance)}</b></div>
-                <div><span>Crédito disponible</span><b>{hasCredit ? money(creditAvailable) : "—"}</b></div>
+                <div><span>Límite crédito</span><b>{hasCredit ? formatCop(creditLimit) : "Sin crédito"}</b></div>
+                <div><span>Saldo anterior</span><b>{formatCop(previousBalance)}</b></div>
+                <div><span>Crédito disponible</span><b>{hasCredit ? formatCop(creditAvailable) : "—"}</b></div>
               </div>
             )}
             <div className="totalize-grid">
@@ -343,7 +324,7 @@ export function TotalizeDialog({
               )}
               <label>
                 <span>{totalLabel}</span>
-                <output className="is-total">{money(total)}</output>
+                <output className="is-total">{formatCop(total)}</output>
               </label>
               {!isSale && (
                 <>
@@ -359,22 +340,19 @@ export function TotalizeDialog({
               )}
               <label>
                 <span>Efectivo</span>
-                <input
+                <CopInput
                   autoFocus={isSale}
                   className="is-short is-amount"
-                  inputMode="decimal"
-                  value={cash}
-                  placeholder="0,00"
-                  onChange={(event) => {
-                    if (!isAmountDraft(event.target.value)) return;
-                    setCash(event.target.value);
+                  value={cashN}
+                  onChange={(value) => {
+                    setCash(String(value));
                     // Pago dividido típico: lo que entra en efectivo se descuenta de la cuenta principal.
                     const keys = Object.keys(instruments);
                     if (firstAccount && keys.length === 1 && keys[0] === String(firstAccount.id)) {
                       setInstrument(
                         firstAccount.id,
                         "amount",
-                        String(Math.max(0, round(total - parseAmount(event.target.value) - chequeN - bonusN - advancesTotal))),
+                        String(Math.max(0, round(total - value - chequeN - bonusN - advancesTotal))),
                       );
                     }
                   }}
@@ -383,12 +361,10 @@ export function TotalizeDialog({
               <label>
                 <span>Cheques</span>
                 <div className="totalize-pair">
-                  <input
+                  <CopInput
                     className="is-short is-amount"
-                    inputMode="decimal"
-                    value={cheque}
-                    placeholder="0,00"
-                    onChange={(event) => isAmountDraft(event.target.value) && setCheque(event.target.value)}
+                    value={chequeN}
+                    onChange={(value) => setCheque(String(value))}
                   />
                   <input
                     value={chequeRef}
@@ -412,20 +388,20 @@ export function TotalizeDialog({
                 <span>Instrumentos de pago</span>
                 <button type="button" className="totalize-instruments-btn" onClick={() => setShowInstruments(true)}>
                   {instrumentsTotal + bonusN + advancesTotal > 0
-                    ? `${money(round(instrumentsTotal + bonusN + advancesTotal))} · ${instrumentRows.length + (bonusN ? 1 : 0) + advanceRows.length} medio(s)`
+                    ? `${formatCop(round(instrumentsTotal + bonusN + advancesTotal))} · ${instrumentRows.length + (bonusN ? 1 : 0) + advanceRows.length} medio(s)`
                     : "0,00"}
                 </button>
               </label>
               <label>
                 <span>Total desglose</span>
                 <output className={`is-total ${Math.abs(remainder) > 0.009 && !creditAmount ? "is-bad" : ""}`}>
-                  {money(paid)}
+                  {formatCop(paid)}
                 </output>
               </label>
               {isSale && (
                 <label>
                   <span>Crédito{hasCredit ? "" : " (cliente sin crédito)"}</span>
-                  <output className="is-total">{money(creditAmount)}</output>
+                  <output className="is-total">{formatCop(creditAmount)}</output>
                   {hasCredit && paid > 0.009 && (
                     <button
                       type="button"
@@ -456,7 +432,7 @@ export function TotalizeDialog({
               {isSale && (
                 <label>
                   <span>Saldo operación</span>
-                  <output className="is-total">{money(round(Number(previousBalance) + creditAmount))}</output>
+                  <output className="is-total">{formatCop(round(Number(previousBalance) + creditAmount))}</output>
                 </label>
               )}
               <label>

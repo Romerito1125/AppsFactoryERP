@@ -1,3 +1,4 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { UnitType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
@@ -12,7 +13,7 @@ import {
 export class UpdateProductCostDto {
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsCop()
   @IsPositive()
   cost?: number;
 

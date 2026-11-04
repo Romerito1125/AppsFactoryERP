@@ -1,3 +1,4 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { Type } from 'class-transformer';
 import {
   IsArray,
@@ -51,7 +52,7 @@ export class CreateRetentionDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber()
+  @IsCop()
   @Min(0)
   minimumBase?: number;
 

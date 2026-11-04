@@ -1,6 +1,7 @@
+// COP: los importes se redondean al peso entero (sin centavos).
 export function roundMoney(value) {
   if (!Number.isFinite(Number(value))) return 0;
-  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+  return Math.round(Number(value) + Number.EPSILON);
 }
 
 export function grossFromNet(netAmount, taxRate) {

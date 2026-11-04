@@ -1,3 +1,4 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { Type } from 'class-transformer';
 import {
   IsDateString,
@@ -28,7 +29,7 @@ export class CreateInvoiceCreditDto {
 }
 
 export class CreateCreditPaymentDto {
-  @Type(() => Number) @IsNumber() @IsPositive() amount: number;
+  @Type(() => Number) @IsCop() @IsPositive() amount: number;
   @IsOptional()
   @Type(() => Number)
   @IsInt()

@@ -5,7 +5,6 @@ import {
   AccountOperations,
   AgingAnalysis,
   LedgerPanel,
-  money,
   PendingList,
 } from "@/components/accounts/account-panels";
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
@@ -18,6 +17,7 @@ import { ReceiptEditDialog, VoidReceiptDialog } from "@/components/payments/rece
 import { viewReceiptSupport } from "@/components/payments/support-file";
 import { CollectionFlow } from "./cobrar-panels";
 import { clientDisplayName } from "./receivable-utils";
+import { formatCop } from "@/lib/cop";
 
 const tabs = [
   ["operations", "Operaciones"],
@@ -425,7 +425,7 @@ export function AccountsReceivableWindow({
               <span>{selectedClient?.address ?? ""}</span>
               <span>{selectedClient?.phone ?? ""}</span>
               <span className="saint-credit-limit">
-                Límite de crédito: <b>{money(selectedClient?.maxCredit ?? 0)}</b>
+                Límite de crédito: <b>{formatCop(selectedClient?.maxCredit ?? 0)}</b>
               </span>
             </div>
             <div className="payable-balance-grid">
@@ -543,7 +543,7 @@ export function AccountsReceivableWindow({
                   <dt>ID fiscal</dt><dd>{selectedClient.identification}</dd>
                   <dt>Teléfono</dt><dd>{selectedClient.phone ?? "—"}</dd>
                   <dt>Dirección</dt><dd>{selectedClient.address ?? "—"}</dd>
-                  <dt>Límite de crédito</dt><dd>{money(selectedClient.maxCredit ?? 0)}</dd>
+                  <dt>Límite de crédito</dt><dd>{formatCop(selectedClient.maxCredit ?? 0)}</dd>
                   <dt>Nivel de precio</dt><dd>Precio {selectedClient.priceLevel ?? 0}</dd>
                 </dl>
               </section>
@@ -560,7 +560,7 @@ export function AccountsReceivableWindow({
                 setCollection(null);
                 setActiveTab("statement");
                 await afterReceiptChange(
-                  `Recibo ${receipt.documentNumber} registrado por ${formatCurrency(receipt.totalAmount)}; el banco y la cartera quedaron actualizados.`,
+                  `Recibo ${receipt.documentNumber} registrado por ${formatCop(receipt.totalAmount)}; el banco y la cartera quedaron actualizados.`,
                 );
               }}
             />
@@ -626,7 +626,7 @@ function BalanceField({ label, value, muted, accent }) {
   return (
     <div className={`payable-balance ${muted ? "is-muted" : ""} ${accent ? "is-accent" : ""}`}>
       <span>{label}</span>
-      <strong>{money(value)}</strong>
+      <strong>{formatCop(value)}</strong>
     </div>
   );
 }
@@ -650,13 +650,6 @@ function clientName(client) {
     ([client.firstName, client.lastName].filter(Boolean).join(" ") ||
       `Cliente #${client.id}`)
   );
-}
-function formatCurrency(value) {
-  return new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    maximumFractionDigits: 0,
-  }).format(Number(value ?? 0));
 }
 function isAuthError(error) {
   return /sesión|inicia sesión|401|autentic/i.test(error?.message ?? "");

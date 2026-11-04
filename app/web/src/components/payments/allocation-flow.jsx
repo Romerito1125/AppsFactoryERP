@@ -2,22 +2,18 @@ import { useMemo, useState } from "react";
 import { X } from "lucide-react";
 
 import { advanceFrom } from "@/lib/enter-advance";
+import { formatCop, readCopInput } from "@/lib/cop";
+import { CopInput } from "@/components/money/cop-input";
 import { printReceipt } from "./print-receipt";
 import { TotalizeDialog } from "./totalize-dialog";
 import "./allocation-flow.css";
 
 const round = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
-const num = (value) =>
-  new Intl.NumberFormat("es-CO", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
-
 const day = (value) =>
   value ? new Intl.DateTimeFormat("es-CO").format(new Date(value)) : "—";
 
-const parseMoney = (value) => round(Number(String(value ?? "").replace(",", ".")) || 0);
+const parseMoney = (value) => readCopInput(value).value;
 
 /**
  * "PAGOS O ABONOS A CUENTAS" → "TOTAL PAGOS Y ABONOS".
@@ -163,29 +159,25 @@ export function AllocationFlow({
                       <td>{row.number}</td>
                       <td>{day(row.issuedAt)}</td>
                       <td>{day(row.dueAt)}</td>
-                      <td className="n">{num(row.balance)}</td>
+                      <td className="n">{formatCop(row.balance)}</td>
                       <td>
-                        <input
+                        <CopInput
                           data-cell
                           autoFocus={index === 0}
-                          inputMode="decimal"
-                          value={lines[row.id]?.amount ?? ""}
-                          placeholder="0,00"
-                          onChange={(event) => setLine(row.id, "amount", event.target.value)}
+                          value={parseMoney(lines[row.id]?.amount)}
+                          onChange={(value) => setLine(row.id, "amount", String(value))}
                         />
                       </td>
                       {withRetention && (
                         <td>
-                          <input
+                          <CopInput
                             data-cell
-                            inputMode="decimal"
-                            value={lines[row.id]?.retention ?? ""}
-                            placeholder="0,00"
-                            onChange={(event) => setLine(row.id, "retention", event.target.value)}
+                            value={parseMoney(lines[row.id]?.retention)}
+                            onChange={(value) => setLine(row.id, "retention", String(value))}
                           />
                         </td>
                       )}
-                      <td className="n">{num(round(row.balance - item.amount - item.retention))}</td>
+                      <td className="n">{formatCop(round(row.balance - item.amount - item.retention))}</td>
                     </tr>
                   );
                 })}
@@ -201,10 +193,10 @@ export function AllocationFlow({
           </div>
           <div className={`allocation-totals ${withRetention ? "" : "no-retention"}`}>
             <span>Totales</span>
-            <b>{num(totalPending)}</b>
-            <b>{num(totalAmount)}</b>
-            {withRetention && <b>{num(totalRetention)}</b>}
-            <b>{num(round(totalPending - totalAmount - totalRetention))}</b>
+            <b>{formatCop(totalPending)}</b>
+            <b>{formatCop(totalAmount)}</b>
+            {withRetention && <b>{formatCop(totalRetention)}</b>}
+            <b>{formatCop(round(totalPending - totalAmount - totalRetention))}</b>
           </div>
           <div className="allocation-actions">
             <label>

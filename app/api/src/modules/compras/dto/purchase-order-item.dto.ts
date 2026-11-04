@@ -1,9 +1,9 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { UnitType } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsEnum,
   IsInt,
-  IsNumber,
   IsOptional,
   IsPositive,
 } from 'class-validator';
@@ -24,7 +24,7 @@ export class PurchaseOrderItemDto {
   unit?: UnitType;
 
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsCop()
   @IsPositive()
   unitCost: number;
 }

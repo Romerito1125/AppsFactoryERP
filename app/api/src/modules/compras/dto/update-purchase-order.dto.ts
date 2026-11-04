@@ -1,3 +1,4 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
@@ -79,14 +80,14 @@ export class UpdatePurchaseOrderDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsCop()
   @Min(0)
   freight?: number;
 
   // Base de retención (antes de IVA). Si difiere de la calculada exige permiso y motivo.
   @IsOptional()
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsCop()
   @Min(0)
   retentionBase?: number;
 

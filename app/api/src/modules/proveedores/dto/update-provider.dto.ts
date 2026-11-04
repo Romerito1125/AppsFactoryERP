@@ -1,3 +1,4 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -95,7 +96,7 @@ export class UpdateProviderDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsCop()
   @Min(0)
   withholdingMinimumBase?: number;
 

@@ -21,6 +21,7 @@ import { SystemStatusbar } from "@/components/desktop/system-statusbar";
 import { TransientMessage } from "@/components/desktop/transient-message";
 import { WindowTitlebar } from "@/components/desktop/window-titlebar";
 import { apiClient } from "@/lib/api-client";
+import { formatCop } from "@/lib/cop";
 
 export function WarehouseAdminPage({ session, onLogout, onRequestLogin }) {
   const [notificationOpen, setNotificationOpen] = useState(false);
@@ -400,7 +401,7 @@ function WarehouseDashboard({ session, focus, activeTab, onTabChange, pendingQuo
               <strong>Cotizaciones enviadas a esta operación</strong>
               {state.notifications.filter((item) => item.type === "BODEGA_TAREA" && item.action?.view === "quote").map((item) => {
                 const quote = state.quotes.find((candidate) => Number(candidate.id) === Number(item.action?.entityId));
-                return <button type="button" className="warehouse-admin-quote-task" key={item.id} onClick={() => quote && setReviewQuote(quote)}><FileText size={14} /><span><b>{quote?.consecutive ?? item.message.split(" · ")[0]}</b><small>{quote ? `${quote.items?.length ?? 0} productos · ${formatCurrency(quote.total)}` : item.message}</small></span><em>Ver PDF</em></button>;
+                return <button type="button" className="warehouse-admin-quote-task" key={item.id} onClick={() => quote && setReviewQuote(quote)}><FileText size={14} /><span><b>{quote?.consecutive ?? item.message.split(" · ")[0]}</b><small>{quote ? `${quote.items?.length ?? 0} productos · ${formatCop(quote.total)}` : item.message}</small></span><em>Ver PDF</em></button>;
               })}
             </div>
           )}
@@ -420,7 +421,7 @@ function WarehouseDashboard({ session, focus, activeTab, onTabChange, pendingQuo
             {visiblePurchaseHistory.map((order) => (
               <div className="warehouse-admin-history-row" key={order.id}>
                 <div><strong>{order.consecutive}</strong><span>{order.provider?.name ?? "Proveedor"} · {order.warehouse?.location ?? "Bodega"}</span></div>
-                <span>{formatCurrency(order.total)}</span>
+                <span>{formatCop(order.total)}</span>
                 <b className={`purchase-status-${String(order.status ?? "").toLowerCase()}`}>{purchaseStatusLabel(order.status)}</b>
                 <button type="button" onClick={() => openPurchaseOrder(order)} disabled={actionLoading === `detail-${order.id}`}><FileText size={13} /> Ver detalle</button>
               </div>
@@ -524,8 +525,8 @@ function WarehousePurchaseReviewDialog({ order, canReceive, busy, onPrint, onClo
           <div><span>Bodega destino</span><strong>{order.warehouse?.location ?? "Bodega asignada"}</strong></div>
           <div><span>Entrega prevista</span><strong>{formatDate(order.expectedAt)}</strong></div>
         </div>
-        <div className="warehouse-review-items"><div className="warehouse-review-item-head"><span>Producto</span><span>Cantidad</span><span>Costo unitario (IVA incluido)</span><span>Total</span></div>{items.length ? items.map((item) => <div className="warehouse-review-item" key={item.id}><strong>{item.product?.name ?? `Producto #${item.productId}`}</strong><span>{item.quantity} {item.unit ?? "UND"}<small> · recibido {item.receivedQuantity ?? 0}</small></span><span>{formatCurrency(item.unitCost)}</span><b>{formatCurrency(item.total)}</b></div>) : <div className="warehouse-review-empty">No se encontraron líneas de productos en el detalle de esta orden.</div>}</div>
-        <div className="warehouse-review-totals"><span>Costo de adquisición <b>{formatCurrency(order.subtotal)}</b></span><strong>Total <b>{formatCurrency(order.total)}</b></strong></div>
+        <div className="warehouse-review-items"><div className="warehouse-review-item-head"><span>Producto</span><span>Cantidad</span><span>Costo unitario (IVA incluido)</span><span>Total</span></div>{items.length ? items.map((item) => <div className="warehouse-review-item" key={item.id}><strong>{item.product?.name ?? `Producto #${item.productId}`}</strong><span>{item.quantity} {item.unit ?? "UND"}<small> · recibido {item.receivedQuantity ?? 0}</small></span><span>{formatCop(item.unitCost)}</span><b>{formatCop(item.total)}</b></div>) : <div className="warehouse-review-empty">No se encontraron líneas de productos en el detalle de esta orden.</div>}</div>
+        <div className="warehouse-review-totals"><span>Costo de adquisición <b>{formatCop(order.subtotal)}</b></span><strong>Total <b>{formatCop(order.total)}</b></strong></div>
         {order.notes && <div className="warehouse-review-note">{order.notes}</div>}
         <footer><button type="button" onClick={onPrint}><Printer size={13} /> Ver / imprimir PDF de cotización</button><button type="button" onClick={onClose}>Cerrar</button>{canReceive && <button type="button" className="primary-action" disabled={busy} onClick={onReceive}><Check size={13} /> {busy ? "Recibiendo…" : "Confirmar recepción"}</button>}</footer>
       </div>
@@ -548,8 +549,8 @@ function WarehouseAppOrderDialog({ order, busy, onClose, onUpdateStatus }) {
           <div><span>Estado actual</span><strong>{deliveryStatusLabel(currentStatus)}</strong></div>
         </div>
         <div className="warehouse-app-order-notes">{delivery?.notes ? `Nota de entrega: ${delivery.notes}` : "Sin notas adicionales del cliente."}</div>
-        <div className="warehouse-review-items"><div className="warehouse-review-item-head"><span>Producto</span><span>Cantidad</span><span>Precio</span><span>Total</span></div>{(order.items ?? []).map((item) => <div className="warehouse-review-item" key={item.id}><strong>{item.product?.name ?? `Producto #${item.productId}`}</strong><span>{item.quantity}</span><span>{formatCurrency(item.unitPrice)}</span><b>{formatCurrency(item.total)}</b></div>)}</div>
-        <div className="warehouse-review-totals"><span>Subtotal <b>{formatCurrency(order.subtotal)}</b></span><span>Impuestos <b>{formatCurrency(order.taxes)}</b></span><strong>Total <b>{formatCurrency(order.total)}</b></strong></div>
+        <div className="warehouse-review-items"><div className="warehouse-review-item-head"><span>Producto</span><span>Cantidad</span><span>Precio</span><span>Total</span></div>{(order.items ?? []).map((item) => <div className="warehouse-review-item" key={item.id}><strong>{item.product?.name ?? `Producto #${item.productId}`}</strong><span>{item.quantity}</span><span>{formatCop(item.unitPrice)}</span><b>{formatCop(item.total)}</b></div>)}</div>
+        <div className="warehouse-review-totals"><span>Subtotal <b>{formatCop(order.subtotal)}</b></span><span>Impuestos <b>{formatCop(order.taxes)}</b></span><strong>Total <b>{formatCop(order.total)}</b></strong></div>
         <footer className="warehouse-app-order-actions"><span>Actualizar estado</span>{deliveryStatusOptions.map((status) => <button type="button" key={status} className={status === currentStatus ? "is-selected" : ""} disabled={busy || status === currentStatus} onClick={() => onUpdateStatus(status)}>{deliveryStatusLabel(status)}</button>)}<button type="button" onClick={onClose}>Cerrar</button></footer>
       </div>
     </div>
@@ -578,7 +579,7 @@ function WarehouseQuoteReviewDialog({ quote, onFulfill, onPrint, onClose }) {
           </div>
           <div>
             <span>Total</span>
-            <strong>{formatCurrency(quote.total)}</strong>
+            <strong>{formatCop(quote.total)}</strong>
           </div>
         </div>
         <div className="sales-detail-items">
@@ -586,8 +587,8 @@ function WarehouseQuoteReviewDialog({ quote, onFulfill, onPrint, onClose }) {
             quote.items.map((item) => (
               <div key={item.id ?? `${item.productId}-${item.quantity}`}>
                 <span>{item.product?.name ?? `Producto #${item.productId}`}</span>
-                <span>{item.quantity} × {formatCurrency(item.unitPrice)}</span>
-                <strong>{formatCurrency(item.total)}</strong>
+                <span>{item.quantity} × {formatCop(item.unitPrice)}</span>
+                <strong>{formatCop(item.total)}</strong>
                 {isPresale && (
                   <span className="sales-line-fulfillment">
                     {item.fulfillmentStatus === "SURTIDO"
@@ -629,14 +630,6 @@ function unwrapData(payload) {
 function formatDate(value) {
   if (!value) return "Sin fecha";
   return new Intl.DateTimeFormat("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
-}
-
-function formatCurrency(value) {
-  return new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    maximumFractionDigits: 0,
-  }).format(Number(value ?? 0));
 }
 
 function clientLabel(client) {

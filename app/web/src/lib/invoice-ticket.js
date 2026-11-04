@@ -1,12 +1,8 @@
+import { formatCop } from "./cop";
 // Ticket compacto tipo retail (80 mm, estilo D1/ARA) para facturas. Imprime y reimprime
 // el mismo documento: totales, IVA por tasa, medios de pago, número, cajero y vendedor.
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
-
-const money = (value) =>
-  new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(
-    Number(value ?? 0),
-  );
 
 const stamp = (value) =>
   value
@@ -35,23 +31,23 @@ export function buildTicketHtml(invoice, { copy = "" } = {}) {
       const gross = Number(item.total ?? 0);
       const qty = Number(item.quantity ?? 0);
       return `<tr><td colspan="3">${esc(item.product?.name ?? `Producto ${item.productId}`)}</td></tr>
-        <tr class="sub"><td>${qty} x ${money(qty ? gross / qty : 0)}</td><td></td><td class="n">${money(gross)}</td></tr>`;
+        <tr class="sub"><td>${qty} x ${formatCop(qty ? gross / qty : 0)}</td><td></td><td class="n">${formatCop(gross)}</td></tr>`;
     })
     .join("");
   const taxes = taxBreakdown(items)
     .map(
       ([rate, row]) =>
-        `<tr><td>IVA ${rate}%</td><td class="n">Base ${money(row.base)}</td><td class="n">${money(row.tax)}</td></tr>`,
+        `<tr><td>IVA ${rate}%</td><td class="n">Base ${formatCop(row.base)}</td><td class="n">${formatCop(row.tax)}</td></tr>`,
     )
     .join("");
   const payments = (invoice.bankMovement ?? [])
     .map(
       (movement) =>
-        `<tr><td colspan="2">${esc(movement.bankAccount?.name ?? "Pago")}</td><td class="n">${money(movement.amount)}</td></tr>`,
+        `<tr><td colspan="2">${esc(movement.bankAccount?.name ?? "Pago")}</td><td class="n">${formatCop(movement.amount)}</td></tr>`,
     )
     .join("");
   const credit = invoice.credit
-    ? `<tr><td colspan="2">A crédito</td><td class="n">${money(invoice.credit.totalAmount)}</td></tr>`
+    ? `<tr><td colspan="2">A crédito</td><td class="n">${formatCop(invoice.credit.totalAmount)}</td></tr>`
     : "";
   return `<section class="ticket">
     <h1>MUNDO TIENDA</h1>
@@ -65,9 +61,9 @@ export function buildTicketHtml(invoice, { copy = "" } = {}) {
     <table>${lines}</table>
     <hr />
     <table>
-      <tr><td colspan="2">Subtotal</td><td class="n">${money(invoice.subtotal)}</td></tr>
+      <tr><td colspan="2">Subtotal</td><td class="n">${formatCop(invoice.subtotal)}</td></tr>
       ${taxes}
-      <tr class="total"><td colspan="2">TOTAL</td><td class="n">${money(invoice.total)}</td></tr>
+      <tr class="total"><td colspan="2">TOTAL</td><td class="n">${formatCop(invoice.total)}</td></tr>
     </table>
     <hr />
     <p><b>Medios de pago</b></p>

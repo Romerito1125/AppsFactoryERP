@@ -1,3 +1,4 @@
+import { CopInput } from "@/components/money/cop-input";
 import { useEffect, useMemo, useState } from "react";
 import {
   Check,
@@ -610,8 +611,7 @@ function ClientMain({ client, editing, onChange, fieldErrors }) {
         onChange={(value) => onChange("maxCredit", value)}
         error={fieldErrors.maxCredit}
         disabled={!client.hasCredit}
-        inputMode="decimal"
-        type="text"
+        money
       />
       <EditableField
         label="Contraseña"
@@ -743,6 +743,7 @@ function EditableField({
   disabled = false,
   displayValue,
   className = "",
+  money = false,
 }) {
   return (
     <div
@@ -766,6 +767,14 @@ function EditableField({
               </option>
             ))}
           </select>
+        ) : money ? (
+          <CopInput
+            className={`detail-input ${error ? "is-invalid" : ""}`}
+            value={Math.round(Number(value) || 0)}
+            aria-invalid={Boolean(error)}
+            title={error || undefined}
+            onChange={(amount) => onChange(String(amount))}
+          />
         ) : (
           <input
             className={`detail-input ${error ? "is-invalid" : ""}`}

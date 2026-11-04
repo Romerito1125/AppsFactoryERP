@@ -14,11 +14,16 @@ import {
   BankAmountDto,
   BankTransferDto,
 } from '../cuentas-bancarias/dto/bank-account.dto';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { ListBankMovementsQueryDto } from './dto/list-bank-movements-query.dto';
 
 @Injectable()
 export class MovimientosBancariosService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
   async findAll(query: ListBankMovementsQueryDto) {
     const where = {
       ...this.getTypeWhere(query.movementType),
@@ -50,8 +55,8 @@ export class MovimientosBancariosService {
       throw new NotFoundException('Movimiento bancario no encontrado');
     return movement;
   }
-  income(bankAccountId: number, dto: BankAmountDto) {
-    return this.prisma.$transaction(async (tx) =>
+  async income(bankAccountId: number, dto: BankAmountDto, actor?: AuthUser) {
+    const movement = await this.prisma.$transaction(async (tx) =>
       this.createMovement(
         tx,
         bankAccountId,
@@ -62,9 +67,11 @@ export class MovimientosBancariosService {
         dto.appliesGmf,
       ),
     );
+    await this.audit(actor, 'INGRESO', movement);
+    return movement;
   }
-  expense(bankAccountId: number, dto: BankAmountDto) {
-    return this.prisma.$transaction(async (tx) => {
+  async expense(bankAccountId: number, dto: BankAmountDto, actor?: AuthUser) {
+    const movement = await this.prisma.$transaction(async (tx) => {
       const account = await this.ensureActiveAccount(tx, bankAccountId);
       // Cuenta con 4x1000 automático: el cargo se aplica salvo que se indique lo contrario.
       const appliesGmf = dto.appliesGmf ?? account.autoGmf;
@@ -85,14 +92,16 @@ export class MovimientosBancariosService {
         appliesGmf,
       );
     });
+    await this.audit(actor, 'EGRESO', movement);
+    return movement;
   }
-  transfer(dto: BankTransferDto) {
+  async transfer(dto: BankTransferDto, actor?: AuthUser) {
     if (dto.fromBankAccountId === dto.toBankAccountId)
       throw new BadRequestException('Las cuentas deben ser diferentes');
-    return this.prisma.$transaction(async (tx) => {
+    const { outgoing, incoming } = await this.prisma.$transaction(async (tx) => {
       const originAccount = await this.ensureActiveAccount(tx, dto.fromBankAccountId);
       const appliesGmf = dto.appliesGmf ?? originAccount.autoGmf;
-      const outgoing = this.buildMovementAmounts(
+      const outgoingAmounts = this.buildMovementAmounts(
         BankMovementType.TRANSFERENCIA_SALIENTE,
         dto.amount,
         appliesGmf,
@@ -101,9 +110,9 @@ export class MovimientosBancariosService {
       await this.ensureBalance(
         tx,
         dto.fromBankAccountId,
-        Number(outgoing.totalAmount),
+        Number(outgoingAmounts.totalAmount),
       );
-      await this.createMovement(
+      const outgoing = await this.createMovement(
         tx,
         dto.fromBankAccountId,
         BankMovementType.TRANSFERENCIA_SALIENTE,
@@ -113,7 +122,7 @@ export class MovimientosBancariosService {
         appliesGmf,
         originAccount.gmfRate,
       );
-      return this.createMovement(
+      const incoming = await this.createMovement(
         tx,
         dto.toBankAccountId,
         BankMovementType.TRANSFERENCIA_ENTRANTE,
@@ -122,12 +131,22 @@ export class MovimientosBancariosService {
         undefined,
         false,
       );
+      return { outgoing, incoming };
     });
+    await this.audit(actor, 'TRANSFERENCIA', outgoing);
+    return incoming;
   }
-  adjustment(bankAccountId: number, dto: BankAdjustmentDto) {
-    return this.prisma.$transaction(async (tx) => {
+  async adjustment(bankAccountId: number, dto: BankAdjustmentDto, actor?: AuthUser) {
+    const description = dto.description.trim();
+    if (description.length < 3)
+      throw new BadRequestException('El ajuste requiere un motivo de al menos 3 caracteres');
+    const movement = await this.prisma.$transaction(async (tx) => {
       const account = await this.ensureActiveAccount(tx, bankAccountId);
-      const difference = dto.balance - Number(account.currentBalance);
+      // El ajuste guarda la diferencia con signo: positiva sube el saldo, negativa lo baja.
+      const difference =
+        Math.round((dto.balance - Number(account.currentBalance)) * 100) / 100;
+      if (difference === 0)
+        throw new BadRequestException('El saldo ya tiene ese valor; no hay nada que ajustar');
       await tx.bankAccount.update({
         where: { id: bankAccountId },
         data: { currentBalance: dto.balance },
@@ -136,13 +155,41 @@ export class MovimientosBancariosService {
         data: {
           bankAccountId,
           movementType: BankMovementType.AJUSTE,
-          amount: Math.abs(difference),
-          baseAmount: Math.abs(difference),
-          totalAmount: Math.abs(difference),
-          description: dto.description,
+          amount: difference,
+          baseAmount: difference,
+          totalAmount: difference,
+          description,
         },
         include: { bankAccount: true, invoice: true },
       });
+    });
+    await this.audit(actor, 'AJUSTE', movement);
+    return movement;
+  }
+  private async audit(
+    actor: AuthUser | undefined,
+    action: string,
+    movement: {
+      id: number;
+      bankAccountId: number;
+      movementType: BankMovementType;
+      totalAmount: Prisma.Decimal | number;
+      description: string | null;
+    },
+  ) {
+    await this.auditLog.log({
+      actor,
+      module: 'BANCOS',
+      action,
+      entityType: 'BankAccountMovement',
+      entityId: movement.id,
+      entityLabel: `MOV-${movement.id}`,
+      description: movement.description ?? action,
+      metadata: {
+        bankAccountId: movement.bankAccountId,
+        movementType: movement.movementType,
+        total: Number(movement.totalAmount),
+      },
     });
   }
   private async createMovement(

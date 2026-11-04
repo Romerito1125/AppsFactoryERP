@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
-import { money, shortDate } from "./account-panels";
+import { shortDate } from "./account-panels";
+import { CopInput } from "@/components/money/cop-input";
 import "./notes-center.css";
+import { formatCop, readCopInput } from "@/lib/cop";
 
 const TITLES = {
   cobrar: {
@@ -111,7 +113,7 @@ export function NotesCenter({
         status: note.status === "ANULADO" ? "Anulada" : "Vigente",
         reference:
           note.kind === "ANTICIPO"
-            ? `Saldo ${money(note.balance)}`
+            ? `Saldo ${formatCop(note.balance)}`
             : documentLabel(note, documents),
       }));
     const returnRows =
@@ -138,7 +140,7 @@ export function NotesCenter({
               detail: row.notes ?? "Anticipo de cliente",
               amount: Number(row.amount),
               status: "Vigente",
-              reference: `Saldo ${money(row.balance)}`,
+              reference: `Saldo ${formatCop(row.balance)}`,
             }))
         : [];
     return [...noteRows, ...advanceRows, ...returnRows].sort(
@@ -264,7 +266,7 @@ export function NotesCenter({
                   <option value="">Selecciona…</option>
                   {documents.map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.label} · saldo {money(item.balance)}
+                      {item.label} · saldo {formatCop(item.balance)}
                     </option>
                   ))}
                 </select>
@@ -289,12 +291,10 @@ export function NotesCenter({
             )}
             <label>
               <span>Valor *</span>
-              <input
-                inputMode="decimal"
+              <CopInput
                 className="is-amount"
-                value={form.amount}
-                placeholder="0,00"
-                onChange={(event) => /^\d*([.,]\d{0,2})?$/.test(event.target.value) && setField("amount", event.target.value)}
+                value={readCopInput(form.amount).value}
+                onChange={(amount) => setField("amount", String(amount))}
               />
             </label>
             <button type="button" className="primary-action" disabled={saving} onClick={submit}>
@@ -325,7 +325,7 @@ export function NotesCenter({
                   <td>{shortDate(row.date)}</td>
                   <td>{row.detail}</td>
                   <td>{row.reference}</td>
-                  <td className="n">{money(row.amount)}</td>
+                  <td className="n">{formatCop(row.amount)}</td>
                   <td>{row.status}</td>
                   <td>
                     {canEdit && !row.voided && (row.note || row.clientAdvance) && (
@@ -385,7 +385,7 @@ export function NotesCenter({
                 <select value={action.documentId} onChange={(event) => setAction({ ...action, documentId: event.target.value })}>
                   <option value="">Compra…</option>
                   {documents.map((item) => (
-                    <option key={item.id} value={item.id}>{item.label} · saldo {money(item.balance)}</option>
+                    <option key={item.id} value={item.id}>{item.label} · saldo {formatCop(item.balance)}</option>
                   ))}
                 </select>
                 <input

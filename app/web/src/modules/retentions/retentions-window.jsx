@@ -1,3 +1,5 @@
+import { CopInput } from "@/components/money/cop-input";
+import { formatCop } from "@/lib/cop";
 import { useEffect, useMemo, useState } from "react";
 import {
   Check,
@@ -501,6 +503,7 @@ function RetentionMain({ retention, editing, onChange, fieldErrors }) {
           label="Base mínima"
           value={retention.minimumBase}
           editing={editing}
+          money
           onChange={(value) => onChange("minimumBase", value)}
           error={fieldErrors?.minimumBase}
         />
@@ -660,21 +663,31 @@ function RetentionTextField({
     </div>
   );
 }
-function RetentionField({ label, value, editing, onChange, error = "" }) {
+function RetentionField({ label, value, editing, onChange, error = "", money = false }) {
   return (
     <div className={`retention-field ${error ? "has-error" : ""}`}>
       <label>{label}</label>
       {editing ? (
-        <input
-          className={`detail-input ${error ? "is-invalid" : ""}`}
-          value={value ?? ""}
-          aria-invalid={Boolean(error)}
-          title={error || undefined}
-          onChange={(event) => onChange(event.target.value)}
-        />
+        money ? (
+          <CopInput
+            className={`detail-input ${error ? "is-invalid" : ""}`}
+            value={Math.round(Number(value) || 0)}
+            aria-invalid={Boolean(error)}
+            title={error || undefined}
+            onChange={(amount) => onChange(String(amount))}
+          />
+        ) : (
+          <input
+            className={`detail-input ${error ? "is-invalid" : ""}`}
+            value={value ?? ""}
+            aria-invalid={Boolean(error)}
+            title={error || undefined}
+            onChange={(event) => onChange(event.target.value)}
+          />
+        )
       ) : (
         <div className="detail-control">
-          <span>{formatNumber(value)}</span>
+          <span>{money ? formatCop(value) : formatNumber(value)}</span>
         </div>
       )}
       {error && <span className="field-error">{error}</span>}

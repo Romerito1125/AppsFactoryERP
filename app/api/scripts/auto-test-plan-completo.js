@@ -310,7 +310,7 @@ const stockOf = async (productId, whId) => {
   await T('08', 'base editada sin motivo → 400', async () => { await expectStatus('contador', 'POST', '/compras', { providerId: D.providers.conRetencion, warehouseId: norte, items: [{ productId: P.iva19, quantity: 1, unitCost: 5000 }], retentionBase: 10, retentionBaseEdited: true, retentionRate: 2.5 }, [400]); });
   await T('08', 'base editada por BODEGA → 403', async () => { await expectStatus('bodegaNorte', 'POST', '/compras', { providerId: D.providers.conRetencion, warehouseId: norte, items: [{ productId: P.iva19, quantity: 100, unitCost: 5000 }], retentionBase: 10, retentionBaseEdited: true, retentionBaseReason: 'no debería', retentionRate: 2.5 }, [403]); });
   await T('08', 'BODEGA crea compra con base automática (sin permiso especial)', async () => {
-    const p = await call('bodegaNorte', 'POST', '/compras', { providerId: D.providers.conRetencion, warehouseId: norte, items: [{ productId: P.iva19, quantity: 100, unitCost: 5000 }], retentionBase: 420168.07, retentionBaseEdited: false, retentionRate: 2.5 }); created.purchases.push(p.id);
+    const p = await call('bodegaNorte', 'POST', '/compras', { providerId: D.providers.conRetencion, warehouseId: norte, items: [{ productId: P.iva19, quantity: 100, unitCost: 5000 }], retentionBase: 420168, retentionBaseEdited: false, retentionRate: 2.5 }); created.purchases.push(p.id);
     assert(p.retentionBaseReason == null, 'sin motivo esperado');
   });
   await T('08', 'compra anulada no suma stock y sale del reporte de pagos', async () => {

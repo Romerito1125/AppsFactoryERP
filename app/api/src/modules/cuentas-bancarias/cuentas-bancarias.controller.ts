@@ -8,8 +8,11 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import { Permissions } from '../../common/decorators/permissions.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { Role } from '../../common/enums/role.enum';
@@ -37,25 +40,26 @@ export class CuentasBancariasController {
   }
   @Post()
   @Permissions('BANKS_EDIT')
-  create(@Body() dto: CreateBankAccountDto) {
-    return this.service.create(dto);
+  create(@Body() dto: CreateBankAccountDto, @Req() request: Request & { user: AuthUser }) {
+    return this.service.create(dto, request.user);
   }
   @Patch(':id')
   @Permissions('BANKS_EDIT')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateBankAccountDto,
+    @Req() request: Request & { user: AuthUser },
   ) {
-    return this.service.update(id, dto);
+    return this.service.update(id, dto, request.user);
   }
   @Delete(':id')
   @Permissions('BANKS_EDIT')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @Req() request: Request & { user: AuthUser }) {
+    return this.service.remove(id, request.user);
   }
   @Patch(':id/reactivar')
   @Permissions('BANKS_EDIT')
-  reactivate(@Param('id', ParseIntPipe) id: number) {
-    return this.service.reactivate(id);
+  reactivate(@Param('id', ParseIntPipe) id: number, @Req() request: Request & { user: AuthUser }) {
+    return this.service.reactivate(id, request.user);
   }
 }

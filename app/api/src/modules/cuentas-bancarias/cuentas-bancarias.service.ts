@@ -3,7 +3,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { BankMovementType } from '@prisma/client';
 import { RecordStatusQuery } from '../../common/enums/record-status-query.enum';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import type { AuthUser } from '../auth/interfaces/auth-user.interface';
 import {
   buildPaginatedResponse,
   resolvePagination,
@@ -17,7 +20,10 @@ import { FilterBankAccountsDto } from './dto/filter-bank-accounts.dto';
 
 @Injectable()
 export class CuentasBancariasService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLog: AuditLogService,
+  ) {}
   async findAll(filter: FilterBankAccountsDto) {
     const where = {
       ...this.getStatusWhere(filter.estado),
@@ -45,26 +51,94 @@ export class CuentasBancariasService {
     if (!item) throw new NotFoundException('Cuenta bancaria no encontrada');
     return item;
   }
-  create(dto: CreateBankAccountDto) {
-    return this.prisma.bankAccount.create({ data: dto });
+  async create(dto: CreateBankAccountDto, actor?: AuthUser) {
+    const { currentBalance = 0, ...data } = dto;
+    if (currentBalance < 0)
+      throw new BadRequestException('El saldo inicial no puede ser negativo');
+    const account = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.bankAccount.create({
+        data: { ...data, currentBalance: 0 },
+      });
+      if (currentBalance === 0) return created;
+      // El saldo inicial entra como movimiento: el saldo nunca se escribe sin respaldo.
+      await tx.bankAccountMovement.create({
+        data: {
+          bankAccountId: created.id,
+          movementType: BankMovementType.INGRESO,
+          amount: currentBalance,
+          baseAmount: currentBalance,
+          totalAmount: currentBalance,
+          description: 'Saldo inicial',
+        },
+      });
+      return tx.bankAccount.update({
+        where: { id: created.id },
+        data: { currentBalance },
+      });
+    });
+    await this.auditLog.log({
+      actor,
+      module: 'BANCOS',
+      action: 'CREAR_CUENTA',
+      entityType: 'BankAccount',
+      entityId: account.id,
+      entityLabel: account.name,
+      description: `Creó la cuenta ${account.name}`,
+      metadata: { saldoInicial: currentBalance },
+    });
+    return account;
   }
-  async update(id: number, dto: UpdateBankAccountDto) {
+  async update(id: number, dto: UpdateBankAccountDto, actor?: AuthUser) {
     await this.findOne(id);
-    return this.prisma.bankAccount.update({ where: { id }, data: dto });
+    const account = await this.prisma.bankAccount.update({
+      where: { id },
+      data: dto,
+    });
+    await this.auditLog.log({
+      actor,
+      module: 'BANCOS',
+      action: 'EDITAR_CUENTA',
+      entityType: 'BankAccount',
+      entityId: account.id,
+      entityLabel: account.name,
+      description: `Editó la cuenta ${account.name}`,
+      metadata: { campos: Object.keys(dto) },
+    });
+    return account;
   }
-  async remove(id: number) {
+  async remove(id: number, actor?: AuthUser) {
     await this.findOne(id);
-    return this.prisma.bankAccount.update({
+    const account = await this.prisma.bankAccount.update({
       where: { id },
       data: { isActive: false, deletedAt: new Date() },
     });
+    await this.auditLog.log({
+      actor,
+      module: 'BANCOS',
+      action: 'DESACTIVAR_CUENTA',
+      entityType: 'BankAccount',
+      entityId: account.id,
+      entityLabel: account.name,
+      description: `Desactivó la cuenta ${account.name}`,
+    });
+    return account;
   }
-  async reactivate(id: number) {
+  async reactivate(id: number, actor?: AuthUser) {
     await this.findOne(id);
-    return this.prisma.bankAccount.update({
+    const account = await this.prisma.bankAccount.update({
       where: { id },
       data: { isActive: true, deletedAt: null },
     });
+    await this.auditLog.log({
+      actor,
+      module: 'BANCOS',
+      action: 'REACTIVAR_CUENTA',
+      entityType: 'BankAccount',
+      entityId: account.id,
+      entityLabel: account.name,
+      description: `Reactivó la cuenta ${account.name}`,
+    });
+    return account;
   }
   private ensurePositiveId(id: number) {
     if (id <= 0)

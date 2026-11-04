@@ -33,6 +33,8 @@ import {
   netFromGross,
   roundMoney as roundCommercialMoney,
 } from "@/lib/commercial-pricing";
+import { formatCop } from "@/lib/cop";
+import { CopInput } from "@/components/money/cop-input";
 
 const units = ["UND", "KG", "G", "LB", "L", "ML", "CAJA", "PAQUETE"];
 const PRICE_LEVELS = [0, 1, 2, 3];
@@ -1663,23 +1665,22 @@ function ProductDetails({
       />
       <ProductField
         label="Costo adquisición (sin IVA)"
-        type="text"
-        inputMode="decimal"
+        money
         value={String(product.cost ?? 0)}
         editing={editing}
         onChange={(value) => onChange("cost", value)}
         error={fieldErrors?.cost}
-        displayValue={formatCurrency(product.cost)}
+        displayValue={formatCop(product.cost)}
         accent
       />
       <ProductField
         label="Inventario total (sin IVA)"
-        value={formatCurrency(Number(product.cost ?? 0) * Number(product.stock ?? 0))}
+        value={formatCop(Number(product.cost ?? 0) * Number(product.stock ?? 0))}
         accent
       />
       <ProductField
         label="Inventario total (con IVA)"
-        value={formatCurrency(
+        value={formatCop(
           Number(product.cost ?? 0) *
             Number(product.stock ?? 0) *
             (1 + Number(product.taxRate ?? 0) / 100),
@@ -1847,10 +1848,10 @@ function InventoryPanel({
                     </td>
                     <td>{product.minimumStock}</td>
                     <td>{product.maximumStock ?? "—"}</td>
-                    <td>{formatCurrency(product.cost)}</td>
-                    <td>{formatCurrency(Number(product.cost ?? 0) * quantity)}</td>
+                    <td>{formatCop(product.cost)}</td>
+                    <td>{formatCop(Number(product.cost ?? 0) * quantity)}</td>
                     <td>
-                      {formatCurrency(
+                      {formatCop(
                         Number(product.cost ?? 0) *
                           quantity *
                           (1 + Number(product.taxRate ?? 0) / 100),
@@ -2054,24 +2055,19 @@ function PricesPanel({
                 <tr key={level}>
                   <td className="price-level-cell">{priceLabel(level)}</td>
                   <td>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={price.price ?? ""}
-                      placeholder="0"
+                    <CopInput
+                      value={Math.round(Number(price.price) || 0)}
                       disabled={disabled}
-                      onChange={(event) =>
-                        updatePrice(level, { price: event.target.value })
-                      }
+                      onChange={(amount) => updatePrice(level, { price: String(amount) })}
                       aria-label={`${priceLabel(level)} precio de venta con IVA`}
                     />
                   </td>
                   <td>
                     <div className="price-input-preview">
-                      <strong>{metrics.net == null ? "—" : formatCurrency(metrics.net)}</strong>
+                      <strong>{metrics.net == null ? "—" : formatCop(metrics.net)}</strong>
                     </div>
                   </td>
-                  <td>{metrics.tax == null ? "—" : formatCurrency(metrics.tax)}</td>
+                  <td>{metrics.tax == null ? "—" : formatCop(metrics.tax)}</td>
                   <td>
                     <select
                       value={price.unit ?? product.unit ?? "UND"}
@@ -2099,7 +2095,7 @@ function PricesPanel({
                       aria-label={`${priceLabel(level)} cantidad`}
                     />
                   </td>
-                  <td>{metrics.profit == null ? "—" : formatCurrency(metrics.profit)}</td>
+                  <td>{metrics.profit == null ? "—" : formatCop(metrics.profit)}</td>
                   <td>{metrics.margin == null ? "—" : `${formatDecimal(metrics.margin)}%`}</td>
                   <td className="price-default-cell">
                     <input
@@ -2273,7 +2269,7 @@ function UnitsPanel({
                   <td>{price?.quantity ?? "—"}</td>
                   <td>
                     {price
-                      ? formatCurrency(
+                      ? formatCop(
                           editing
                             ? Number(price.price)
                             : grossPriceFromNet(Number(price.price), product.taxRate),
@@ -2628,7 +2624,7 @@ function ProductCard({
           <span className="product-card-brand">{product.brand || "Sin marca"}</span>
           <span>{product.code}</span>
           <small>
-            Stock {product.stock ?? 0} · {formatCurrency(product.cost)}
+            Stock {product.stock ?? 0} · {formatCop(product.cost)}
           </small>
         </span>
       </button>
@@ -2780,7 +2776,7 @@ function CostMetric({ label, value }) {
   return (
     <div className="cost-metric">
       <span>{label}</span>
-      <strong>{formatCurrency(value)}</strong>
+      <strong>{formatCop(value)}</strong>
     </div>
   );
 }
@@ -2941,6 +2937,7 @@ function ProductField({
   displayValue,
   error = "",
   inputMode,
+  money = false,
 }) {
   return (
     <div
@@ -2969,6 +2966,14 @@ function ProductField({
               </option>
             ))}
           </select>
+        ) : money ? (
+          <CopInput
+            className={`detail-input ${accent ? "is-accent" : ""} ${error ? "is-invalid" : ""}`}
+            value={Math.round(Number(value) || 0)}
+            aria-invalid={Boolean(error)}
+            title={error || undefined}
+            onChange={(amount) => onChange(String(amount))}
+          />
         ) : (
           <input
             type={type}
@@ -3595,9 +3600,6 @@ function isProductRelationError(error) {
   return /facturas|cotizaciones|compras|ofertas|movimientos|relacionados/i.test(
     error?.message ?? "",
   );
-}
-function formatCurrency(value) {
-  return `$ ${new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(Number(value) || 0)}`;
 }
 function formatDecimal(value) {
   return new Intl.NumberFormat("es-CO", {

@@ -72,6 +72,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { formatCop, readCopInput } from "@/lib/cop";
+import { CopInput } from "@/components/money/cop-input";
 
 // Acciones compartidas con los componentes de la grilla (documentos en espera, bodega por línea, ticket).
 const SalesExtrasContext = createContext({});
@@ -905,7 +907,7 @@ export function SalesWindow({
       setLastDocument(invoice);
       setNotice(
         onCredit
-          ? `Factura ${invoice.consecutive} creada; ${formatCurrency(result.creditAmount)} quedaron a crédito.`
+          ? `Factura ${invoice.consecutive} creada; ${formatCop(result.creditAmount)} quedaron a crédito.`
           : `Factura ${invoice.consecutive} creada correctamente.`,
       );
       setCart(emptyCart);
@@ -1631,7 +1633,7 @@ function QuotePanel({
           onOpenProductLookup={onOpenProductLookup}
         />
         <div className="sales-submit-row">
-          <strong>Total propuesto: {formatCurrency(totals.total)}</strong>
+          <strong>Total propuesto: {formatCop(totals.total)}</strong>
           <button
             type="button"
             className="primary-action"
@@ -1895,7 +1897,7 @@ function TicketPanel({
         <div className="sales-last-document">
           <span>Último documento</span>
           <strong>{lastDocument.consecutive}</strong>
-          <small>{formatCurrency(lastDocument.total)}</small>
+          <small>{formatCop(lastDocument.total)}</small>
           {lastDocument.items && (
             <button type="button" onClick={() => onTicket?.(lastDocument)}>
               <Printer size={12} /> Ticket
@@ -1914,11 +1916,11 @@ function SalesPaymentBox({ client, total, clientDebt }) {
     <div className="sales-payment-box">
       <div className="sales-payment-heading">
         <span>Total a pagar</span>
-        <strong>{formatCurrency(total)}</strong>
+        <strong>{formatCop(total)}</strong>
       </div>
       <small className="sales-credit-hint">
         {hasCredit
-          ? `Cliente con crédito · límite ${formatCurrency(client.maxCredit)} · deuda actual ${formatCurrency(clientDebt)}`
+          ? `Cliente con crédito · límite ${formatCop(client.maxCredit)} · deuda actual ${formatCop(clientDebt)}`
           : "Cliente sin crédito: la venta es de contado."}
       </small>
       <small className="sales-credit-hint">
@@ -1939,19 +1941,19 @@ function BillingTotalsPanel({ documentNumber, cart, totals }) {
       <strong>Factura N° {documentNumber}</strong>
       <div>
         <span>Total renglones</span>
-        <b>{formatCurrency(totals.subtotal)}</b>
+        <b>{formatCop(totals.subtotal)}</b>
       </div>
       <div>
         <span>Impuestos</span>
-        <b>{formatCurrency(totals.taxes)}</b>
+        <b>{formatCop(totals.taxes)}</b>
       </div>
       <div>
         <span>Total</span>
-        <b>{formatCurrency(totals.total)}</b>
+        <b>{formatCop(totals.total)}</b>
       </div>
       <div>
         <span>Vuelto</span>
-        <b>{formatCurrency(0)}</b>
+        <b>{formatCop(0)}</b>
       </div>
       <footer>
         <span>Total cantidad o piezas</span>
@@ -2075,7 +2077,7 @@ function CartTable({
                       />
                     ) : (
                       <span className="sales-cart-price-level">
-                        {formatCurrency(
+                        {formatCop(
                           grossFromNet(
                             cartUnitPriceNet(item, price),
                             item.product.taxRate,
@@ -2085,7 +2087,7 @@ function CartTable({
                     )}
                   </td>
                   <td className="sales-cart-total">
-                    {formatCurrency(lineTotals.total)}
+                    {formatCop(lineTotals.total)}
                   </td>
                 </tr>
               );
@@ -2114,13 +2116,13 @@ function CartTable({
       </div>
       <div className="sales-cart-summary">
         <span>
-          Subtotal <strong>{formatCurrency(totals.subtotal)}</strong>
+          Subtotal <strong>{formatCop(totals.subtotal)}</strong>
         </span>
         <span>
-          IVA <strong>{formatCurrency(totals.taxes)}</strong>
+          IVA <strong>{formatCop(totals.taxes)}</strong>
         </span>
         <span className="is-total">
-          Total <strong>{formatCurrency(totals.total)}</strong>
+          Total <strong>{formatCop(totals.total)}</strong>
         </span>
         {cart.length > 0 && (
           <button
@@ -2253,16 +2255,16 @@ function SalesQuantityInput({ item, onUpdateQuantity }) {
 function SalesPriceInput({ item, catalogPrice, onUpdatePrice }) {
   const currentNet = cartUnitPriceNet(item, catalogPrice);
   const currentGross = grossFromNet(currentNet, item.product.taxRate);
-  const [draft, setDraft] = useState(String(currentGross));
+  const [draft, setDraft] = useState(String(Math.round(currentGross)));
 
   useEffect(() => {
-    setDraft(String(currentGross));
+    setDraft(String(Math.round(currentGross)));
   }, [currentGross]);
 
   function commit() {
-    const parsed = parseMoneyInput(draft);
-    if (parsed === null) {
-      setDraft(String(currentGross));
+    const parsed = readCopInput(draft).value;
+    if (parsed <= 0) {
+      setDraft(String(Math.round(currentGross)));
       return;
     }
     const catalogGross = grossFromNet(
@@ -2280,13 +2282,9 @@ function SalesPriceInput({ item, catalogPrice, onUpdatePrice }) {
 
   return (
     <label className="sales-cart-price-editor">
-      <input
-        type="text"
-        inputMode="decimal"
-        value={draft}
-        onChange={(event) => {
-          if (isMoneyDraft(event.target.value)) setDraft(event.target.value);
-        }}
+      <CopInput
+        value={readCopInput(draft).value}
+        onChange={(amount) => setDraft(String(amount))}
         onBlur={commit}
         onKeyDown={(event) => {
           // Confirma el precio; el avance al siguiente recuadro lo hace el contenedor.
@@ -2403,7 +2401,7 @@ export function InvoicePanel({
                     />
                   </td>
                   <td>{formatDate(invoice.createdAt)}</td>
-                  <td>{formatCurrency(invoice.total)}</td>
+                  <td>{formatCop(invoice.total)}</td>
                   <td>
                     <div className="sales-table-actions">
                       <button
@@ -2503,7 +2501,7 @@ function QuoteList({
                   <td>{clientName(quote.client)}</td>
                   <td>{quote.items?.length ?? 0}</td>
                   <td>{formatDate(quote.expiresAt)}</td>
-                  <td>{formatCurrency(quote.total)}</td>
+                  <td>{formatCop(quote.total)}</td>
                   <td>
                     <StatusPill
                       value={quoteStatusLabels[quote.status] ?? quote.status}
@@ -2862,7 +2860,7 @@ function OrdersPanel({
                       />
                     </td>
                     <td>{formatDate(order.createdAt)}</td>
-                    <td>{formatCurrency(order.total)}</td>
+                    <td>{formatCop(order.total)}</td>
                     <td>
                       <div className="sales-table-actions">
                         <button type="button" onClick={() => onSelect(detail)}>
@@ -3001,7 +2999,6 @@ function ReportsPanel({ invoices, quotes, orders, clients, warehouses, salesUser
     const margin = 34;
     const colors = { navy: [28, 48, 74], blue: [43, 108, 176], green: [49, 165, 109], amber: [210, 138, 37], ink: [41, 57, 78], muted: [104, 121, 143], line: [224, 231, 239], pale: [244, 247, 251] };
     let y = 0;
-    const money = (value) => formatCurrency(value);
     const ensureSpace = (height) => { if (y + height > pageHeight - margin) { doc.addPage(); y = margin; drawHeader(false); return true; } return false; };
     const drawHeader = (first = true) => {
       if (first) { doc.setFillColor(...colors.navy); doc.rect(0, 0, pageWidth, 78, "F"); doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(20); doc.text("MUNDO TIENDA", margin, 34); doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.text("REPORTE COMERCIAL DE VENTAS", margin, 54); doc.setFontSize(10); doc.text(`Periodo: ${range.label}`, pageWidth - margin, 34, { align: "right" }); doc.text(`Generado: ${new Date().toLocaleString("es-CO")}`, pageWidth - margin, 52, { align: "right" }); y = 106; }
@@ -3010,18 +3007,18 @@ function ReportsPanel({ invoices, quotes, orders, clients, warehouses, salesUser
     const sectionTitle = (title) => { ensureSpace(28); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text(title, margin, y); y += 18; };
     drawHeader();
     doc.setFillColor(...colors.pale); doc.roundedRect(margin, y, pageWidth - margin * 2, 45, 6, 6, "F"); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.text(summary.headline, margin + 14, y + 18); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.setTextColor(...colors.muted); doc.text(doc.splitTextToSize(summary.detail, pageWidth - margin * 2 - 28), margin + 14, y + 33); y += 62;
-    const metricCards = [["Ventas", money(metrics.sales), colors.blue], ["Ticket promedio", money(metrics.averageTicket), colors.navy], ["Utilidad bruta", `${money(metrics.profit)} · ${metrics.margin.toFixed(1)}%`, colors.green], ["IVA generado", money(metrics.taxes), colors.amber], ["Ventas a crédito", `${money(metrics.creditSales)} · ${metrics.creditShare.toFixed(1)}%`, colors.amber]];
+    const metricCards = [["Ventas", formatCop(metrics.sales), colors.blue], ["Ticket promedio", formatCop(metrics.averageTicket), colors.navy], ["Utilidad bruta", `${formatCop(metrics.profit)} · ${metrics.margin.toFixed(1)}%`, colors.green], ["IVA generado", formatCop(metrics.taxes), colors.amber], ["Ventas a crédito", `${formatCop(metrics.creditSales)} · ${metrics.creditShare.toFixed(1)}%`, colors.amber]];
     const cardGap = 9; const cardWidth = (pageWidth - margin * 2 - cardGap * (metricCards.length - 1)) / metricCards.length;
     metricCards.forEach(([label, value, color], index) => { const x = margin + index * (cardWidth + cardGap); doc.setFillColor(255, 255, 255); doc.setDrawColor(...colors.line); doc.roundedRect(x, y, cardWidth, 58, 5, 5, "FD"); doc.setFillColor(...color); doc.roundedRect(x, y, cardWidth, 4, 2, 2, "F"); doc.setTextColor(...colors.muted); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.text(label, x + 10, y + 20); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(12); doc.text(value, x + 10, y + 41); }); y += 82;
     sectionTitle("Productos con mayor facturación");
-    topProducts.slice(0, 8).forEach((row, index) => { ensureSpace(18); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.text(`${index + 1}. ${row.name}`, margin, y); doc.setTextColor(...colors.muted); doc.text(`${formatQuantity(row.units)} unidades`, margin + 250, y); doc.setTextColor(...colors.green); doc.setFont("helvetica", "bold"); doc.text(money(row.profit), pageWidth - margin - 135, y, { align: "right" }); doc.setTextColor(...colors.ink); doc.text(money(row.total), pageWidth - margin, y, { align: "right" }); y += 17; });
+    topProducts.slice(0, 8).forEach((row, index) => { ensureSpace(18); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.text(`${index + 1}. ${row.name}`, margin, y); doc.setTextColor(...colors.muted); doc.text(`${formatQuantity(row.units)} unidades`, margin + 250, y); doc.setTextColor(...colors.green); doc.setFont("helvetica", "bold"); doc.text(formatCop(row.profit), pageWidth - margin - 135, y, { align: "right" }); doc.setTextColor(...colors.ink); doc.text(formatCop(row.total), pageWidth - margin, y, { align: "right" }); y += 17; });
     y += 8; sectionTitle("Recomendaciones de negocio");
     recommendations.forEach((recommendation) => { ensureSpace(30); doc.setFillColor(...colors.pale); doc.roundedRect(margin, y - 10, pageWidth - margin * 2, 29, 4, 4, "F"); doc.setTextColor(...colors.ink); doc.setFont("helvetica", "bold"); doc.setFontSize(9); doc.text(recommendation.title, margin + 10, y + 2); doc.setTextColor(...colors.muted); doc.setFont("helvetica", "normal"); doc.text(doc.splitTextToSize(recommendation.detail, pageWidth - margin * 2 - 220), margin + 210, y + 2); y += 38; });
     sectionTitle("Detalle de facturas filtradas");
     const columns = [{ label: "Fecha", width: 74 }, { label: "Factura", width: 145 }, { label: "Cliente", width: 190 }, { label: "Origen", width: 80 }, { label: "Pago", width: 62 }, { label: "Total", width: 90 }, { label: "Utilidad", width: 90 }];
     const drawTableHeader = () => { ensureSpace(24); doc.setFillColor(...colors.navy); doc.rect(margin, y - 12, pageWidth - margin * 2, 21, "F"); let x = margin + 7; doc.setTextColor(255, 255, 255); doc.setFont("helvetica", "bold"); doc.setFontSize(8); columns.forEach((column) => { doc.text(column.label, x, y + 1); x += column.width; }); y += 20; };
     drawTableHeader();
-    filteredInvoices.slice(0, 100).forEach((invoice, index) => { if (ensureSpace(20)) drawTableHeader(); if (index % 2 === 0) { doc.setFillColor(250, 252, 254); doc.rect(margin, y - 11, pageWidth - margin * 2, 19, "F"); } let x = margin + 7; const values = [formatDate(invoice.createdAt), invoice.consecutive, clientName(invoice.client), invoiceSourceLabel(invoice.source), invoice.saleMode === "CREDITO" ? "Crédito" : "Contado", money(invoice.total), money(invoiceProfit(invoice))]; doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...colors.ink); values.forEach((value, valueIndex) => { doc.text(doc.splitTextToSize(String(value), columns[valueIndex].width - 12)[0], x, y); x += columns[valueIndex].width; }); y += 19; });
+    filteredInvoices.slice(0, 100).forEach((invoice, index) => { if (ensureSpace(20)) drawTableHeader(); if (index % 2 === 0) { doc.setFillColor(250, 252, 254); doc.rect(margin, y - 11, pageWidth - margin * 2, 19, "F"); } let x = margin + 7; const values = [formatDate(invoice.createdAt), invoice.consecutive, clientName(invoice.client), invoiceSourceLabel(invoice.source), invoice.saleMode === "CREDITO" ? "Crédito" : "Contado", formatCop(invoice.total), formatCop(invoiceProfit(invoice))]; doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...colors.ink); values.forEach((value, valueIndex) => { doc.text(doc.splitTextToSize(String(value), columns[valueIndex].width - 12)[0], x, y); x += columns[valueIndex].width; }); y += 19; });
     doc.setTextColor(...colors.muted); doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.text("Mundo Tienda · Reporte generado desde el módulo de Ventas", margin, pageHeight - 18); doc.save(`reporte-ventas-${filters.period.toLowerCase()}.pdf`);
   }
 
@@ -3124,11 +3121,11 @@ function ReportsPanel({ invoices, quotes, orders, clients, warehouses, salesUser
       </section>
 
       <section className="sales-report-kpis">
-        <ReportMetricCard icon={CircleDollarSign} label="Ventas" value={formatCurrency(metrics.sales)} helper={`${metrics.invoices} facturas filtradas`} tone="primary" />
-        <ReportMetricCard icon={ReceiptText} label="Ticket promedio" value={formatCurrency(metrics.averageTicket)} helper="Venta media por factura" />
-        <ReportMetricCard icon={TrendingUp} label="Utilidad bruta" value={formatCurrency(metrics.profit)} helper={`${metrics.margin.toFixed(1)}% sobre ventas`} tone="positive" />
-        <ReportMetricCard icon={Percent} label="IVA generado" value={formatCurrency(metrics.taxes)} helper={`${metrics.taxRate.toFixed(1)}% de la venta`} />
-        <ReportMetricCard icon={CreditCard} label="Ventas a crédito" value={formatCurrency(metrics.creditSales)} helper={`${metrics.creditShare.toFixed(1)}% del periodo`} tone="warning" />
+        <ReportMetricCard icon={CircleDollarSign} label="Ventas" value={formatCop(metrics.sales)} helper={`${metrics.invoices} facturas filtradas`} tone="primary" />
+        <ReportMetricCard icon={ReceiptText} label="Ticket promedio" value={formatCop(metrics.averageTicket)} helper="Venta media por factura" />
+        <ReportMetricCard icon={TrendingUp} label="Utilidad bruta" value={formatCop(metrics.profit)} helper={`${metrics.margin.toFixed(1)}% sobre ventas`} tone="positive" />
+        <ReportMetricCard icon={Percent} label="IVA generado" value={formatCop(metrics.taxes)} helper={`${metrics.taxRate.toFixed(1)}% de la venta`} />
+        <ReportMetricCard icon={CreditCard} label="Ventas a crédito" value={formatCop(metrics.creditSales)} helper={`${metrics.creditShare.toFixed(1)}% del periodo`} tone="warning" />
         <ReportMetricCard icon={Boxes} label="Unidades vendidas" value={formatQuantity(metrics.units)} helper={`${metrics.activeProducts} productos con movimiento`} />
       </section>
 
@@ -3178,7 +3175,7 @@ function ReportsPanel({ invoices, quotes, orders, clients, warehouses, salesUser
 
         {activeTab === "detail" && <section className="sales-report-card sales-report-detail-card">
           <div className="sales-report-card-heading"><div><span>DETALLE</span><strong>Facturas filtradas</strong></div><span className="sales-report-card-meta">Mostrando {paginatedInvoices.length} de {filteredInvoices.length}</span></div>
-          <div className="sales-report-detail-scroll"><table className="sales-report-detail-table"><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Origen</th><th>Pago</th><th>Vendedor</th><th>Total</th><th>Utilidad</th></tr></thead><tbody>{paginatedInvoices.map((invoice) => <tr key={invoice.id} className="sales-report-detail-row" tabIndex="0" onClick={() => onSelect?.({ ...invoice, __salesType: "invoice" })} onDoubleClick={() => onSelect?.({ ...invoice, __salesType: "invoice" })} onKeyDown={(event) => { if (event.key === "Enter") onSelect?.({ ...invoice, __salesType: "invoice" }); }}><td>{formatDate(invoice.createdAt)}</td><td><strong>{invoice.consecutive}</strong></td><td>{clientName(invoice.client)}</td><td><span className="sales-report-source-pill">{invoiceSourceLabel(invoice.source)}</span></td><td>{invoice.saleMode === "CREDITO" ? "Crédito" : "Contado"}</td><td>{reportSellerName(invoice)}</td><td className="sales-report-number">{formatCurrency(invoice.total)}</td><td className="sales-report-number">{formatCurrency(invoiceProfit(invoice))}</td></tr>)}</tbody></table>{!filteredInvoices.length && <div className="sales-report-empty">No hay facturas con los filtros seleccionados.</div>}</div>
+          <div className="sales-report-detail-scroll"><table className="sales-report-detail-table"><thead><tr><th>Fecha</th><th>Factura</th><th>Cliente</th><th>Origen</th><th>Pago</th><th>Vendedor</th><th>Total</th><th>Utilidad</th></tr></thead><tbody>{paginatedInvoices.map((invoice) => <tr key={invoice.id} className="sales-report-detail-row" tabIndex="0" onClick={() => onSelect?.({ ...invoice, __salesType: "invoice" })} onDoubleClick={() => onSelect?.({ ...invoice, __salesType: "invoice" })} onKeyDown={(event) => { if (event.key === "Enter") onSelect?.({ ...invoice, __salesType: "invoice" }); }}><td>{formatDate(invoice.createdAt)}</td><td><strong>{invoice.consecutive}</strong></td><td>{clientName(invoice.client)}</td><td><span className="sales-report-source-pill">{invoiceSourceLabel(invoice.source)}</span></td><td>{invoice.saleMode === "CREDITO" ? "Crédito" : "Contado"}</td><td>{reportSellerName(invoice)}</td><td className="sales-report-number">{formatCop(invoice.total)}</td><td className="sales-report-number">{formatCop(invoiceProfit(invoice))}</td></tr>)}</tbody></table>{!filteredInvoices.length && <div className="sales-report-empty">No hay facturas con los filtros seleccionados.</div>}</div>
           {filteredInvoices.length > 0 && <div className="sales-report-pagination"><span>Página {currentPage} de {totalPages}</span><label>Filas<select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}><option value="10">10</option><option value="25">25</option><option value="50">50</option></select></label><div><button type="button" disabled={currentPage <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Anterior</button><button type="button" disabled={currentPage >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Siguiente</button></div></div>}
         </section>}
 
@@ -3188,12 +3185,12 @@ function ReportsPanel({ invoices, quotes, orders, clients, warehouses, salesUser
 }
 
 function SalesExecutiveSummary({ summary, metrics }) {
-  return <section className="sales-report-executive-summary"><div className="sales-report-summary-copy"><span className="sales-report-summary-kicker">RESUMEN EJECUTIVO</span><strong>{summary.headline}</strong><p>{summary.detail}</p></div><div className="sales-report-summary-highlights"><div><span>Mejor día</span><strong>{summary.bestDay}</strong><small>{formatCurrency(summary.bestDayValue)}</small></div><div><span>Producto líder</span><strong>{summary.topProduct}</strong><small>{formatCurrency(summary.topProductValue)}</small></div><div><span>Clientes activos</span><strong>{summary.activeClients}</strong><small>{metrics.invoices} facturas en el filtro</small></div></div></section>;
+  return <section className="sales-report-executive-summary"><div className="sales-report-summary-copy"><span className="sales-report-summary-kicker">RESUMEN EJECUTIVO</span><strong>{summary.headline}</strong><p>{summary.detail}</p></div><div className="sales-report-summary-highlights"><div><span>Mejor día</span><strong>{summary.bestDay}</strong><small>{formatCop(summary.bestDayValue)}</small></div><div><span>Producto líder</span><strong>{summary.topProduct}</strong><small>{formatCop(summary.topProductValue)}</small></div><div><span>Clientes activos</span><strong>{summary.activeClients}</strong><small>{metrics.invoices} facturas en el filtro</small></div></div></section>;
 }
 
 function SalesSourceMix({ sourceMix, sales }) {
   if (!sourceMix.length) return <div className="sales-report-empty">Sin ventas en el filtro.</div>;
-  return <div className="sales-report-chart-donut-wrap"><div className="sales-report-chart-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sourceMix} dataKey="total" nameKey="label" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sourceMix.map((segment) => <Cell key={segment.key} fill={segment.color} />)}</Pie><Tooltip content={<ReportTooltip currency />} /></PieChart></ResponsiveContainer><div><strong>{formatCurrency(sales)}</strong><span>Total</span></div></div><div className="sales-report-legend">{sourceMix.map((segment) => <div key={segment.key}><i style={{ background: segment.color }} /><span>{segment.label}</span><strong>{formatCurrency(segment.total)}</strong><small>{segment.count} facturas · {segment.share.toFixed(1)}%</small></div>)}</div></div>;
+  return <div className="sales-report-chart-donut-wrap"><div className="sales-report-chart-donut"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={sourceMix} dataKey="total" nameKey="label" innerRadius="58%" outerRadius="82%" paddingAngle={3} stroke="none">{sourceMix.map((segment) => <Cell key={segment.key} fill={segment.color} />)}</Pie><Tooltip content={<ReportTooltip currency />} /></PieChart></ResponsiveContainer><div><strong>{formatCop(sales)}</strong><span>Total</span></div></div><div className="sales-report-legend">{sourceMix.map((segment) => <div key={segment.key}><i style={{ background: segment.color }} /><span>{segment.label}</span><strong>{formatCop(segment.total)}</strong><small>{segment.count} facturas · {segment.share.toFixed(1)}%</small></div>)}</div></div>;
 }
 
 function SalesPaymentChart({ rows }) {
@@ -3219,28 +3216,28 @@ function SalesTrendComparison({ points }) {
 
 function ReportTooltip({ active, payload, label, currency = false }) {
   if (!active || !payload?.length) return null;
-  return <div className="sales-report-tooltip"><strong>{label}</strong>{payload.map((entry) => <div key={entry.dataKey}><span>{entry.name ?? entry.dataKey}</span><b>{currency ? formatCurrency(entry.value) : entry.value}</b></div>)}</div>;
+  return <div className="sales-report-tooltip"><strong>{label}</strong>{payload.map((entry) => <div key={entry.dataKey}><span>{entry.name ?? entry.dataKey}</span><b>{currency ? formatCop(entry.value) : entry.value}</b></div>)}</div>;
 }
 
 function OpportunityFunnel({ metrics }) {
   const rows = [{ label: "Cotizaciones", value: metrics.totalQuotes, amount: metrics.totalQuoteValue, tone: "blue" }, { label: "Abiertas", value: metrics.openQuotes, amount: metrics.openQuoteValue, tone: "amber" }, { label: "Convertidas", value: metrics.convertedQuotes, amount: metrics.convertedQuoteValue, tone: "green" }];
   const max = Math.max(...rows.map((row) => row.value), 1);
-  return <div className="sales-report-funnel">{rows.map((row) => <div key={row.label}><div className="sales-report-funnel-label"><span>{row.label}</span><strong>{row.value}</strong></div><div className="sales-report-funnel-track"><i className={row.tone} style={{ width: `${Math.max(8, (row.value / max) * 100)}%` }} /></div><small>{formatCurrency(row.amount)}</small></div>)}</div>;
+  return <div className="sales-report-funnel">{rows.map((row) => <div key={row.label}><div className="sales-report-funnel-label"><span>{row.label}</span><strong>{row.value}</strong></div><div className="sales-report-funnel-track"><i className={row.tone} style={{ width: `${Math.max(8, (row.value / max) * 100)}%` }} /></div><small>{formatCop(row.amount)}</small></div>)}</div>;
 }
 
 function OpportunityActions({ metrics, topClients }) {
   const actions = [];
-  if (metrics.openQuotes > 0) actions.push({ title: "Contactar cotizaciones abiertas", detail: `${metrics.openQuotes} oportunidades por ${formatCurrency(metrics.openQuoteValue)}.` });
+  if (metrics.openQuotes > 0) actions.push({ title: "Contactar cotizaciones abiertas", detail: `${metrics.openQuotes} oportunidades por ${formatCop(metrics.openQuoteValue)}.` });
   if (metrics.pendingDeliveries > 0) actions.push({ title: "Resolver entregas pendientes", detail: `${metrics.pendingDeliveries} facturas todavía requieren coordinación.` });
   if (metrics.creditShare >= 30) actions.push({ title: "Priorizar recaudo de crédito", detail: `${metrics.creditShare.toFixed(1)}% de la venta está a crédito.` });
-  if (topClients[0]) actions.push({ title: `Cuidar la relación con ${topClients[0].name}`, detail: `Aporta ${formatCurrency(topClients[0].total)} en el periodo.` });
+  if (topClients[0]) actions.push({ title: `Cuidar la relación con ${topClients[0].name}`, detail: `Aporta ${formatCop(topClients[0].total)} en el periodo.` });
   if (!actions.length) actions.push({ title: "Mantener seguimiento comercial", detail: "El periodo no muestra alertas operativas prioritarias." });
   return <div className="sales-report-action-list">{actions.slice(0, 4).map((action) => <div key={action.title}><span><ArrowUpRight size={13} /></span><div><strong>{action.title}</strong><p>{action.detail}</p></div></div>)}</div>;
 }
 
 function TopClientsTable({ rows }) {
   if (!rows.length) return <div className="sales-report-empty">Sin clientes en el filtro.</div>;
-  return <div className="sales-report-client-list">{rows.slice(0, 6).map((row, index) => <div key={row.name}><span>{index + 1}</span><div><strong>{row.name}</strong><small>{row.count} facturas</small></div><b>{formatCurrency(row.total)}</b></div>)}</div>;
+  return <div className="sales-report-client-list">{rows.slice(0, 6).map((row, index) => <div key={row.name}><span>{index + 1}</span><div><strong>{row.name}</strong><small>{row.count} facturas</small></div><b>{formatCop(row.total)}</b></div>)}</div>;
 }
 
 function RecommendationsPanel({ recommendations }) {
@@ -3249,7 +3246,7 @@ function RecommendationsPanel({ recommendations }) {
 
 function MarginInsight({ metrics, topProducts }) {
   const bestProduct = [...topProducts].sort((a, b) => b.profit - a.profit)[0];
-  return <div className="sales-report-margin-insight"><div><span>Margen bruto del periodo</span><strong>{metrics.margin.toFixed(1)}%</strong></div><div className="sales-report-margin-track"><i style={{ width: `${Math.min(100, Math.max(0, metrics.margin))}%` }} /></div><p>{bestProduct ? `${bestProduct.name} aporta la mayor utilidad acumulada (${formatCurrency(bestProduct.profit)}).` : "Aún no hay utilidad calculada para este filtro."}</p></div>;
+  return <div className="sales-report-margin-insight"><div><span>Margen bruto del periodo</span><strong>{metrics.margin.toFixed(1)}%</strong></div><div className="sales-report-margin-track"><i style={{ width: `${Math.min(100, Math.max(0, metrics.margin))}%` }} /></div><p>{bestProduct ? `${bestProduct.name} aporta la mayor utilidad acumulada (${formatCop(bestProduct.profit)}).` : "Aún no hay utilidad calculada para este filtro."}</p></div>;
 }
 
 function ReportMetricCard({ icon: Icon, label, value, helper, tone = "neutral" }) {
@@ -3258,18 +3255,18 @@ function ReportMetricCard({ icon: Icon, label, value, helper, tone = "neutral" }
 
 function SalesTrendChart({ points }) {
   if (!points.length) return <div className="sales-report-empty sales-report-chart-empty">No hay ventas para dibujar en este periodo.</div>;
-  return <div className="sales-report-trend-wrap"><ResponsiveContainer width="100%" height={255}><AreaChart data={points} margin={{ top: 10, right: 12, left: 2, bottom: 5 }}><defs><linearGradient id="sales-report-area" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#2b6cb0" stopOpacity=".28" /><stop offset="100%" stopColor="#2b6cb0" stopOpacity="0" /></linearGradient></defs><CartesianGrid vertical={false} stroke="#e9eef4" /><XAxis dataKey="label" tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value) => formatCurrencyShort(value)} /><Tooltip content={<ReportTooltip currency />} /><Area type="monotone" dataKey="total" name="Ventas" stroke="#2b6cb0" strokeWidth={3} fill="url(#sales-report-area)" dot={{ r: 3, strokeWidth: 2, fill: "#fff" }} activeDot={{ r: 5 }} /></AreaChart></ResponsiveContainer><div className="sales-report-trend-total"><span>Total del periodo</span><strong>{formatCurrency(points.reduce((sum, point) => sum + point.total, 0))}</strong></div></div>;
+  return <div className="sales-report-trend-wrap"><ResponsiveContainer width="100%" height={255}><AreaChart data={points} margin={{ top: 10, right: 12, left: 2, bottom: 5 }}><defs><linearGradient id="sales-report-area" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#2b6cb0" stopOpacity=".28" /><stop offset="100%" stopColor="#2b6cb0" stopOpacity="0" /></linearGradient></defs><CartesianGrid vertical={false} stroke="#e9eef4" /><XAxis dataKey="label" tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} /><YAxis tick={{ fill: "#8a98aa", fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value) => formatCurrencyShort(value)} /><Tooltip content={<ReportTooltip currency />} /><Area type="monotone" dataKey="total" name="Ventas" stroke="#2b6cb0" strokeWidth={3} fill="url(#sales-report-area)" dot={{ r: 3, strokeWidth: 2, fill: "#fff" }} activeDot={{ r: 5 }} /></AreaChart></ResponsiveContainer><div className="sales-report-trend-total"><span>Total del periodo</span><strong>{formatCop(points.reduce((sum, point) => sum + point.total, 0))}</strong></div></div>;
 }
 
 function TopSalesProducts({ rows }) {
   if (!rows.length) return <div className="sales-report-empty">No hay productos en el periodo.</div>;
   const max = Math.max(...rows.map((row) => row.total), 1);
-  return <div className="sales-report-product-list">{rows.slice(0, 6).map((row, index) => <div className="sales-report-product-row" key={row.productId}><div className="sales-report-product-index">{index + 1}</div><div className="sales-report-product-info"><strong>{row.name}</strong><span>{formatQuantity(row.units)} unidades · {formatCurrency(row.profit)} utilidad</span><div><i style={{ width: `${Math.max(5, (row.total / max) * 100)}%` }} /></div></div><b>{formatCurrency(row.total)}</b></div>)}</div>;
+  return <div className="sales-report-product-list">{rows.slice(0, 6).map((row, index) => <div className="sales-report-product-row" key={row.productId}><div className="sales-report-product-index">{index + 1}</div><div className="sales-report-product-info"><strong>{row.name}</strong><span>{formatQuantity(row.units)} unidades · {formatCop(row.profit)} utilidad</span><div><i style={{ width: `${Math.max(5, (row.total / max) * 100)}%` }} /></div></div><b>{formatCop(row.total)}</b></div>)}</div>;
 }
 
 function SalesSellerTable({ rows }) {
   if (!rows.length) return <div className="sales-report-empty">No hay vendedores con ventas en el periodo.</div>;
-  return <div className="sales-report-seller-list">{rows.slice(0, 6).map((row) => <div className="sales-report-seller-row" key={row.name}><span className="sales-report-avatar">{row.name.slice(0, 1).toUpperCase()}</span><div><strong>{row.name}</strong><small>{row.count} facturas · {formatCurrency(row.profit)} utilidad</small></div><b>{formatCurrency(row.total)}</b></div>)}</div>;
+  return <div className="sales-report-seller-list">{rows.slice(0, 6).map((row) => <div className="sales-report-seller-row" key={row.name}><span className="sales-report-avatar">{row.name.slice(0, 1).toUpperCase()}</span><div><strong>{row.name}</strong><small>{row.count} facturas · {formatCop(row.profit)} utilidad</small></div><b>{formatCop(row.total)}</b></div>)}</div>;
 }
 
 function buildSalesReportMetrics(invoices, quotes, orders) {
@@ -3394,15 +3391,15 @@ function buildSalesSummary(metrics, dailySales, topProducts, topClients, quotes)
   else if (metrics.sales > 0 && metrics.margin < 15) headline = "El volumen de ventas requiere proteger la rentabilidad.";
   else if (!metrics.sales) headline = "Amplía el periodo para obtener una lectura comercial completa.";
   const detail = metrics.sales > 0
-    ? `${metrics.invoices} facturas generan ${formatCurrency(metrics.sales)}. ${metrics.openQuotes > 0 ? `Hay ${metrics.openQuotes} cotizaciones abiertas que pueden convertirse en facturación.` : "No hay cotizaciones abiertas pendientes en el filtro."}`
+    ? `${metrics.invoices} facturas generan ${formatCop(metrics.sales)}. ${metrics.openQuotes > 0 ? `Hay ${metrics.openQuotes} cotizaciones abiertas que pueden convertirse en facturación.` : "No hay cotizaciones abiertas pendientes en el filtro."}`
     : `${quotes.length} cotizaciones y ${topClients.length} clientes están disponibles para ajustar la consulta.`;
   return { headline, detail, bestDay: bestDay?.label ?? "—", bestDayValue: bestDay?.total ?? 0, topProduct: topProduct?.name ?? "—", topProductValue: topProduct?.total ?? 0, activeClients: topClients.length };
 }
 
 function buildSalesRecommendations(metrics, topProducts, quotes, invoices, orders) {
   const recommendations = [];
-  if (topProducts[0]) recommendations.push({ title: `Protege el inventario de ${topProducts[0].name}`, detail: `Es el producto con más facturación del filtro: ${formatCurrency(topProducts[0].total)}. Revisa existencia y reposición antes del próximo ciclo.`, tone: "blue" });
-  if (metrics.openQuotes > 0) recommendations.push({ title: "Haz seguimiento a cotizaciones abiertas", detail: `${metrics.openQuotes} cotizaciones representan ${formatCurrency(metrics.openQuoteValue)}. Prioriza las de mayor valor y fecha más antigua.`, tone: "amber" });
+  if (topProducts[0]) recommendations.push({ title: `Protege el inventario de ${topProducts[0].name}`, detail: `Es el producto con más facturación del filtro: ${formatCop(topProducts[0].total)}. Revisa existencia y reposición antes del próximo ciclo.`, tone: "blue" });
+  if (metrics.openQuotes > 0) recommendations.push({ title: "Haz seguimiento a cotizaciones abiertas", detail: `${metrics.openQuotes} cotizaciones representan ${formatCop(metrics.openQuoteValue)}. Prioriza las de mayor valor y fecha más antigua.`, tone: "amber" });
   if (metrics.creditShare >= 35) recommendations.push({ title: "Revisa la concentración de ventas a crédito", detail: `El crédito representa ${metrics.creditShare.toFixed(1)}% de las ventas filtradas. Valida cupos, vencimientos y próximos recaudos.`, tone: "red" });
   if (metrics.margin > 0 && metrics.margin < 15) recommendations.push({ title: "Revisa precios y costos", detail: `La utilidad bruta calculada es ${metrics.margin.toFixed(1)}%. Identifica productos con margen bajo antes de aplicar descuentos.`, tone: "red" });
   if (metrics.pendingDeliveries > 0) recommendations.push({ title: "Prioriza las entregas pendientes", detail: `${metrics.pendingDeliveries} facturas tienen entrega abierta. Coordina preparación y salida para evitar acumulación operativa.`, tone: "amber" });
@@ -3562,7 +3559,7 @@ function DeliveryEditor({
               {availableInvoices.map((invoice) => (
                 <option key={invoice.id} value={invoice.id}>
                   {invoice.consecutive} · {clientName(invoice.client)} ·{" "}
-                  {formatCurrency(invoice.total)}
+                  {formatCop(invoice.total)}
                 </option>
               ))}
             </select>
@@ -3841,7 +3838,7 @@ function renderLookupCells(record, type) {
         </td>
         <td>{clientName(record)}</td>
         <td>{record.identification}</td>
-        <td>{formatCurrency(record.balance ?? 0)}</td>
+        <td>{formatCop(record.balance ?? 0)}</td>
       </>
     );
   if (type === "products")
@@ -3856,7 +3853,7 @@ function renderLookupCells(record, type) {
         <td>{record.name}</td>
         <td>{productStock(record)}</td>
         <td>
-          {formatCurrency(
+          {formatCop(
             grossFromNet(
               getDefaultPrice(record)?.price,
               record.taxRate,
@@ -3888,7 +3885,7 @@ function renderLookupCells(record, type) {
         </td>
         <td>{clientName(record.client)}</td>
         <td>{formatDate(record.createdAt)}</td>
-        <td>{formatCurrency(record.total)}</td>
+        <td>{formatCop(record.total)}</td>
         <td>
           <StatusPill
             value={invoiceStatusLabels[record.status] ?? record.status}
@@ -3904,7 +3901,7 @@ function renderLookupCells(record, type) {
       </td>
       <td>{clientName(record.client)}</td>
       <td>{formatDate(record.expiresAt)}</td>
-      <td>{formatCurrency(record.total)}</td>
+      <td>{formatCop(record.total)}</td>
       <td>
         <StatusPill
           value={quoteStatusLabels[record.status] ?? record.status}
@@ -3948,7 +3945,7 @@ function WarehouseDispatchDialog({ quote, users, warehouses, busy, onSend, onClo
           <FileText size={18} />
           <div>
             <strong>{quote.consecutive}</strong>
-            <span>{clientName(quote.client)} · {quote.items?.length ?? 0} productos · {formatCurrency(quote.total)}</span>
+            <span>{clientName(quote.client)} · {quote.items?.length ?? 0} productos · {formatCop(quote.total)}</span>
           </div>
         </div>
         <label className="warehouse-dispatch-search">
@@ -4044,7 +4041,7 @@ function SalesDocumentDialog({
           <div>
             <span>Total</span>
             <strong>
-              {formatCurrency(document.total ?? relatedInvoice?.total)}
+              {formatCop(document.total ?? relatedInvoice?.total)}
             </strong>
           </div>
         </div>
@@ -4064,11 +4061,11 @@ function SalesDocumentDialog({
                   {item.product?.name ?? `Producto #${item.productId}`}
                 </span>
                 <span>
-                  {item.quantity} × {formatCurrency(
+                  {item.quantity} × {formatCop(
                     grossFromNet(item.unitPrice, item.taxRate ?? item.product?.taxRate),
                   )}
                 </span>
-                <strong>{formatCurrency(item.total)}</strong>
+                <strong>{formatCop(item.total)}</strong>
                 {isQuote && document.kind === "PREVENTA" && (
                   <small className="sales-line-fulfillment">
                     {warehouseLabel(item.warehouseId, warehouses)} ·{" "}
@@ -4154,8 +4151,8 @@ function printSalesDocument(record, type) {
       (item) => `<tr>
         <td>${escapeHtml(item.product?.name ?? `Producto #${item.productId}`)}</td>
         <td>${Number(item.quantity ?? 0)}</td>
-        <td>${formatCurrency(grossFromNet(item.unitPrice, item.taxRate ?? item.product?.taxRate))}</td>
-        <td>${formatCurrency(item.total)}</td>
+        <td>${formatCop(grossFromNet(item.unitPrice, item.taxRate ?? item.product?.taxRate))}</td>
+        <td>${formatCop(item.total)}</td>
       </tr>`,
     )
     .join("");
@@ -4163,7 +4160,7 @@ function printSalesDocument(record, type) {
   printWindow.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>
     @page{size:A4;margin:14mm}*{box-sizing:border-box}body{margin:0;color:#0d0d0d;background:#ececec;font:13px Arial,sans-serif}
     .sheet{border:2px solid #2d2d2d;padding:22px;background:#fdfdfd}.head{display:flex;justify-content:space-between;gap:24px;border-bottom:4px solid #2d2d2d;padding-bottom:14px;margin-bottom:18px}.brand{color:#111111;font-size:20px;font-weight:700}.type{text-align:right;color:#131313;font-size:17px;font-weight:700}.meta{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:18px}.meta div{padding:10px;background:#f5f5f5;border-left:4px solid #373737}.meta span{display:block;color:#161616;font-size:11px;margin-bottom:4px}.meta strong{font-size:13px}table{width:100%;border-collapse:collapse;margin-top:8px}th{padding:10px;text-align:left;color:#fff;background:#2f6aa6}td{padding:10px;border-bottom:1px solid #d5d5d5}th:nth-child(n+2),td:nth-child(n+2){text-align:right}.totals{display:flex;justify-content:flex-end;margin-top:18px}.totals div{min-width:220px;padding:12px;background:#f4f4f4;border:1px solid #bbbbbb}.totals p{display:flex;justify-content:space-between;margin:5px 0}.totals .total{padding-top:9px;border-top:2px solid #2d2d2d;font-size:17px;font-weight:700;color:#111111}.foot{margin-top:24px;color:#3b3b3b;font-size:11px}
-  </style></head><body><main class="sheet"><header class="head"><div class="brand">Mundo Tienda</div><div class="type">${isQuote ? "COTIZACIÓN" : "FACTURA"}<br><span>${escapeHtml(title)}</span></div></header><section class="meta"><div><span>Cliente</span><strong>${escapeHtml(clientName(record.client))}</strong></div><div><span>Fecha</span><strong>${escapeHtml(formatDate(record.createdAt))}</strong></div><div><span>Estado</span><strong>${escapeHtml(record.status ?? "ACTIVA")}</strong></div></section><table><thead><tr><th>Producto</th><th>Cantidad</th><th>Precio unitario</th><th>Total</th></tr></thead><tbody>${rows || '<tr><td colspan="4">Este documento no tiene líneas.</td></tr>'}</tbody></table><section class="totals"><div><p>Subtotal <strong>${formatCurrency(record.subtotal)}</strong></p><p>Impuestos <strong>${formatCurrency(record.taxes)}</strong></p><p class="total">Total <strong>${formatCurrency(record.total)}</strong></p></div></section><p class="foot">Documento generado desde el módulo de ventas.</p></main></body></html>`);
+  </style></head><body><main class="sheet"><header class="head"><div class="brand">Mundo Tienda</div><div class="type">${isQuote ? "COTIZACIÓN" : "FACTURA"}<br><span>${escapeHtml(title)}</span></div></header><section class="meta"><div><span>Cliente</span><strong>${escapeHtml(clientName(record.client))}</strong></div><div><span>Fecha</span><strong>${escapeHtml(formatDate(record.createdAt))}</strong></div><div><span>Estado</span><strong>${escapeHtml(record.status ?? "ACTIVA")}</strong></div></section><table><thead><tr><th>Producto</th><th>Cantidad</th><th>Precio unitario</th><th>Total</th></tr></thead><tbody>${rows || '<tr><td colspan="4">Este documento no tiene líneas.</td></tr>'}</tbody></table><section class="totals"><div><p>Subtotal <strong>${formatCop(record.subtotal)}</strong></p><p>Impuestos <strong>${formatCop(record.taxes)}</strong></p><p class="total">Total <strong>${formatCop(record.total)}</strong></p></div></section><p class="foot">Documento generado desde el módulo de ventas.</p></main></body></html>`);
   printWindow.document.close();
   printWindow.focus();
   printWindow.setTimeout(() => {
@@ -4249,17 +4246,6 @@ function hasAppliedUnitPrice(value) {
   return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
 }
 
-function isMoneyDraft(value) {
-  return /^\d*([.,]\d{0,2})?$/.test(String(value ?? ""));
-}
-
-function parseMoneyInput(value) {
-  const normalized = String(value ?? "").trim().replace(",", ".");
-  if (!normalized) return null;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) && parsed >= 0 ? roundMoney(parsed) : null;
-}
-
 function canAccessReturns(session, permission) {
   return (
     session?.role === "ADMIN" ||
@@ -4316,14 +4302,6 @@ function defaultDueDate() {
 }
 function hasCreditCapacity(client) {
   return Boolean(client?.hasCredit && Number(client.maxCredit) > 0);
-}
-function formatCurrency(value) {
-  return new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
 }
 function formatDate(value) {
   if (!value) return "—";

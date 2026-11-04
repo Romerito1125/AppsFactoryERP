@@ -1,3 +1,4 @@
+import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { Type } from 'class-transformer';
 import { ClientType } from '@prisma/client';
 import {
@@ -5,7 +6,6 @@ import {
   IsEmail,
   IsEnum,
   IsInt,
-  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -67,10 +67,7 @@ export class UpdateClientDto {
 
   @IsOptional()
   @Type(() => Number)
-  @IsNumber(
-    { maxDecimalPlaces: 2 },
-    { message: 'El límite de crédito debe ser un valor válido.' },
-  )
+  @IsCop()
   @Min(0, { message: 'El límite de crédito no puede ser negativo.' })
   maxCredit?: number;
 

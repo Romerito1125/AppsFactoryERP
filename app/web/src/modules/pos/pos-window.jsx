@@ -31,6 +31,8 @@ import { NotificationBell } from "@/components/desktop/notification-center";
 import { TransientMessage } from "@/components/desktop/transient-message";
 
 import "./pos-window.css";
+import { formatCop, readCopInput } from "@/lib/cop";
+import { CopInput } from "@/components/money/cop-input";
 
 const EMPTY_CART = [];
 const CLIENT_TYPE_LABELS = {
@@ -680,10 +682,10 @@ function BillingView({
         <div className="new-pos-ticket-heading"><div><span className="new-pos-eyebrow">TICKET ACTUAL</span><h2><ShoppingCart size={17} /> Venta <span>{cart.length} líneas</span></h2></div>{cart.length > 0 && <button type="button" className="new-pos-icon-button" onClick={onClearCart} title="Limpiar ticket"><Trash2 size={15} /></button>}</div>
         <div className="new-pos-ticket-lines">{cart.length ? cart.map((item) => <CartLine key={item.productId} item={item} onUpdateQuantity={onUpdateQuantity} onUpdatePrice={onUpdatePrice} canOverridePrice={canOverridePrice} selectedPriceLevel={selectedPriceLevel} />) : <EmptyState icon={<ShoppingCart size={26} />} title="Ticket vacío" detail="Agrega productos desde la búsqueda o escanea un código." />}</div>
         <div className="new-pos-ticket-bottom">
-          <div className="new-pos-total-lines"><span>Subtotal <b>{formatCurrency(totals.subtotal)}</b></span><span>IVA <b>{formatCurrency(totals.taxes)}</b></span><span className="is-total">Total <strong>{formatCurrency(totals.total)}</strong></span></div>
+          <div className="new-pos-total-lines"><span>Subtotal <b>{formatCop(totals.subtotal)}</b></span><span>IVA <b>{formatCop(totals.taxes)}</b></span><span className="is-total">Total <strong>{formatCop(totals.total)}</strong></span></div>
           <div className="new-pos-payment-heading"><span>Forma de pago</span><div className="new-pos-payment-switch"><button type="button" className={saleMode === "CONTADO" ? "is-active" : ""} onClick={() => onSaleModeChange("CONTADO")}>Contado</button><button type="button" className={saleMode === "CREDITO" ? "is-active" : ""} disabled={!hasCreditCapacity(selectedClient)} onClick={() => onSaleModeChange("CREDITO")}>Crédito</button></div></div>
           {!hasCreditCapacity(selectedClient) && <small className="new-pos-credit-hint">El cliente no tiene crédito configurado.</small>}
-          {saleMode === "CONTADO" ? <label className="new-pos-field"><span>Cuenta de recaudo</span><select value={selectedAccountId} onChange={(event) => onAccountChange(event.target.value)}><option value="">Selecciona una cuenta</option>{bankAccounts.map((account) => <option value={account.id} key={account.id}>{account.name} · {account.bankName}</option>)}</select></label> : <div className="new-pos-credit-fields"><label className="new-pos-field"><span>Vencimiento</span><input type="date" value={creditDueDate} onChange={(event) => onDueDateChange(event.target.value)} /></label><small>Límite asignado: {formatCurrency(selectedClient?.maxCredit)}</small></div>}
+          {saleMode === "CONTADO" ? <label className="new-pos-field"><span>Cuenta de recaudo</span><select value={selectedAccountId} onChange={(event) => onAccountChange(event.target.value)}><option value="">Selecciona una cuenta</option>{bankAccounts.map((account) => <option value={account.id} key={account.id}>{account.name} · {account.bankName}</option>)}</select></label> : <div className="new-pos-credit-fields"><label className="new-pos-field"><span>Vencimiento</span><input type="date" value={creditDueDate} onChange={(event) => onDueDateChange(event.target.value)} /></label><small>Límite asignado: {formatCop(selectedClient?.maxCredit)}</small></div>}
           <div className="new-pos-ticket-actions"><button type="button" className="new-pos-primary-button" disabled={saving || !cart.length} onClick={onSaveInvoice}>{saving ? <LoaderCircle size={15} className="is-spinning" /> : <Check size={15} />} {saving ? "Procesando…" : "Emitir factura"}</button></div>
           {saleConfirmation?.consecutive && (
             <TransientMessage
@@ -693,7 +695,7 @@ function BillingView({
               onDismiss={onDismissSaleConfirmation}
             >
               <strong>Venta registrada correctamente</strong>
-              <span>{saleConfirmation.consecutive} · {formatCurrency(saleConfirmation.total)}</span>
+              <span>{saleConfirmation.consecutive} · {formatCop(saleConfirmation.total)}</span>
               <small>{saleConfirmation.stockStatus === "updating" ? "Actualizando existencias…" : saleConfirmation.stockStatus === "updated" ? "Existencias actualizadas" : "Venta guardada; revisa el stock cuando haya conexión."}</small>
             </TransientMessage>
           )}
@@ -812,7 +814,7 @@ function ProductCard({ product, inCart, favorite, favoriteLoading, onAdd, onTogg
   const outOfStock = stock <= 0;
   return <article className={`new-pos-product-card ${outOfStock ? "is-out-of-stock" : ""} ${inCart ? "is-in-cart" : ""}`}>
     <button type="button" className={`new-pos-favorite-button ${favorite ? "is-active" : ""}`} onClick={() => onToggleFavorite(product)} disabled={favoriteLoading} aria-label={favorite ? `Quitar ${product.name} de favoritos` : `Agregar ${product.name} a favoritos`}><Heart size={14} fill={favorite ? "currentColor" : "none"} /></button>
-    <button type="button" className="new-pos-product-main" onClick={() => onAdd(product)} disabled={outOfStock || inCart} aria-disabled={outOfStock || inCart}><div className="new-pos-product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt="" loading="lazy" /> : <PackagePlus size={22} />}</div><div className="new-pos-product-info"><strong title={product.name}>{product.name}</strong><span>{product.brand || "Sin marca"} · {productCode(product)}</span><div><b>{formatCurrency(grossFromNet(price?.price, product.taxRate))}</b><em>IVA incluido · {activePriceCount} precio{activePriceCount === 1 ? "" : "s"}</em></div><small className={outOfStock ? "is-empty" : ""}>{outOfStock ? "Sin existencias" : `${stock} disponibles`}</small></div></button>
+    <button type="button" className="new-pos-product-main" onClick={() => onAdd(product)} disabled={outOfStock || inCart} aria-disabled={outOfStock || inCart}><div className="new-pos-product-thumb">{product.imageUrl ? <img src={product.imageUrl} alt="" loading="lazy" /> : <PackagePlus size={22} />}</div><div className="new-pos-product-info"><strong title={product.name}>{product.name}</strong><span>{product.brand || "Sin marca"} · {productCode(product)}</span><div><b>{formatCop(grossFromNet(price?.price, product.taxRate))}</b><em>IVA incluido · {activePriceCount} precio{activePriceCount === 1 ? "" : "s"}</em></div><small className={outOfStock ? "is-empty" : ""}>{outOfStock ? "Sin existencias" : `${stock} disponibles`}</small></div></button>
     <div className="new-pos-product-actions"><button type="button" className="new-pos-add-button" onClick={() => onAdd(product)} disabled={outOfStock || inCart} aria-disabled={outOfStock || inCart}>{outOfStock ? "Sin existencias" : inCart ? "En factura" : <><Plus size={14} /> Agregar</>}</button></div>
   </article>;
 }
@@ -826,13 +828,13 @@ function CartLine({ item, onUpdateQuantity, onUpdatePrice, canOverridePrice, sel
   const unitPriceGross = grossFromNet(unitPriceNet, item.product.taxRate);
 
   useEffect(() => {
-    setPriceDraft(String(unitPriceGross));
+    setPriceDraft(String(Math.round(unitPriceGross)));
   }, [unitPriceGross]);
 
   function commitPrice() {
-    const parsedValue = parseMoneyInput(priceDraft);
-    if (parsedValue === null) {
-      setPriceDraft(String(unitPriceGross));
+    const parsedValue = readCopInput(priceDraft).value;
+    if (parsedValue <= 0) {
+      setPriceDraft(String(Math.round(unitPriceGross)));
       return;
     }
     const catalogGross = grossFromNet(
@@ -845,7 +847,7 @@ function CartLine({ item, onUpdateQuantity, onUpdatePrice, canOverridePrice, sel
     setPriceDraft(String(parsedValue));
   }
 
-  return <div className="new-pos-cart-line"><div className="new-pos-cart-line-top"><div><strong>{item.product.name}</strong><span>{productCode(item.product)}</span></div><strong>{formatCurrency(lineTotals.total)}</strong></div><div className="new-pos-cart-line-bottom"><label className="new-pos-quantity"><span className="sr-only">Cantidad</span><input type="text" inputMode="decimal" min="0.001" step="any" value={quantityDraft} onChange={(event) => { const rawValue = event.target.value; if (!isQuantityDraft(rawValue)) return; setQuantityDraft(rawValue); const parsedValue = parseQuantityInput(rawValue); if (parsedValue !== null) onUpdateQuantity(item.productId, parsedValue); }} onBlur={() => { const parsedValue = parseQuantityInput(quantityDraft); if (parsedValue === null) setQuantityDraft(String(item.quantity)); else setQuantityDraft(String(parsedValue)); }} aria-label={`Cantidad de ${item.product.name}`} /></label>{canOverridePrice ? <label className="new-pos-line-price-editor"><span>Precio final</span><input type="text" inputMode="decimal" value={priceDraft} onChange={(event) => { if (isMoneyDraft(event.target.value)) setPriceDraft(event.target.value); }} onBlur={commitPrice} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitPrice(); } }} aria-label={`Precio final con IVA de ${item.product.name}`} /></label> : <span className="new-pos-line-price">{priceLabel(getPriceLevel(catalogPrice))} · {formatCurrency(unitPriceGross)}</span>}</div></div>;
+  return <div className="new-pos-cart-line"><div className="new-pos-cart-line-top"><div><strong>{item.product.name}</strong><span>{productCode(item.product)}</span></div><strong>{formatCop(lineTotals.total)}</strong></div><div className="new-pos-cart-line-bottom"><label className="new-pos-quantity"><span className="sr-only">Cantidad</span><input type="text" inputMode="decimal" min="0.001" step="any" value={quantityDraft} onChange={(event) => { const rawValue = event.target.value; if (!isQuantityDraft(rawValue)) return; setQuantityDraft(rawValue); const parsedValue = parseQuantityInput(rawValue); if (parsedValue !== null) onUpdateQuantity(item.productId, parsedValue); }} onBlur={() => { const parsedValue = parseQuantityInput(quantityDraft); if (parsedValue === null) setQuantityDraft(String(item.quantity)); else setQuantityDraft(String(parsedValue)); }} aria-label={`Cantidad de ${item.product.name}`} /></label>{canOverridePrice ? <label className="new-pos-line-price-editor"><span>Precio final</span><CopInput value={readCopInput(priceDraft).value} onChange={(amount) => setPriceDraft(String(amount))} onBlur={commitPrice} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); commitPrice(); } }} aria-label={`Precio final con IVA de ${item.product.name}`} /></label> : <span className="new-pos-line-price">{priceLabel(getPriceLevel(catalogPrice))} · {formatCop(unitPriceGross)}</span>}</div></div>;
 }
 
 function PosLoadingState() {
@@ -952,17 +954,6 @@ function hasAppliedUnitPrice(value) {
   return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
 }
 
-function isMoneyDraft(value) {
-  return /^\d*([.,]\d{0,2})?$/.test(String(value ?? ""));
-}
-
-function parseMoneyInput(value) {
-  const normalized = String(value ?? "").trim().replace(",", ".");
-  if (!normalized) return null;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) && parsed >= 0 ? roundMoney(parsed) : null;
-}
-
 function canEditSalePrice(session) {
   return session?.role === "ADMIN" || session?.permissions?.includes("SALES_PRICE_OVERRIDE");
 }
@@ -1021,10 +1012,6 @@ function defaultDueDate() {
   const date = new Date();
   date.setDate(date.getDate() + 15);
   return date.toISOString().slice(0, 10);
-}
-
-function formatCurrency(value) {
-  return new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(value ?? 0));
 }
 
 function hasCreditCapacity(client) {
