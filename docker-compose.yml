@@ -15,6 +15,12 @@ services:
       CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}
       CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET:-}
       CLOUDFLARE_R2_PUBLIC_URL: ${CLOUDFLARE_R2_PUBLIC_URL:-}
+      # Mundi (asistente IA). Sin estas variables el contenedor no las recibe aunque existan en Dockploy.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT:-}
+      MUNDI_MAX_TURNS: ${MUNDI_MAX_TURNS:-}
+      MUNDI_TRACING: ${MUNDI_TRACING:-}
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:7502/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s
