@@ -6,6 +6,7 @@ import { apiClient } from "@/lib/api-client";
 import "./purchase-total-dialog.css";
 import { formatCop, readCopInput } from "@/lib/cop";
 import { CopInput } from "@/components/money/cop-input";
+import { dateInputToIso, toDateInputLocal } from "@/lib/date-input";
 
 // En COP los importes son pesos enteros: cada total se redondea al peso.
 const round = (value) => Math.round(Number(value) || 0);
@@ -16,12 +17,14 @@ const num = (value) => {
 };
 
 const isDraft = (value) => /^\d*([.,]\d{0,2})?$/.test(value);
-const todayInput = () => new Date().toISOString().slice(0, 10);
+const todayInput = () => {
+  return toDateInputLocal();
+};
 
 function addDays(dateText, days) {
   const date = new Date(`${dateText}T12:00:00`);
   date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return toDateInputLocal(date);
 }
 
 /**
@@ -117,8 +120,8 @@ export function PurchaseTotalDialog({
       ...(baseEdited ? { retentionBaseReason: baseReason.trim() } : {}),
       ...(rate !== "" ? { retentionRate: num(rate) } : {}),
       paymentCondition: pending <= 0.009 ? "CONTADO" : "CREDITO",
-      invoiceDate: new Date(`${invoiceDate}T12:00:00`).toISOString(),
-      dueDate: new Date(`${dueDate}T12:00:00`).toISOString(),
+      invoiceDate: dateInputToIso(invoiceDate),
+      dueDate: dateInputToIso(dueDate),
       operationType: operationType.trim() || undefined,
       purchaseOrderRef: orderRef.trim() || undefined,
       notes: notes.trim() || undefined,
@@ -191,13 +194,13 @@ export function PurchaseTotalDialog({
             <output>{formatCop(totalNet)}</output>
           </label>
           <label>
-            <span>Base imponible</span>
+            <span>Base imponible (antes de IVA)</span>
             <div className="pt-pair">
               <CopInput
                 value={baseText === "" ? calculatedBase : readCopInput(baseText).value}
                 onChange={(amount) => setBaseText(String(amount))}
               />
-              <b>Antes de IVA: {formatCop(calculatedBase)}</b>
+              <b>Calculada antes de IVA: {formatCop(calculatedBase)}</b>
             </div>
           </label>
           {baseEdited && (

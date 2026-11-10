@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { PriceUpdateDialog } from "@/components/pricing/price-update-dialog";
 import {
   grossFromNet,
@@ -7,6 +7,7 @@ import {
   priceForExactLevel,
 } from "@/lib/commercial-pricing";
 import { advanceFrom, handleEnterAdvance } from "@/lib/enter-advance";
+import { orderBreakdown, orderPayable } from "./purchase-order-breakdown.js";
 import {
   Clock,
   ClipboardList,
@@ -34,9 +35,10 @@ import * as pdfjsLib from "pdfjs-dist/build/pdf.mjs";
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
+import { toDateInputLocal } from "@/lib/date-input";
 import { PurchaseTotalDialog } from "./purchase-total-dialog";
 import { DraftsDialog, saveDraft } from "@/components/drafts/drafts-dialog";
-import { downloadPdf } from "@/lib/simple-pdf";
+import { printPurchaseOrder } from "./purchase-order-print.js";
 import "./purchases-reports.css";
 import { formatCop, readCopInput } from "@/lib/cop";
 import { CopInput } from "@/components/money/cop-input";
@@ -135,7 +137,6 @@ export function PurchasesWindow({
   const [documentAttachment, setDocumentAttachment] = useState(null);
   const [editingPurchaseId, setEditingPurchaseId] = useState("");
   const [externalReference, setExternalReference] = useState("");
-  const [expectedAt, setExpectedAt] = useState("");
   const [lookupLoadingId, setLookupLoadingId] = useState("");
   const [priceDialog, setPriceDialog] = useState(null);
   const [totalOpen, setTotalOpen] = useState(false);
@@ -294,7 +295,6 @@ export function PurchasesWindow({
     setEditingPurchaseId("");
     setDraftId(null);
     setExternalReference("");
-    setExpectedAt("");
     setCart([]);
     setDocumentAttachment(null);
     setError("");
@@ -337,6 +337,7 @@ export function PurchasesWindow({
 
   async function openPurchasePdf(order) {
     setError("");
+    setNotice(`Abriendo ${orderNumber(order)}…`);
     try {
       const detail = await apiClient.get(`/compras/${order.id}`);
       setPurchasePreview(detail);
@@ -361,7 +362,6 @@ export function PurchasesWindow({
     });
     if (providerMatch) setSelectedProviderId(String(providerMatch.id));
     if (result.documentNumber) setExternalReference(result.documentNumber);
-    if (result.expectedAt) setExpectedAt(result.expectedAt);
     const matchedItems = [];
     const unmatchedItems = [];
     for (const parsedItem of result.items ?? []) {
@@ -420,7 +420,6 @@ export function PurchasesWindow({
         String(detail.warehouseId ?? detail.warehouse?.id ?? ""),
       );
       setExternalReference(detail.externalReference ?? "");
-      setExpectedAt(toDateInputValue(detail.expectedAt));
       setDocumentAttachment(
         detail.documentData
           ? {
@@ -670,7 +669,6 @@ export function PurchasesWindow({
           providerId: selectedProviderId,
           warehouseId: selectedWarehouseId,
           externalReference,
-          expectedAt,
           documentAttachment,
           cart,
         },
@@ -690,7 +688,6 @@ export function PurchasesWindow({
     setSelectedProviderId(String(data.providerId ?? ""));
     setSelectedWarehouseId(String(data.warehouseId ?? ""));
     setExternalReference(data.externalReference ?? "");
-    setExpectedAt(data.expectedAt ?? "");
     setDocumentAttachment(data.documentAttachment ?? null);
     setCart(data.cart ?? []);
     setEditingPurchaseId("");
@@ -710,13 +707,6 @@ export function PurchasesWindow({
         externalReference: editingPurchaseId
           ? externalReference.trim() || null
           : externalReference.trim() || undefined,
-        expectedAt: editingPurchaseId
-          ? expectedAt
-            ? new Date(expectedAt + "T00:00:00").toISOString()
-            : null
-          : expectedAt
-            ? new Date(expectedAt + "T00:00:00").toISOString()
-            : undefined,
         ...(documentAttachment
           ? {
               documentName: documentAttachment.name,
@@ -801,7 +791,6 @@ export function PurchasesWindow({
       );
       setEditingPurchaseId("");
       setExternalReference("");
-      setExpectedAt("");
       setDocumentAttachment(null);
    } catch (requestError) {
       setError(requestError.message);
@@ -836,7 +825,8 @@ export function PurchasesWindow({
     }
   }
 
-  const activeOrder = orders[0] ?? null;
+  const [selectedOrderId, setSelectedOrderId] = useState(null);
+  const activeOrder = orders.find((order) => order.id === selectedOrderId) ?? null;
 
   return (
     <section
@@ -880,12 +870,10 @@ export function PurchasesWindow({
             saving={saving}
             editingPurchaseId={editingPurchaseId}
             externalReference={externalReference}
-            expectedAt={expectedAt}
             onProviderChange={setSelectedProviderId}
             onWarehouseChange={setSelectedWarehouseId}
             onOpenLookup={openLookup}
             onExternalReferenceChange={setExternalReference}
-            onExpectedAtChange={setExpectedAt}
             onNewPurchase={startNewPurchase}
             onImportQuote={() => setOcrOpen(true)}
             onCreateProduct={() => setQuickProductOpen(true)}
@@ -919,6 +907,7 @@ export function PurchasesWindow({
           <PurchaseOrdersPanel
             orders={orders}
             activeOrder={activeOrder}
+            onSelectOrder={(order) => setSelectedOrderId(order.id)}
             onOpenLookup={openLookup}
             onViewPdf={openPurchasePdf}
             onOpenView={navigate}
@@ -1054,12 +1043,10 @@ function PurchaseDocumentPanel({
   saving,
   editingPurchaseId,
   externalReference,
-  expectedAt,
   onProviderChange,
   onWarehouseChange,
   onOpenLookup,
   onExternalReferenceChange,
-  onExpectedAtChange,
   onNewPurchase,
   onImportQuote,
   onCreateProduct,
@@ -1113,10 +1100,15 @@ function PurchaseDocumentPanel({
             <input
               id="purchase-provider"
               value={selectedProviderId}
-              onChange={(event) => onProviderChange(event.target.value)}
+              readOnly
+              aria-readonly="true"
+              title="Haz clic para seleccionar un proveedor"
+              onFocus={() => onOpenLookup("providers")}
+              onClick={() => onOpenLookup("providers")}
               onKeyDown={(event) => {
-                if (event.key === "F1") {
+                if (["Enter", "F1"].includes(event.key)) {
                   event.preventDefault();
+                  event.stopPropagation();
                   onOpenLookup("providers");
                 }
               }}
@@ -1137,10 +1129,15 @@ function PurchaseDocumentPanel({
             <input
               id="purchase-warehouse"
               value={selectedWarehouseId}
-              onChange={(event) => onWarehouseChange(event.target.value)}
+              readOnly
+              aria-readonly="true"
+              title="Haz clic para seleccionar una bodega"
+              onFocus={() => onOpenLookup("warehouses")}
+              onClick={() => onOpenLookup("warehouses")}
               onKeyDown={(event) => {
-                if (event.key === "F2") {
+                if (["Enter", "F2"].includes(event.key)) {
                   event.preventDefault();
+                  event.stopPropagation();
                   onOpenLookup("warehouses");
                 }
               }}
@@ -1171,15 +1168,6 @@ function PurchaseDocumentPanel({
               />
             </div>
           )}
-          <div className="purchase-field-row">
-            <label htmlFor="purchase-expected-at">Entrega prevista del proveedor</label>
-            <input
-              id="purchase-expected-at"
-              type="date"
-              value={expectedAt}
-              onChange={(event) => onExpectedAtChange(event.target.value)}
-            />
-          </div>
         </div>
         <div className="purchase-brand-mark" aria-label="Mundo Tienda">
           mundo <small>tienda</small>
@@ -1529,6 +1517,7 @@ function PurchasePriceCell({ item, level, onChange }) {
 function PurchaseOrdersPanel({
   orders,
   activeOrder,
+  onSelectOrder,
   onOpenLookup,
   onViewPdf,
   onOpenView,
@@ -1545,8 +1534,53 @@ function PurchaseOrdersPanel({
         .includes(query),
     );
   }, [orders, search]);
+  const lastClickRef = useRef({ id: null, time: 0 });
+  const selectedIndex = filteredOrders.findIndex((order) => order.id === activeOrder?.id);
+  const selected = selectedIndex >= 0 ? filteredOrders[selectedIndex] : null;
+  const canOrder = selected?.status === "BORRADOR";
+  const canReceive = selected?.status === "ORDENADA";
+  const canCancel = Boolean(selected) && !["RECIBIDA", "ANULADA"].includes(selected.status);
+
+  function moveSelection(step) {
+    if (!filteredOrders.length) return;
+    const from = selectedIndex < 0 ? (step > 0 ? -1 : filteredOrders.length) : selectedIndex;
+    const next = Math.min(filteredOrders.length - 1, Math.max(0, from + step));
+    onSelectOrder(filteredOrders[next]);
+  }
+
+  // Doble clic sin depender del evento nativo del navegador: un segundo clic sobre la misma
+  // compra en medio segundo abre el PDF. Así no se pierde aunque la fila cambie entre clics.
+  function handleRowClick(order) {
+    const now = Date.now();
+    const last = lastClickRef.current;
+    onSelectOrder(order);
+    if (last.id === order.id && now - last.time < 600) {
+      lastClickRef.current = { id: null, time: 0 };
+      onViewPdf?.(order);
+      return;
+    }
+    lastClickRef.current = { id: order.id, time: now };
+  }
+
+  function handleKeyDown(event) {
+    const tag = event.target.tagName;
+    // Los botones y el buscador conservan sus propias teclas; F6 y las flechas siempre funcionan.
+    if (tag === "BUTTON" && event.key !== "F6") return;
+    if (tag === "INPUT" && !["ArrowDown", "F6"].includes(event.key)) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      moveSelection(event.key === "ArrowDown" ? 1 : -1);
+    } else if (event.key === "Enter" && selected) {
+      event.preventDefault();
+      onViewPdf?.(selected);
+    } else if (event.key === "F6") {
+      event.preventDefault();
+      onOpenLookup("orders");
+    }
+  }
+
   return (
-    <div className="purchase-list-shell">
+    <div className="purchase-list-shell purchase-orders-shell" tabIndex={0} onKeyDown={handleKeyDown}>
       <div className="purchase-list-heading">
         <div>
           <span className="purchase-section-kicker">MÓDULO DE COMPRAS</span>
@@ -1582,81 +1616,89 @@ function PurchaseOrdersPanel({
               <th>Proveedor</th>
               <th>Depósito</th>
               <th>Fecha</th>
-              <th>Total</th>
+              <th className="number-cell">Total operación</th>
+              <th className="number-cell">Retención</th>
+              <th className="number-cell">A pagar</th>
               <th>Estado</th>
-              <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
-            {filteredOrders.map((order) => (
-              <tr
-                key={order.id}
-                className={activeOrder?.id === order.id ? "is-selected" : ""}
-              >
-                <td>{orderNumber(order)}</td>
-                <td>{order.provider?.name ?? order.providerName ?? "—"}</td>
-                <td>
-                  {warehouseName(order.warehouse)}
-                </td>
-                <td>{formatDate(order.orderedAt ?? order.createdAt)}</td>
-                <td className="number-cell">{formatCop(order.total)}</td>
-                <td>
-                  <span
-                    className={`purchase-status status-${String(order.status ?? "").toLowerCase()}`}
-                  >
-                    {statusLabels[order.status] ?? order.status ?? "Borrador"}
-                  </span>
-                </td>
-                <td className="purchase-row-actions">
-                  <button
-                    type="button"
-                    className="purchase-action-pdf"
-                    disabled={saving}
-                    onClick={() => onViewPdf?.(order)}
-                  >
-                    <Eye size={12} /> Ver PDF
-                  </button>
-                  {order.status === "BORRADOR" && (
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={() => onTransition(order, "ordenar")}
+            {filteredOrders.map((order) => {
+              const isSelected = order.id === selected?.id;
+              const retention = Number(order.retentionAmount ?? 0);
+              return (
+                <tr
+                  key={order.id}
+                  className={isSelected ? "is-selected" : ""}
+                  aria-selected={isSelected}
+                  onClick={() => handleRowClick(order)}
+                >
+                  <td>{orderNumber(order)}</td>
+                  <td>{order.provider?.name ?? order.providerName ?? "—"}</td>
+                  <td>{warehouseName(order.warehouse)}</td>
+                  <td>{formatDate(order.orderedAt ?? order.createdAt)}</td>
+                  <td className="number-cell">{formatCop(order.total)}</td>
+                  <td className="number-cell">{retention > 0 && order.status !== "ANULADA" ? `-${formatCop(retention)}` : "—"}</td>
+                  <td className="number-cell"><strong>{order.status === "ANULADA" ? "—" : formatCop(orderPayable(order))}</strong></td>
+                  <td>
+                    <span
+                      className={`purchase-status status-${String(order.status ?? "").toLowerCase()}`}
                     >
-                      {saving ? "Guardando…" : "Ordenar"}
-                    </button>
-                  )}
-                  {order.status === "ORDENADA" && (
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={() => onTransition(order, "recibir")}
-                    >
-                      {saving ? "Guardando…" : "Recibir"}
-                    </button>
-                  )}
-                  {!["RECIBIDA", "ANULADA"].includes(order.status) && (
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={() => onTransition(order, "anular")}
-                    >
-                      {saving ? "Guardando…" : "Anular"}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                      {statusLabels[order.status] ?? order.status ?? "Borrador"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
             {!filteredOrders.length && (
               <tr className="empty-list-row">
-                <td colSpan="7">No hay compras para mostrar.</td>
+                <td colSpan="8">No hay compras para mostrar.</td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+      <div className="purchase-orders-actionbar">
+        <span className="purchase-orders-selected">
+          {selected ? (
+            <>
+              Seleccionada: <strong>{orderNumber(selected)}</strong> ·{" "}
+              {statusLabels[selected.status] ?? selected.status ?? "Borrador"}
+            </>
+          ) : (
+            "Haz clic en una compra para seleccionarla"
+          )}
+        </span>
+        <div className="purchase-orders-buttons">
+          <button type="button" disabled={!selected} onClick={() => onViewPdf?.(selected)}>
+            <Eye size={13} /> Ver PDF
+          </button>
+          <button
+            type="button"
+            disabled={!canOrder || saving}
+            onClick={() => onTransition(selected, "ordenar")}
+          >
+            Ordenar
+          </button>
+          <button
+            type="button"
+            disabled={!canReceive || saving}
+            onClick={() => onTransition(selected, "recibir")}
+          >
+            Recibir
+          </button>
+          <button
+            type="button"
+            className="is-danger"
+            disabled={!canCancel || saving}
+            onClick={() => onTransition(selected, "anular")}
+          >
+            Anular
+          </button>
+        </div>
+      </div>
       <div className="purchase-list-footnote">
-        F1/F2 proveedor · F5 productos · F6 cargar · doble clic en la operación
-        para consultar su detalle
+        Clic: seleccionar · Doble clic o Enter: ver PDF · ↑ ↓: moverse · F6: cargar compra
       </div>
     </div>
   );
@@ -1958,56 +2000,40 @@ function PurchaseLookupDialog({
 
 function PurchasePdfPreview({ order, onClose }) {
   const items = order.items ?? [];
-  const totals = calculateCartTotals(
-    items.map((item) => ({
+  const b = orderBreakdown(order, items);
+  const fmt = (value) => formatCop(Number(value ?? 0));
+  const rateText = formatRate(b.retentionRate);
+  const printable = {
+    title: `Orden de compra ${orderNumber(order)}`,
+    number: orderNumber(order),
+    status: statusLabels[order.status] ?? order.status ?? "Borrador",
+    annulled: order.status === "ANULADA",
+    provider: order.provider?.name ?? "—",
+    nit: order.provider?.nit ?? order.provider?.document ?? "—",
+    warehouse: warehouseName(order.warehouse),
+    date: formatDate(purchaseOrderDate(order)),
+    invoiceRef: order.externalReference ?? "—",
+    rateText,
+    breakdown: b,
+    items: items.map((item) => ({
+      code: productCode(item.product),
+      name: productName(item.product),
       quantity: item.quantity,
       unitCost: item.unitCost,
-      product: item.product,
+      total: lineTotal(item),
     })),
-    order.provider,
-  );
-  const fmt = (value) => formatCop(Number(value ?? 0));
-  const payable = Number(order.payableTotal ?? 0) || totals.payableTotal;
-  const retention = Number(order.retentionAmount ?? totals.retentionAmount);
-  const paidTotal = Number(order.paidTotal ?? order.paidAmount ?? 0);
+  };
   function downloadOrderPdf() {
-    const lines = [
-      "MUNDO TIENDA - " + (order.operationType || "Compra"),
-      `Documento: ${orderNumber(order)}   Estado: ${statusLabels[order.status] ?? order.status ?? "Borrador"}`,
-      `Proveedor: ${order.provider?.name ?? "-"}   NIT: ${order.provider?.nit ?? order.provider?.document ?? "-"}`,
-      `Deposito: ${warehouseName(order.warehouse)}   Fecha: ${formatDate(purchaseOrderDate(order))}`,
-      `Factura proveedor: ${order.externalReference ?? "-"}   Vence: ${order.dueDate ? formatDate(order.dueDate) : "-"}`,
-      `Condicion de pago: ${order.paymentCondition ?? "-"}`,
-      "",
-      "CODIGO      PRODUCTO                              CANT      COSTO (IVA incl.)      TOTAL",
-      ...items.map(
-        (item) =>
-          `${String(productCode(item.product)).padEnd(11)} ${String(productName(item.product)).slice(0, 36).padEnd(36)} ${String(item.quantity).padStart(6)}  ${fmt(item.unitCost).padStart(16)}  ${fmt(lineTotal(item)).padStart(14)}`,
-      ),
-      "",
-      `Total renglones (sin IVA): ${fmt(totals.lines)}`,
-      `IVA: ${fmt(totals.taxes)}`,
-      `Total operacion: ${fmt(totals.total)}`,
-      ...(Number(order.discount1Percent) > 0 ? [`Descuento 1: ${order.discount1Percent}%`] : []),
-      ...(Number(order.discount2Percent) > 0 ? [`Descuento 2: ${order.discount2Percent}%`] : []),
-      ...(Number(order.freight) > 0 ? [`Flete: ${fmt(order.freight)}`] : []),
-      ...(retention > 0
-        ? [
-            `Base retencion: ${fmt(order.retentionBase ?? totals.lines)}`,
-            `Retencion (${formatRate(order.retentionRate ?? totals.retentionRate)}%): -${fmt(retention)}`,
-          ]
-        : []),
-      `TOTAL A PAGAR: ${fmt(payable)}`,
-      `Pagado: ${fmt(paidTotal)}   Saldo: ${fmt(Math.max(0, payable - paidTotal))}`,
-    ];
-    downloadPdf(`compra-${orderNumber(order)}`, lines);
+    if (!printPurchaseOrder(printable)) {
+      window.alert("El navegador bloqueó la ventana del PDF. Permite las ventanas emergentes para este sitio e inténtalo de nuevo.");
+    }
   }
   function shareViaWhatsApp() {
     const message = [
       `Orden de compra ${orderNumber(order)}`,
       `Proveedor: ${order.provider?.name ?? "—"}`,
       `Depósito: ${warehouseName(order.warehouse)}`,
-      `Total a pagar: ${formatCop(Number(order.payableTotal ?? 0) || totals.payableTotal)}`,
+      `Total a pagar: ${fmt(b.payable)}`,
       "El PDF se adjunta desde la vista previa de la orden.",
     ].join("\n");
     window.open(
@@ -2018,9 +2044,14 @@ function PurchasePdfPreview({ order, onClose }) {
   }
   return (
     <div className="module-dialog-backdrop purchase-pdf-backdrop">
-      <section className="module-dialog purchase-pdf-preview" role="dialog" aria-modal="true">
+      <section
+        className="module-dialog purchase-pdf-preview"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Vista previa de ${orderNumber(order)}`}
+      >
         <header className="module-dialog-titlebar">
-          <strong>VISTA PREVIA PDF · {orderNumber(order)}</strong>
+          <strong>VISTA PREVIA · {orderNumber(order)}</strong>
           <button type="button" onClick={onClose} aria-label="Cerrar">
             <X size={17} />
           </button>
@@ -2042,7 +2073,7 @@ function PurchasePdfPreview({ order, onClose }) {
           </div>
           <table className="purchase-table purchase-pdf-table">
             <thead>
-              <tr><th>Código</th><th>Producto</th><th>Cantidad</th><th>Costo unitario (IVA incluido)</th><th>Total</th></tr>
+              <tr><th>Código</th><th>Producto</th><th>Cantidad</th><th>Costo unitario (IVA incl.)</th><th>Total</th></tr>
             </thead>
             <tbody>
               {items.map((item) => (
@@ -2057,21 +2088,38 @@ function PurchasePdfPreview({ order, onClose }) {
               {!items.length && <tr><td colSpan="5">No hay productos cargados en esta orden.</td></tr>}
             </tbody>
           </table>
-          <div className="purchase-pdf-total">
-            <span>Total a pagar</span><strong>{formatCop(Number(order.payableTotal ?? 0) || totals.payableTotal)}</strong>
-          </div>
-          <div className="purchase-pdf-total">
-            <span>Total sin IVA / IVA</span>
-            <strong>{formatCop(totals.lines)} / {formatCop(totals.taxes)}</strong>
-          </div>
-          {Number(order.retentionAmount ?? totals.retentionAmount) > 0 && (
-            <div className="purchase-pdf-total purchase-pdf-retention">
-              <span>Retención ({formatRate(order.retentionRate ?? totals.retentionRate)}%)</span>
-              <strong>-{formatCop(order.retentionAmount ?? totals.retentionAmount)}</strong>
+          <div className="purchase-pdf-summary">
+            <div><span>Renglones con IVA</span><strong>{fmt(b.grossLines)}</strong></div>
+            {b.discount > 0 && (
+              <div><span>Descuento {b.discountLabel}</span><strong>-{fmt(b.discount)}</strong></div>
+            )}
+            {b.freight > 0 && <div><span>Flete</span><strong>{fmt(b.freight)}</strong></div>}
+            <div className="is-total"><span>Total operación</span><strong>{fmt(b.total)}</strong></div>
+            <div className="is-base">
+              <span>Base imponible (antes de IVA)</span>
+              <strong>{b.base === null ? "—" : fmt(b.base)}</strong>
             </div>
-          )}
+            {b.retentionAmount > 0 && order.status !== "ANULADA" && (
+              <div className="is-retention">
+                <span>Retención ({rateText}%) sobre la base</span>
+                <strong>-{fmt(b.retentionAmount)}</strong>
+              </div>
+            )}
+            {order.status === "ANULADA" ? (
+              <div className="is-payable"><span>Orden anulada</span><strong>Sin pago</strong></div>
+            ) : (
+              <>
+                <div className="is-payable"><span>Total a pagar</span><strong>{fmt(b.payable)}</strong></div>
+                {b.paid > 0 && <div><span>Pagado</span><strong>{fmt(b.paid)}</strong></div>}
+                <div><span>Saldo pendiente</span><strong>{fmt(b.balance)}</strong></div>
+              </>
+            )}
+          </div>
+          <p className="purchase-pdf-note">
+            IVA incluido en los renglones: {fmt(b.ivaIncluded)} (antes de descuento). La retención se calcula sobre la base imponible.
+          </p>
         </article>
-        <div className="module-dialog-footer">
+        <div className="module-dialog-footer purchase-pdf-footer">
           {order.documentData && (
             <button
               type="button"
@@ -2083,11 +2131,8 @@ function PurchasePdfPreview({ order, onClose }) {
           <button type="button" onClick={shareViaWhatsApp}>
             <Share2 size={13} /> Compartir por WhatsApp
           </button>
-          <button type="button" onClick={downloadOrderPdf}>
+          <button type="button" className="purchase-action-pdf" onClick={downloadOrderPdf}>
             <FileText size={13} /> Descargar PDF
-          </button>
-          <button type="button" className="purchase-action-pdf" onClick={() => window.print()}>
-            <Printer size={13} /> Imprimir / Guardar PDF
           </button>
           <button type="button" onClick={onClose}>Cerrar</button>
         </div>
@@ -2546,9 +2591,6 @@ function warehouseName(warehouse) {
   );
 }
 
-function toDateInputValue(value) {
-  return value ? new Date(value).toISOString().slice(0, 10) : "";
-}
 
 function orderNumber(order) {
   return order?.consecutive ?? order?.number ?? order?.id ?? "";
@@ -2596,7 +2638,7 @@ function formatDate(value) {
 }
 
 function todayValue() {
-  return new Date().toISOString().slice(0, 10);
+  return toDateInputLocal();
 }
 
 async function extractQuoteText(file, onProgress) {
@@ -2664,14 +2706,10 @@ function parseQuoteText(text, fileName) {
     )?.[1] ||
     fullText.match(/(?:COT(?:IZ)?|OC)[\s:#-]*[A-Z0-9/-]*\d[A-Z0-9/-]*/i)?.[0] ||
     "";
-  const expectedAt = parseOcrDate(
-    fullText.match(/(?:fecha|date)\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})/i)?.[1],
-  );
   return {
     fileName,
     supplier,
     documentNumber,
-    expectedAt,
     items: parseQuoteItems(fullText, lines),
     text: lines.join("\n"),
   };

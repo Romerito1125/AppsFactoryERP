@@ -1,4 +1,3 @@
-import { IsCop } from '../../../common/validators/is-cop.decorator';
 import { Type } from 'class-transformer';
 import {
   IsDateString,
@@ -29,7 +28,7 @@ export class CreateInvoiceCreditDto {
 }
 
 export class CreateCreditPaymentDto {
-  @Type(() => Number) @IsCop() @IsPositive() amount: number;
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @IsPositive() amount: number;
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -38,8 +37,8 @@ export class CreateCreditPaymentDto {
   @IsOptional() @IsString() notes?: string;
   // Número de consignación/transferencia o recibo externo.
   @IsOptional() @IsString() @MaxLength(120) reference?: string;
-  // Soporte persistente (imagen/PDF en data URL, máx. ~3 MB).
-  @IsOptional() @IsString() @MaxLength(4_200_000) supportData?: string;
+  // Soporte persistente (imagen/PDF en data URL, hasta 8 MB codificados).
+  @IsOptional() @IsString() @MaxLength(8_000_000) supportData?: string;
   @IsOptional() @IsString() @MaxLength(200) supportName?: string;
   @IsOptional() @IsString() @MaxLength(100) supportMimeType?: string;
 }

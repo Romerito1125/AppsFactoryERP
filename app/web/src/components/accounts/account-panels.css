@@ -110,6 +110,13 @@
   color: #2d7a3a;
 }
 
+.saint-footer-hint {
+  align-self: center;
+  margin-left: 4px;
+  color: #7a5b16;
+  font-size: 10px;
+}
+
 .saint-footer-info {
   display: grid;
   grid-template-columns: repeat(2, auto);
@@ -288,8 +295,8 @@
 }
 
 .saint-advances-dialog {
-  width: min(860px, 96vw);
-  max-height: 90vh;
+  width: min(1120px, 96vw);
+  max-height: 94vh;
   overflow: auto;
 }
 
@@ -343,4 +350,174 @@
 .saint-list-tabs button,
 .provider-tab {
   user-select: text;
+}
+
+/* Cartera legible: estas pantallas se usan para leer y capturar valores, no
+   como una tabla compacta. Mantiene el scroll interno sin ocultar acciones. */
+.receivable-window .saint-panel,
+.payable-window .saint-panel {
+  font-size: 14px;
+}
+
+.receivable-window .saint-filters,
+.payable-window .saint-filters {
+  gap: 16px;
+  padding: 9px 12px;
+  font-size: 14px;
+}
+
+.receivable-window .saint-filters input,
+.receivable-window .saint-filters select,
+.payable-window .saint-filters input,
+.payable-window .saint-filters select {
+  min-height: 34px;
+  padding: 5px 8px;
+  font-size: 14px;
+}
+
+.receivable-window .saint-table,
+.payable-window .saint-table {
+  font-size: 14px;
+}
+
+.receivable-window .saint-table th,
+.receivable-window .saint-table td,
+.payable-window .saint-table th,
+.payable-window .saint-table td {
+  padding: 9px 10px;
+}
+
+.receivable-window .saint-table-wrap,
+.payable-window .saint-table-wrap {
+  min-height: 240px;
+}
+
+.receivable-window .saint-ops-title,
+.payable-window .saint-ops-title {
+  padding: 12px 16px;
+  font-size: 21px;
+}
+
+.receivable-window .saint-ops-grid,
+.payable-window .saint-ops-grid {
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 18px 28px;
+  padding: 24px 28px;
+}
+
+.receivable-window .saint-ops-card,
+.payable-window .saint-ops-card {
+  min-height: 58px;
+  padding: 16px 18px;
+  font-size: 18px;
+}
+
+.receivable-window .provider-tab,
+.payable-window .provider-tab {
+  min-height: 46px;
+  padding: 9px 14px;
+  font-size: 16px;
+}
+
+.receivable-window .saint-footer,
+.payable-window .saint-footer {
+  padding: 10px 12px;
+}
+
+.receivable-window .saint-footer-actions button,
+.payable-window .saint-footer-actions button {
+  min-height: 34px;
+  padding: 5px 12px;
+  font-size: 14px;
+}
+
+.receivable-global-button {
+  width: calc(100% - 16px);
+  margin: 8px;
+  min-height: 38px;
+  padding: 8px 10px;
+  color: #1c5a96;
+  background: #eef5fb;
+  border: 1px solid #9bb8d2;
+  border-radius: 3px;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.receivable-global-button:hover,
+.receivable-global-button.is-active {
+  color: #fff;
+  background: #1c5a96;
+  border-color: #1c5a96;
+}
+
+.receivable-global-summary {
+  min-height: 100%;
+}
+
+.receivable-global-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  gap: 12px;
+  padding: 20px 24px 12px;
+}
+
+.receivable-global-kpis > div {
+  display: grid;
+  gap: 7px;
+  min-height: 82px;
+  padding: 13px 14px;
+  background: #f3f7fb;
+  border: 1px solid #c5d4e2;
+  border-top: 3px solid #1c5a96;
+}
+
+.receivable-global-kpis span {
+  color: #36516a;
+  font-size: 13px;
+}
+
+.receivable-global-kpis b {
+  color: #14283a;
+  font-size: 21px;
+}
+
+.receivable-global-kpis .is-danger { border-top-color: #b44b4b; }
+.receivable-global-kpis .is-danger b { color: #a1281f; }
+.receivable-global-kpis .is-success { border-top-color: #3b9461; }
+.receivable-global-kpis .is-success b { color: #2f754c; }
+
+.receivable-global-help {
+  margin: 14px 24px;
+  padding: 12px 14px;
+  color: #36516a;
+  background: #fff;
+  border: 1px solid #d6e0e8;
+  font-size: 15px;
+}
+
+.receivable-global-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 24px 24px;
+}
+
+.receivable-global-actions button {
+  min-height: 40px;
+  padding: 8px 14px;
+  font-size: 14px;
+}
+
+@media (max-width: 980px) {
+  .receivable-global-kpis { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .receivable-window .saint-ops-grid,
+  .payable-window .saint-ops-grid {
+    grid-template-columns: 1fr;
+  }
 }

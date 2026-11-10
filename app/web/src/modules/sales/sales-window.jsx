@@ -53,7 +53,9 @@ import { printInvoiceTicket } from "@/lib/invoice-ticket";
 import { DraftsDialog, saveDraft } from "@/components/drafts/drafts-dialog";
 import { focusSalesScanner } from "./sales-scanner-input";
 import { TotalizeDialog } from "@/components/payments/totalize-dialog";
-import { ReturnsPanel } from "./returns-panel";
+import { ReturnsWindow } from "./returns-window";
+import { InvoicePrintPanel } from "./invoice-print-panel";
+import { SalesReportExplorer } from "./sales-report-explorer";
 import "./sales-reports.css";
 import {
   Area,
@@ -74,6 +76,7 @@ import {
 } from "recharts";
 import { formatCop, readCopInput } from "@/lib/cop";
 import { CopInput } from "@/components/money/cop-input";
+import { dateInputToIso, toDateInputLocal } from "@/lib/date-input";
 
 // Acciones compartidas con los componentes de la grilla (documentos en espera, bodega por línea, ticket).
 const SalesExtrasContext = createContext({});
@@ -81,10 +84,27 @@ const SalesExtrasContext = createContext({});
 const viewLabels = {
   billing: "Facturación",
   invoices: "Facturas",
+  "print-invoices": "Imprimir facturas",
+  returns: "Devolución de venta",
+  "returns-print": "Imprimir devoluciones",
+  "delivery-returns": "Devolución de nota de entrega (Dev.N.E.)",
   quotes: "Cotizaciones",
   orders: "Pedidos y domicilios",
+  "delivery-notes": "Notas de entrega",
   reports: "Reportes",
 };
+
+const SALES_VIEW_IDS = [
+  "billing",
+  "print-invoices",
+  "returns",
+  "returns-print",
+  "quotes",
+  "orders",
+  "delivery-notes",
+  "delivery-returns",
+  "reports",
+];
 
 const invoiceStatusLabels = {
   ACTIVA: "Activa",
@@ -136,14 +156,16 @@ function loadCriticalSalesData() {
       apiClient.getAllPages("/productos", { estado: "activos" }),
       apiClient.getAllPages("/bodegas", { estado: "activos" }),
       apiClient.getAllPages("/cuentas-bancarias", { estado: "activos" }),
+      apiClient.get("/usuarios/vendedores"),
       apiClient.getAllPages("/usuarios", { estado: "activos" }),
     ]).then(
-      ([clientsResult, productsResult, warehousesResult, accountsResult, usersResult]) => {
+      ([clientsResult, productsResult, warehousesResult, accountsResult, salesUsersResult, usersResult]) => {
         criticalSalesDataSnapshot = {
           clientsResult,
           productsResult,
           warehousesResult,
           accountsResult,
+          salesUsersResult,
           usersResult,
         };
         return criticalSalesDataSnapshot;
@@ -193,7 +215,7 @@ export function SalesWindow({
   onRequestLogin,
 }) {
   const [view, setView] = useState(
-    ["billing", "quotes", "orders", "reports"].includes(initialView)
+    SALES_VIEW_IDS.includes(initialView)
       ? initialView
       : "billing",
   );
@@ -210,6 +232,7 @@ export function SalesWindow({
   const [selectedClientId, setSelectedClientId] = useState("");
   const [selectedWarehouseId, setSelectedWarehouseId] = useState("");
   const [selectedSellerId, setSelectedSellerId] = useState("");
+  const [selectedCashierId, setSelectedCashierId] = useState("");
   const [selectedPriceLevel, setSelectedPriceLevel] = useState("0");
   const [creditDueDate, setCreditDueDate] = useState(defaultDueDate());
   const [clientAdvances, setClientAdvances] = useState([]);
@@ -241,7 +264,7 @@ export function SalesWindow({
   useEffect(() => {
     let cancelled = false;
     loadCriticalSalesData().then(
-      ({ clientsResult, productsResult, warehousesResult, accountsResult, usersResult }) => {
+      ({ clientsResult, productsResult, warehousesResult, accountsResult, salesUsersResult, usersResult }) => {
         if (cancelled) return;
         if (clientsResult.status === "fulfilled") {
           const nextClients = clientsResult.value;
@@ -261,8 +284,8 @@ export function SalesWindow({
           const nextAccounts = accountsResult.value.filter(isActive);
           setBankAccounts(nextAccounts);
         }
-        if (usersResult?.status === "fulfilled") {
-          const activeSalesUsers = usersResult.value.filter(
+        if (salesUsersResult?.status === "fulfilled") {
+          const activeSalesUsers = salesUsersResult.value.filter(
             (user) =>
               user.isActive &&
               ["ADMIN", "CAJERO", "VENDEDOR", "CONTADOR"].includes(user.role),
@@ -275,8 +298,16 @@ export function SalesWindow({
               )?.id ?? activeSalesUsers[0]?.id ?? "",
             ),
           );
+          const activeCashiers = activeSalesUsers.filter((user) => ["ADMIN", "CAJERO"].includes(user.role));
+          setSelectedCashierId(
+            String(
+              activeCashiers.find((user) => String(user.id) === String(session?.sub))?.id
+                ?? activeCashiers[0]?.id
+                ?? "",
+            ),
+          );
           setWarehouseUsers(
-            usersResult.value.filter(
+            (usersResult?.status === "fulfilled" ? usersResult.value : []).filter(
               (user) => user.role === "BODEGA" && user.isActive,
             ),
           );
@@ -383,6 +414,13 @@ export function SalesWindow({
   const selectedSeller = salesUsers.find(
     (user) => String(user.id) === String(selectedSellerId),
   );
+  const cashierUsers = useMemo(
+    () => salesUsers.filter((user) => ["ADMIN", "CAJERO"].includes(user.role)),
+    [salesUsers],
+  );
+  const selectedCashier = cashierUsers.find(
+    (user) => String(user.id) === String(selectedCashierId),
+  );
   const canManageDocuments = [
     "ADMIN",
     "CAJERO",
@@ -392,12 +430,7 @@ export function SalesWindow({
   const canOverridePrice = canEditSalePrice(session);
   const canManageDeliveries = session?.role === "ADMIN";
 
-  const salesViews = [
-    "billing",
-    "quotes",
-    "orders",
-    "reports",
-  ];
+  const salesViews = SALES_VIEW_IDS;
   const salesViewIndex = salesViews.indexOf(view);
 
   function navigate(nextView) {
@@ -541,6 +574,8 @@ export function SalesWindow({
   }
 
   function handleSalesShortcut(event) {
+    // Las ventanas de devolución tienen sus propias teclas (F1, F5, F8, Esc).
+    if (["returns", "returns-print", "delivery-returns"].includes(view)) return;
     if (event.key === "Escape" && lookupType) {
       event.preventDefault();
       event.stopPropagation();
@@ -670,6 +705,7 @@ export function SalesWindow({
           clientId: selectedClientId,
           warehouseId: selectedWarehouseId,
           sellerId: selectedSellerId,
+          cashierId: selectedCashierId,
           priceLevel: selectedPriceLevel,
           quoteId: activeQuoteId,
           items: cart.map((item) => ({
@@ -705,6 +741,7 @@ export function SalesWindow({
     if (payload.clientId) setSelectedClientId(String(payload.clientId));
     if (payload.warehouseId) setSelectedWarehouseId(String(payload.warehouseId));
     if (payload.sellerId) setSelectedSellerId(String(payload.sellerId));
+    if (payload.cashierId) setSelectedCashierId(String(payload.cashierId));
     if (payload.priceLevel !== undefined) setSelectedPriceLevel(String(payload.priceLevel));
     setActiveQuoteId(payload.quoteId ?? null);
     setCart(restored);
@@ -827,6 +864,10 @@ export function SalesWindow({
       setError("El total de la factura debe ser mayor a cero.");
       return;
     }
+    if (!selectedCashierId) {
+      setError("Selecciona el cajero que registra la factura.");
+      return;
+    }
     setError("");
     setTotalizeError("");
     setTotalizeOpen(true);
@@ -868,7 +909,7 @@ export function SalesWindow({
         // El crédito lo decide Total operación: lo no pagado queda a crédito.
         saleMode: onCredit ? "CREDITO" : "CONTADO",
         ...(onCredit
-          ? { creditDueDate: new Date(`${result.creditDueDate}T00:00:00`).toISOString() }
+          ? { creditDueDate: dateInputToIso(result.creditDueDate) }
           : {}),
         // Los pagos viajan con la factura: se guardan en una sola transacción.
         ...(payments.length ? { payments } : {}),
@@ -895,6 +936,7 @@ export function SalesWindow({
             : {}),
         })),
         sellerUserId: selectedSellerId ? Number(selectedSellerId) : undefined,
+        cashierUserId: selectedCashierId ? Number(selectedCashierId) : undefined,
         ...(activeQuoteId ? { quoteId: activeQuoteId } : {}),
       });
 
@@ -934,7 +976,7 @@ export function SalesWindow({
     try {
       const quote = await apiClient.post("/cotizaciones", {
         clientId: Number(selectedClientId),
-        expiresAt: new Date(`${creditDueDate}T00:00:00`).toISOString(),
+        expiresAt: dateInputToIso(creditDueDate),
         priceLevel: Number(selectedPriceLevel),
         kind: quoteKind,
         items: cart.map((item) => ({
@@ -1186,6 +1228,9 @@ export function SalesWindow({
             selectedWarehouse={selectedWarehouse}
             selectedSeller={selectedSeller}
             selectedSellerId={selectedSellerId}
+            selectedCashier={selectedCashier}
+            selectedCashierId={selectedCashierId}
+            cashierUsers={cashierUsers}
             salesUsers={salesUsers}
             selectedPriceLevel={selectedPriceLevel}
             clientDebt={clientDebt}
@@ -1211,13 +1256,8 @@ export function SalesWindow({
             actionLoading={actionLoading}
             canOverridePrice={canOverridePrice}
             onScanBarcode={addBarcodeToCart}
-            canViewReturns={canAccessReturns(session, "RETURNS_VIEW")}
-            canCreateReturns={canAccessReturns(session, "RETURNS_CREATE")}
-            onReturnCreated={() => {
-              invalidateSalesDataCache();
-              setNotice("Devolución registrada. Inventario y cartera actualizados.");
-            }}
             onSellerChange={setSelectedSellerId}
+            onCashierChange={setSelectedCashierId}
             onUpdateQuantity={updateCartQuantity}
             onUpdatePrice={updateCartPrice}
             onPriceLevelChange={handlePriceLevelChange}
@@ -1261,8 +1301,27 @@ export function SalesWindow({
             onGoToBilling={() => navigate("billing")}
             onReprint={() => openLookup("invoices")}
           />
-        ) : view === "orders" ? (
+        ) : view === "returns" || view === "returns-print" || view === "delivery-returns" ? (
+          <ReturnsWindow
+            key={view}
+            mode={view === "delivery-returns" ? "delivery" : "invoice"}
+            focusHistory={view === "returns-print"}
+            invoices={invoices}
+            deliveries={deliveries}
+            bankAccounts={bankAccounts}
+            canView={canAccessReturns(session, "RETURNS_VIEW")}
+            canCreate={canAccessReturns(session, "RETURNS_CREATE")}
+            onCreated={() => {
+              invalidateSalesDataCache();
+              setNotice("Devolución registrada. Inventario y cartera actualizados.");
+            }}
+          />
+        ) : view === "print-invoices" ? (
+          <InvoicePrintPanel invoices={invoices} />
+        ) : view === "orders" || view === "delivery-notes" ? (
           <OrdersPanel
+            key={view}
+            initialTab={view === "delivery-notes" ? "deliveries" : "orders"}
             orders={orders}
             deliveries={deliveries}
             actionLoading={actionLoading}
@@ -1409,6 +1468,9 @@ function BillingPanel({
   selectedWarehouse,
   selectedSeller,
   selectedSellerId,
+  selectedCashier,
+  selectedCashierId,
+  cashierUsers,
   salesUsers,
   selectedPriceLevel,
   clientDebt,
@@ -1426,11 +1488,9 @@ function BillingPanel({
   actionLoading,
   canOverridePrice,
   onScanBarcode,
-  canViewReturns,
-  canCreateReturns,
-  onReturnCreated,
   onPriceLevelChange,
   onSellerChange,
+  onCashierChange,
   onUpdateQuantity,
   onUpdatePrice,
   onClearCart,
@@ -1465,32 +1525,17 @@ function BillingPanel({
         >
           Facturas registradas <span>{invoices.length}</span>
         </button>
-        {canViewReturns && (
-          <button
-            type="button"
-            className={billingTab === "returns" ? "is-active" : ""}
-            role="tab"
-            aria-selected={billingTab === "returns"}
-            onClick={() => setBillingTab("returns")}
-          >
-            Devoluciones
-          </button>
-        )}
       </div>
-      {billingTab === "returns" && canViewReturns ? (
-        <ReturnsPanel
-          invoices={invoices}
-          bankAccounts={bankAccounts}
-          canCreate={canCreateReturns}
-          onCreated={onReturnCreated}
-        />
-      ) : billingTab === "new" ? (
+      {billingTab === "new" ? (
         <TicketPanel
           selectedClient={selectedClient}
           clientDebt={clientDebt}
           selectedWarehouse={selectedWarehouse}
           selectedSeller={selectedSeller}
           selectedSellerId={selectedSellerId}
+          selectedCashier={selectedCashier}
+          selectedCashierId={selectedCashierId}
+          cashierUsers={cashierUsers}
           salesUsers={salesUsers}
           selectedPriceLevel={selectedPriceLevel}
           cart={cart}
@@ -1503,6 +1548,7 @@ function BillingPanel({
           onScanBarcode={onScanBarcode}
           onPriceLevelChange={onPriceLevelChange}
           onSellerChange={onSellerChange}
+          onCashierChange={onCashierChange}
           onUpdateQuantity={onUpdateQuantity}
           onUpdatePrice={onUpdatePrice}
           canOverridePrice={canOverridePrice}
@@ -1673,6 +1719,7 @@ function SalesContextField({
   description,
   shortcuts = [],
   onShortcut,
+  control,
   children,
 }) {
   function openLookupFromInput() {
@@ -1683,20 +1730,22 @@ function SalesContextField({
     <div className="sales-context-field">
       <div className="sales-context-field-top">
         <span>{label}</span>
-        <input
-          value={code}
-          readOnly
-          aria-label={label}
-          onFocus={openLookupFromInput}
-          onClick={openLookupFromInput}
-          onKeyDown={(event) => {
-            if (["Enter", "F1", "F2"].includes(event.key)) {
-              event.preventDefault();
-              event.stopPropagation();
-              openLookupFromInput();
-            }
-          }}
-        />
+        {control ?? (
+          <input
+            value={code}
+            readOnly
+            aria-label={label}
+            onFocus={openLookupFromInput}
+            onClick={openLookupFromInput}
+            onKeyDown={(event) => {
+              if (["Enter", "F1", "F2"].includes(event.key)) {
+                event.preventDefault();
+                event.stopPropagation();
+                openLookupFromInput();
+              }
+            }}
+          />
+        )}
         {shortcuts.map((shortcut) => (
           <button
             type="button"
@@ -1731,11 +1780,11 @@ function SalesPriceLevelField({ value, cart = [], onChange }) {
           </option>
         ))}
       </select>
-      <small className={missingProducts ? "has-missing" : ""}>
-        {missingProducts
-          ? `${missingProducts} producto${missingProducts === 1 ? "" : "s"} sin este precio`
-          : "Aplica a toda la factura"}
-      </small>
+      {missingProducts > 0 && (
+        <small className="has-missing">
+          {`${missingProducts} producto${missingProducts === 1 ? "" : "s"} sin este precio`}
+        </small>
+      )}
     </div>
   );
 }
@@ -1769,6 +1818,9 @@ function TicketPanel({
   selectedWarehouse,
   selectedSeller,
   selectedSellerId,
+  selectedCashier,
+  selectedCashierId,
+  cashierUsers = [],
   salesUsers,
   selectedPriceLevel,
   cart,
@@ -1781,6 +1833,7 @@ function TicketPanel({
   onScanBarcode,
   onPriceLevelChange,
   onSellerChange,
+  onCashierChange,
   onUpdateQuantity,
   onUpdatePrice,
   canOverridePrice,
@@ -1810,22 +1863,43 @@ function TicketPanel({
             <SalesContextField
               label="Vendedor"
               code={selectedSeller?.id ? `U${selectedSeller.id}` : "—"}
-              description={selectedSeller?.username ?? "Seleccionar vendedor"}
-            >
-              <select
-                className="sales-seller-select"
-                value={selectedSellerId}
-                onChange={(event) => onSellerChange?.(event.target.value)}
-                aria-label="Vendedor"
-              >
-                <option value="">Seleccionar vendedor</option>
-                {salesUsers.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.username} · {user.role}
-                  </option>
-                ))}
-              </select>
-            </SalesContextField>
+              description={salesUserName(selectedSeller) || "Seleccionar vendedor"}
+              control={(
+                <select
+                  className="sales-context-select"
+                  value={selectedSellerId}
+                  onChange={(event) => onSellerChange?.(event.target.value)}
+                  aria-label="Vendedor"
+                >
+                  <option value="">Seleccionar vendedor</option>
+                  {salesUsers.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {salesUserName(user)} · {user.role}
+                    </option>
+                  ))}
+                </select>
+              )}
+            />
+            <SalesContextField
+              label="Cajero"
+              code={selectedCashier?.id ? `U${selectedCashier.id}` : "—"}
+              description={salesUserName(selectedCashier) || "Seleccionar cajero"}
+              control={(
+                <select
+                  className="sales-context-select"
+                  value={selectedCashierId}
+                  onChange={(event) => onCashierChange?.(event.target.value)}
+                  aria-label="Cajero"
+                >
+                  <option value="">Seleccionar cajero</option>
+                  {cashierUsers.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {salesUserName(user)} · {user.role}
+                    </option>
+                  ))}
+                </select>
+              )}
+            />
             <SalesContextField
               label="Depósito"
               code={
@@ -2378,7 +2452,7 @@ export function InvoicePanel({
                   </td>
                   <td>{clientName(invoice.client)}</td>
                   <td>{invoice.sellerUsername ?? invoice.createdByUsername ?? "—"}</td>
-                  <td>{invoice.createdByUsername ?? "—"}</td>
+                  <td>{invoice.cashierUsername ?? invoice.createdByUsername ?? "—"}</td>
                   <td>
                     {invoiceSourceLabel(invoice.source)}
                   </td>
@@ -2735,6 +2809,7 @@ function DeliveryPanel({
 function OrdersPanel({
   orders,
   deliveries,
+  initialTab = "orders",
   actionLoading,
   canManage,
   onSelect,
@@ -2743,7 +2818,7 @@ function OrdersPanel({
   onCreateDelivery,
 }) {
   const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState("orders");
+  const [activeTab, setActiveTab] = useState(initialTab);
   const visible = orders.filter((order) =>
     `${order.consecutive} ${clientName(order.client)} ${order.delivery?.address ?? ""}`
       .toLowerCase()
@@ -2911,7 +2986,7 @@ const REPORT_INITIAL_FILTERS = {
 
 function ReportsPanel({ invoices, quotes, orders, clients, warehouses, salesUsers, onSelect }) {
   const [filters, setFilters] = useState(REPORT_INITIAL_FILTERS);
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState("explorer");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const range = useMemo(() => salesReportRange(filters), [filters]);
@@ -2955,6 +3030,7 @@ function ReportsPanel({ invoices, quotes, orders, clients, warehouses, salesUser
     currentPage * pageSize,
   );
   const reportTabs = [
+    { id: "explorer", label: "Explorador (todos los filtros)", icon: Filter },
     { id: "overview", label: "Resumen", icon: BarChart3 },
     { id: "trends", label: "Tendencias", icon: TrendingUp },
     { id: "products", label: "Productos y equipo", icon: Package },
@@ -3081,6 +3157,7 @@ function ReportsPanel({ invoices, quotes, orders, clients, warehouses, salesUser
         </div>
       </div>
 
+      {activeTab !== "explorer" && <>
       <section className="sales-report-filter-panel">
         <div className="sales-report-filter-heading">
           <div><Filter size={15} /><strong>Filtros del reporte</strong></div>
@@ -3128,12 +3205,15 @@ function ReportsPanel({ invoices, quotes, orders, clients, warehouses, salesUser
         <ReportMetricCard icon={CreditCard} label="Ventas a crédito" value={formatCop(metrics.creditSales)} helper={`${metrics.creditShare.toFixed(1)}% del periodo`} tone="warning" />
         <ReportMetricCard icon={Boxes} label="Unidades vendidas" value={formatQuantity(metrics.units)} helper={`${metrics.activeProducts} productos con movimiento`} />
       </section>
+      </>}
 
       <nav className="sales-report-tabs" role="tablist" aria-label="Secciones del reporte">
         {reportTabs.map(({ id, label, icon: Icon }) => <button key={id} type="button" role="tab" aria-selected={activeTab === id} className={activeTab === id ? "is-active" : ""} onClick={() => setActiveTab(id)}><Icon size={14} />{label}</button>)}
       </nav>
 
       <div className="sales-report-tab-panel" role="tabpanel">
+        {activeTab === "explorer" && <SalesReportExplorer invoices={invoices} />}
+
         {activeTab === "overview" && <>
           <SalesExecutiveSummary summary={summary} metrics={metrics} />
           <div className="sales-report-main-grid">
@@ -4028,7 +4108,7 @@ function SalesDocumentDialog({
               </div>
               <div>
                 <span>Cajero</span>
-                <strong>{document.createdByUsername ?? "—"}</strong>
+                <strong>{document.cashierUsername ?? document.createdByUsername ?? "—"}</strong>
               </div>
             </>
           )}
@@ -4278,6 +4358,14 @@ function clientName(client) {
     `Cliente #${client.id}`
   );
 }
+function salesUserName(user) {
+  if (!user) return "";
+  return (
+    [user.employee?.firstName, user.employee?.lastName].filter(Boolean).join(" ").trim() ||
+    user.username ||
+    `Usuario #${user.id}`
+  );
+}
 function clientCode(client) {
   return client?.id ? `C${String(client.id).padStart(5, "0")}` : "C99999";
 }
@@ -4298,7 +4386,7 @@ function nextDeliveryStatus(status) {
 function defaultDueDate() {
   const due = new Date();
   due.setDate(due.getDate() + 15);
-  return due.toISOString().slice(0, 10);
+  return toDateInputLocal(due);
 }
 function hasCreditCapacity(client) {
   return Boolean(client?.hasCredit && Number(client.maxCredit) > 0);

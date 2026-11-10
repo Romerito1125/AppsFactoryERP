@@ -1,4 +1,4 @@
-import { formatCop } from "./cop";
+import { formatCopExact } from "./cop";
 // Ticket compacto tipo retail (80 mm, estilo D1/ARA) para facturas. Imprime y reimprime
 // el mismo documento: totales, IVA por tasa, medios de pago, número, cajero y vendedor.
 const esc = (value) =>
@@ -31,23 +31,23 @@ export function buildTicketHtml(invoice, { copy = "" } = {}) {
       const gross = Number(item.total ?? 0);
       const qty = Number(item.quantity ?? 0);
       return `<tr><td colspan="3">${esc(item.product?.name ?? `Producto ${item.productId}`)}</td></tr>
-        <tr class="sub"><td>${qty} x ${formatCop(qty ? gross / qty : 0)}</td><td></td><td class="n">${formatCop(gross)}</td></tr>`;
+        <tr class="sub"><td>${qty} x ${formatCopExact(qty ? gross / qty : 0)}</td><td></td><td class="n">${formatCopExact(gross)}</td></tr>`;
     })
     .join("");
   const taxes = taxBreakdown(items)
     .map(
       ([rate, row]) =>
-        `<tr><td>IVA ${rate}%</td><td class="n">Base ${formatCop(row.base)}</td><td class="n">${formatCop(row.tax)}</td></tr>`,
+        `<tr><td>IVA ${rate}%</td><td class="n">Base ${formatCopExact(row.base)}</td><td class="n">${formatCopExact(row.tax)}</td></tr>`,
     )
     .join("");
   const payments = (invoice.bankMovement ?? [])
     .map(
       (movement) =>
-        `<tr><td colspan="2">${esc(movement.bankAccount?.name ?? "Pago")}</td><td class="n">${formatCop(movement.amount)}</td></tr>`,
+        `<tr><td colspan="2">${esc(movement.bankAccount?.name ?? "Pago")}</td><td class="n">${formatCopExact(movement.amount)}</td></tr>`,
     )
     .join("");
   const credit = invoice.credit
-    ? `<tr><td colspan="2">A crédito</td><td class="n">${formatCop(invoice.credit.totalAmount)}</td></tr>`
+    ? `<tr><td colspan="2">A crédito</td><td class="n">${formatCopExact(invoice.credit.totalAmount)}</td></tr>`
     : "";
   return `<section class="ticket">
     <h1>MUNDO TIENDA</h1>
@@ -56,14 +56,14 @@ export function buildTicketHtml(invoice, { copy = "" } = {}) {
     <hr />
     <p>Cliente: ${esc(clientLabel(invoice.client))}</p>
     <p>Vendedor: ${esc(invoice.sellerUsername ?? invoice.createdByUsername ?? "—")}</p>
-    <p>Cajero: ${esc(invoice.createdByUsername ?? "—")}</p>
+    <p>Cajero: ${esc(invoice.cashierUsername ?? invoice.createdByUsername ?? "—")}</p>
     <hr />
     <table>${lines}</table>
     <hr />
     <table>
-      <tr><td colspan="2">Subtotal</td><td class="n">${formatCop(invoice.subtotal)}</td></tr>
+      <tr><td colspan="2">Subtotal</td><td class="n">${formatCopExact(invoice.subtotal)}</td></tr>
       ${taxes}
-      <tr class="total"><td colspan="2">TOTAL</td><td class="n">${formatCop(invoice.total)}</td></tr>
+      <tr class="total"><td colspan="2">TOTAL</td><td class="n">${formatCopExact(invoice.total)}</td></tr>
     </table>
     <hr />
     <p><b>Medios de pago</b></p>
@@ -74,15 +74,22 @@ export function buildTicketHtml(invoice, { copy = "" } = {}) {
   </section>`;
 }
 
-/** Imprime el ticket con las copias pedidas (1 por defecto). */
-export function printInvoiceTicket(invoice, copies = 1) {
+/** Imprime varias facturas en una sola ventana, cada una con las copias pedidas. */
+export function printInvoiceTickets(invoices, copies = 1) {
+  const list = Array.isArray(invoices) ? invoices.filter(Boolean) : [];
+  if (!list.length) throw new Error("No hay facturas para imprimir.");
   const pages = Math.max(1, Math.min(5, Number(copies) || 1));
-  const body = Array.from({ length: pages }, (_, index) =>
-    buildTicketHtml(invoice, { copy: pages > 1 ? `Copia ${index + 1}/${pages}` : "" }),
-  ).join("");
+  const body = list
+    .flatMap((invoice) =>
+      Array.from({ length: pages }, (_, index) =>
+        buildTicketHtml(invoice, { copy: pages > 1 ? `Copia ${index + 1}/${pages}` : "" }),
+      ),
+    )
+    .join("");
+  const title = list.length === 1 ? `Ticket ${list[0].consecutive}` : `Tickets (${list.length})`;
   const popup = window.open("", "_blank", "width=380,height=720");
   if (!popup) throw new Error("El navegador bloqueó la ventana de impresión; permite las ventanas emergentes.");
-  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Ticket ${esc(invoice.consecutive)}</title>
+  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
     <style>
       @page{size:80mm auto;margin:3mm}
       *{box-sizing:border-box}
@@ -95,4 +102,9 @@ export function printInvoiceTicket(invoice, copies = 1) {
       .sub td{padding-bottom:3px} .total td{font-weight:700;font-size:14px;border-top:1px solid #000;padding-top:3px}
     </style></head><body>${body}<script>window.onload=function(){window.print();}</` + `script></body></html>`);
   popup.document.close();
+}
+
+/** Imprime el ticket con las copias pedidas (1 por defecto). */
+export function printInvoiceTicket(invoice, copies = 1) {
+  printInvoiceTickets([invoice], copies);
 }

@@ -4,12 +4,21 @@ import { Paperclip, X } from "lucide-react";
 import { advanceFrom } from "@/lib/enter-advance";
 import { readSupportFile } from "./support-file";
 import "./totalize-dialog.css";
-import { formatCop, readCopInput } from "@/lib/cop";
-import { CopInput } from "@/components/money/cop-input";
+import { formatCop, formatCopExact } from "@/lib/cop";
+import { DecimalInput } from "@/components/money/decimal-input";
+import { toDateInputLocal } from "@/lib/date-input";
 
 const round = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
-const parseAmount = (value) => readCopInput(value).value;
+const parseAmount = (value) => {
+  const text = String(value ?? "").trim().replace(/\s/g, "");
+  if (!text) return 0;
+  const normalized = text.includes(",")
+    ? text.replace(/\./g, "").replace(",", ".")
+    : text;
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? round(amount) : 0;
+};
 
 function defaultCashAccount(accounts) {
   return (
@@ -21,10 +30,10 @@ function defaultCashAccount(accounts) {
 function defaultDueDate() {
   const due = new Date();
   due.setDate(due.getDate() + 15);
-  return due.toISOString().slice(0, 10);
+  return toDateInputLocal(due);
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => toDateInputLocal(new Date());
 
 /**
  * Diálogo "Total pagos y abonos" (cobros y pagos) y "Total operación" (venta),
@@ -36,33 +45,40 @@ export function TotalizeDialog({
   title,
   totalLabel = "Total acreditado",
   total,
-  bankAccounts,
+  retentionTotal = 0,
+  bankAccounts = [],
   client = null,
   previousBalance = 0,
   bonusAvailable = 0,
   advances = [],
   initialDetail = "",
   sellerName = "",
+  sellers = [],
+  initialDocumentNumber = "",
+  initialOperationType = "",
   saving = false,
   error = "",
   onAccept,
   onCancel,
 }) {
   const isSale = mode === "sale";
+  const showCreditSummary = mode === "receipt" && Boolean(client);
   const rootRef = useRef(null);
   const firstAccount = bankAccounts[0];
-  const [documentNumber, setDocumentNumber] = useState("");
+  const cashAccount = defaultCashAccount(bankAccounts);
+  const [documentNumber, setDocumentNumber] = useState(initialDocumentNumber);
   const [detail, setDetail] = useState(initialDetail);
   const [paidAt, setPaidAt] = useState(today());
-  const [cash, setCash] = useState("");
-  const [cheque, setCheque] = useState("");
-  const [chequeRef, setChequeRef] = useState("");
+  const [cash, setCash] = useState(() =>
+    !isSale && total > 0 ? String(round(total)) : "",
+  );
   const [cashAccountId, setCashAccountId] = useState(
     String(defaultCashAccount(bankAccounts)?.id ?? ""),
   );
-  // Por defecto todo el total entra por la primera cuenta; el usuario lo reparte.
+  // En ventas se conserva el flujo rápido por cuenta bancaria; cobros y pagos
+  // empiezan en efectivo y solo pasan a instrumentos al elegirlo.
   const [instruments, setInstruments] = useState(() =>
-    firstAccount && total > 0
+    isSale && firstAccount && total > 0
       ? { [firstAccount.id]: { amount: String(round(total)), reference: "" } }
       : {},
   );
@@ -70,8 +86,9 @@ export function TotalizeDialog({
   const [advanceAmounts, setAdvanceAmounts] = useState({});
   const [dueDate, setDueDate] = useState(defaultDueDate());
   const [comments, setComments] = useState("");
-  const [operationType, setOperationType] = useState("");
+  const [operationType, setOperationType] = useState(initialOperationType);
   const [seller, setSeller] = useState(sellerName);
+  const [saleCreditMode, setSaleCreditMode] = useState(false);
   const [support, setSupport] = useState(null);
   const [print, setPrint] = useState(false);
   const [copies, setCopies] = useState(1);
@@ -79,7 +96,6 @@ export function TotalizeDialog({
   const [localError, setLocalError] = useState("");
 
   const cashN = parseAmount(cash);
-  const chequeN = parseAmount(cheque);
   const instrumentRows = bankAccounts
     .map((account) => ({
       bankAccountId: account.id,
@@ -96,41 +112,68 @@ export function TotalizeDialog({
     }))
     .filter((row) => row.amount > 0);
   const advancesTotal = round(advanceRows.reduce((sum, row) => sum + row.amount, 0));
-  const paid = round(cashN + chequeN + instrumentsTotal + bonusN + advancesTotal);
+  const paid = round(cashN + instrumentsTotal + bonusN + advancesTotal);
   const remainder = round(total - paid);
 
   const hasCredit = Boolean(client?.hasCredit && Number(client?.maxCredit) > 0);
   const creditLimit = Number(client?.maxCredit ?? 0);
   const creditAvailable = round(creditLimit - Number(previousBalance));
-  const creditAmount = isSale && remainder > 0.009 && hasCredit ? remainder : 0;
+  const canUseCredit = hasCredit && creditAvailable > 0.009;
+  const creditAmount = isSale && saleCreditMode && remainder > 0.009 && canUseCredit ? remainder : 0;
 
   const problem = useMemo(() => {
     if (!isSale) {
+      if (!bankAccounts.length) return "Registra al menos una cuenta bancaria activa para recibir o realizar el pago.";
       if (!documentNumber.trim()) return "Escribe el número de documento (ticket).";
       if (detail.trim().length < 2) return "Escribe el detalle del documento.";
       if (mode === "receipt" && !seller.trim()) return "Escribe el vendedor.";
       if (Math.abs(remainder) > 0.009) {
-        return `El desglose (${formatCop(paid)}) debe ser igual al total (${formatCop(total)}).`;
+        return `El desglose (${formatCopExact(paid)}) debe ser igual al total (${formatCopExact(total)}).`;
       }
     } else {
       if (remainder < -0.009) return "Lo pagado supera el total de la operación.";
       if (remainder > 0.009 && !hasCredit) {
-        return `Faltan ${formatCop(remainder)} por pagar: este cliente no tiene crédito.`;
+        return `Faltan ${formatCopExact(remainder)} por pagar: este cliente no tiene crédito.`;
+      }
+      if (remainder > 0.009 && hasCredit && !canUseCredit) {
+        return "El cliente no tiene crédito disponible suficiente.";
+      }
+      if (remainder > 0.009 && !saleCreditMode) {
+        return "Completa el pago o selecciona Crédito.";
       }
       if (creditAmount > 0 && creditAmount > creditAvailable + 0.009) {
-        return `El crédito (${formatCop(creditAmount)}) supera el disponible (${formatCop(creditAvailable)}).`;
+        return `El crédito (${formatCopExact(creditAmount)}) supera el disponible (${formatCopExact(creditAvailable)}).`;
       }
       if (creditAmount > 0 && !dueDate) return "Indica el vencimiento del crédito.";
     }
-    if ((cashN > 0 || chequeN > 0) && !cashAccountId) return "Selecciona la caja o cuenta del efectivo y los cheques.";
+    if (cashN > 0 && !cashAccountId) return "Selecciona la caja o cuenta del efectivo.";
     return "";
-  }, [isSale, mode, seller, documentNumber, detail, remainder, paid, total, hasCredit, creditAmount, creditAvailable, dueDate, cashN, chequeN, cashAccountId]);
+  }, [isSale, mode, seller, documentNumber, detail, remainder, paid, total, hasCredit, canUseCredit, creditAmount, creditAvailable, dueDate, cashN, cashAccountId, saleCreditMode, bankAccounts.length]);
 
   function setInstrument(accountId, field, value) {
     setInstruments((current) => ({
       ...current,
       [accountId]: { amount: "", reference: "", ...current[accountId], [field]: value },
     }));
+  }
+
+  function toggleSaleCredit(nextValue) {
+    setLocalError("");
+    setSaleCreditMode(nextValue);
+    if (nextValue) {
+      setCash("");
+      setInstruments({});
+      setBonus("");
+      setAdvanceAmounts({});
+    } else if (firstAccount && total > 0) {
+      setInstruments({ [firstAccount.id]: { amount: String(round(total)), reference: "" } });
+    }
+  }
+
+  function openInstruments() {
+    // Abrir el detalle no cambia ningún medio ni monto. El operador decide
+    // explícitamente cuánto pasa a transferencia y cuánto queda en efectivo.
+    setShowInstruments(true);
   }
 
   function accept() {
@@ -140,7 +183,7 @@ export function TotalizeDialog({
       return;
     }
     setLocalError("");
-    onAccept({
+    const payload = {
       documentNumber: documentNumber.trim(),
       detail: detail.trim(),
       paidAt,
@@ -148,15 +191,6 @@ export function TotalizeDialog({
       cashAccountId: cashN > 0 ? Number(cashAccountId) : undefined,
       instruments: [
         ...instrumentRows,
-        ...(chequeN > 0
-          ? [
-              {
-                bankAccountId: Number(cashAccountId),
-                amount: chequeN,
-                reference: chequeRef.trim() ? `Cheque ${chequeRef.trim()}` : "Cheque",
-              },
-            ]
-          : []),
       ],
       bonusAmount: bonusN,
       advanceLines: advanceRows,
@@ -165,9 +199,23 @@ export function TotalizeDialog({
       comments: comments.trim(),
       operationType: operationType.trim(),
       sellerName: seller.trim(),
-      support,
       print: { enabled: print, copies },
-    });
+    };
+    // El soporte es opcional. No enviamos una propiedad vacía para que una
+    // venta totalmente a crédito (efectivo 0) no dependa de adjuntar archivo.
+    if (support) payload.support = support;
+    onAccept(payload);
+  }
+
+  async function chooseSupport(event) {
+    try {
+      setSupport(await readSupportFile(event.target.files?.[0] ?? null));
+      setLocalError("");
+    } catch (supportError) {
+      event.target.value = "";
+      setSupport(null);
+      setLocalError(supportError.message);
+    }
   }
 
   function handleKeyDown(event) {
@@ -244,23 +292,30 @@ export function TotalizeDialog({
                       />
                     </td>
                     <td>
-                      <CopInput
+                      <DecimalInput
                         className="is-amount"
-                        value={parseAmount(instruments[account.id]?.amount)}
+                        value={instruments[account.id]?.amount ?? ""}
                         onChange={(value) => setInstrument(account.id, "amount", String(value))}
                       />
                     </td>
                   </tr>
                 ))}
+                {!bankAccounts.length && (
+                  <tr>
+                    <td colSpan="4" className="table-empty">
+                      No hay cuentas bancarias activas registradas.
+                    </td>
+                  </tr>
+                )}
                 {isSale && bonusAvailable > 0 && (
                   <tr className="is-special">
                     <td>BON</td>
                     <td>Bonus / miembro fiel · disponible {formatCop(bonusAvailable)}</td>
                     <td>Se descuenta del saldo del cliente</td>
                     <td>
-                      <CopInput
+                      <DecimalInput
                         className="is-amount"
-                        value={parseAmount(bonus)}
+                        value={bonus}
                         onChange={(value) => setBonus(String(value))}
                       />
                     </td>
@@ -275,9 +330,9 @@ export function TotalizeDialog({
                       </td>
                       <td>Se descuenta del anticipo</td>
                       <td>
-                        <CopInput
+                        <DecimalInput
                           className="is-amount"
-                          value={parseAmount(advanceAmounts[advance.id])}
+                          value={advanceAmounts[advance.id] ?? ""}
                           onChange={(value) =>
                             setAdvanceAmounts((current) => ({
                               ...current,
@@ -292,16 +347,65 @@ export function TotalizeDialog({
             </table>
             <div className="totalize-instruments-total">
               <span>Total instrumentos</span>
-              <strong>{formatCop(round(instrumentsTotal + bonusN + advancesTotal))}</strong>
+              <strong>{formatCopExact(round(instrumentsTotal + bonusN + advancesTotal))}</strong>
+            </div>
+            <div className="totalize-support-strip">
+              <Paperclip size={17} />
+              <strong>Documento de soporte</strong>
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                onChange={chooseSupport}
+              />
+              <span>{support ? support.supportName : "Opcional · imagen o PDF"}</span>
             </div>
           </div>
         ) : (
           <div className="totalize-body">
-            {isSale && (
+            {showCreditSummary && (
               <div className="totalize-credit-box">
-                <div><span>Límite crédito</span><b>{hasCredit ? formatCop(creditLimit) : "Sin crédito"}</b></div>
-                <div><span>Saldo anterior</span><b>{formatCop(previousBalance)}</b></div>
-                <div><span>Crédito disponible</span><b>{hasCredit ? formatCop(creditAvailable) : "—"}</b></div>
+                <div><span>Límite crédito</span><b>{hasCredit ? formatCopExact(creditLimit) : "Sin crédito"}</b></div>
+                <div><span>Saldo anterior</span><b>{formatCopExact(previousBalance)}</b></div>
+                <div><span>Crédito disponible</span><b>{hasCredit ? formatCopExact(creditAvailable) : "—"}</b></div>
+              </div>
+            )}
+            {isSale && (
+              <div className="totalize-sale-mode" role="group" aria-label="Forma de pago de la venta">
+                <span>Forma de pago</span>
+                <div className="totalize-sale-mode-actions">
+                  <button
+                    type="button"
+                    className={!saleCreditMode ? "is-active" : ""}
+                    onClick={() => toggleSaleCredit(false)}
+                  >
+                    Contado
+                  </button>
+                  {canUseCredit && (
+                    <button
+                      type="button"
+                      className={saleCreditMode ? "is-active" : ""}
+                      onClick={() => toggleSaleCredit(true)}
+                    >
+                      Crédito
+                    </button>
+                  )}
+                </div>
+                <small>
+                  {canUseCredit
+                    ? saleCreditMode
+                      ? "El saldo pendiente se registrará a crédito."
+                      : "Completa el pago para registrar la factura de contado."
+                    : hasCredit
+                      ? "Este cliente agotó su crédito disponible."
+                      : "Este cliente no tiene crédito configurado."}
+                </small>
+              </div>
+            )}
+            {!isSale && Number(retentionTotal) > 0 && (
+              <div className="totalize-retention-summary">
+                <span>Total documento <strong>{formatCopExact(total)}</strong></span>
+                <span>Retención calculada <strong>{formatCopExact(retentionTotal)}</strong></span>
+                <span>Total recibido <strong>{formatCopExact(total)}</strong></span>
               </div>
             )}
             <div className="totalize-grid">
@@ -324,7 +428,7 @@ export function TotalizeDialog({
               )}
               <label>
                 <span>{totalLabel}</span>
-                <output className="is-total">{formatCop(total)}</output>
+                <output className="is-total">{formatCopExact(total)}</output>
               </label>
               {!isSale && (
                 <>
@@ -340,10 +444,10 @@ export function TotalizeDialog({
               )}
               <label>
                 <span>Efectivo</span>
-                <CopInput
+                <DecimalInput
                   autoFocus={isSale}
                   className="is-short is-amount"
-                  value={cashN}
+                  value={cash}
                   onChange={(value) => {
                     setCash(String(value));
                     // Pago dividido típico: lo que entra en efectivo se descuenta de la cuenta principal.
@@ -352,75 +456,43 @@ export function TotalizeDialog({
                       setInstrument(
                         firstAccount.id,
                         "amount",
-                        String(Math.max(0, round(total - value - chequeN - bonusN - advancesTotal))),
+                        String(Math.max(0, round(total - value - bonusN - advancesTotal))),
                       );
                     }
                   }}
                 />
               </label>
               <label>
-                <span>Cheques</span>
-                <div className="totalize-pair">
-                  <CopInput
-                    className="is-short is-amount"
-                    value={chequeN}
-                    onChange={(value) => setCheque(String(value))}
-                  />
-                  <input
-                    value={chequeRef}
-                    placeholder="Banco / número del cheque"
-                    disabled={chequeN <= 0}
-                    onChange={(event) => setChequeRef(event.target.value)}
-                  />
-                </div>
+                <span>Caja / cuenta del efectivo</span>
+                <select
+                  value={cashAccountId}
+                  disabled={!cashN || !bankAccounts.length}
+                  onChange={(event) => setCashAccountId(event.target.value)}
+                >
+                  {!bankAccounts.length && <option value="">Sin cuentas activas</option>}
+                  {bankAccounts.map((account) => (
+                    <option key={account.id} value={account.id}>{account.name}</option>
+                  ))}
+                </select>
               </label>
-              {(cashN > 0 || chequeN > 0) && (
-                <label>
-                  <span>Caja / cuenta del efectivo</span>
-                  <select value={cashAccountId} onChange={(event) => setCashAccountId(event.target.value)}>
-                    {bankAccounts.map((account) => (
-                      <option key={account.id} value={account.id}>{account.name}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
               <label>
-                <span>Instrumentos de pago</span>
-                <button type="button" className="totalize-instruments-btn" onClick={() => setShowInstruments(true)}>
+                <span>Transferencia / cuenta bancaria</span>
+                <button type="button" className="totalize-instruments-btn" onClick={openInstruments}>
                   {instrumentsTotal + bonusN + advancesTotal > 0
-                    ? `${formatCop(round(instrumentsTotal + bonusN + advancesTotal))} · ${instrumentRows.length + (bonusN ? 1 : 0) + advanceRows.length} medio(s)`
+                    ? `${formatCopExact(round(instrumentsTotal + bonusN + advancesTotal))} · ${instrumentRows.length + (bonusN ? 1 : 0) + advanceRows.length} medio(s)`
                     : "0,00"}
                 </button>
               </label>
               <label>
                 <span>Total desglose</span>
                 <output className={`is-total ${Math.abs(remainder) > 0.009 && !creditAmount ? "is-bad" : ""}`}>
-                  {formatCop(paid)}
+                  {formatCopExact(paid)}
                 </output>
               </label>
-              {isSale && (
+              {isSale && canUseCredit && (
                 <label>
-                  <span>Crédito{hasCredit ? "" : " (cliente sin crédito)"}</span>
-                  <output className="is-total">{formatCop(creditAmount)}</output>
-                  {hasCredit && paid > 0.009 && (
-                    <button
-                      type="button"
-                      className="totalize-instruments-btn"
-                      title="Quita los pagos de abajo y deja el total (o lo que falte) a crédito"
-                      onClick={() => {
-                        setInstruments({});
-                        setBonus("");
-                        setAdvanceAmounts({});
-                        setCheque("");
-                        setCash("");
-                        // El botón desaparece al quedar todo a crédito: devuelve el foco al diálogo
-                        // para que F3/Esc sigan funcionando.
-                        rootRef.current?.querySelector("input")?.focus();
-                      }}
-                    >
-                      Todo a crédito
-                    </button>
-                  )}
+                  <span>Crédito a registrar</span>
+                  <output className="is-total">{formatCopExact(creditAmount)}</output>
                 </label>
               )}
               {isSale && creditAmount > 0 && (
@@ -432,30 +504,21 @@ export function TotalizeDialog({
               {isSale && (
                 <label>
                   <span>Saldo operación</span>
-                  <output className="is-total">{formatCop(round(Number(previousBalance) + creditAmount))}</output>
+                  <output className="is-total">{formatCopExact(round(Number(previousBalance) + creditAmount))}</output>
                 </label>
               )}
-              <label>
+              <label className="totalize-wide">
                 <span>Comentarios del pago</span>
                 <textarea value={comments} onChange={(event) => setComments(event.target.value)} rows={2} />
               </label>
-              <label>
+              <label className="totalize-wide">
                 <span>
-                  <Paperclip size={12} /> Soporte{support ? ` · ${support.supportName}` : ""}
+                  <Paperclip size={12} /> Soporte (opcional){support ? ` · ${support.supportName}` : ""}
                 </span>
                 <input
                   type="file"
                   accept="image/*,application/pdf"
-                  onChange={async (event) => {
-                    try {
-                      setSupport(await readSupportFile(event.target.files?.[0] ?? null));
-                      setLocalError("");
-                    } catch (supportError) {
-                      event.target.value = "";
-                      setSupport(null);
-                      setLocalError(supportError.message);
-                    }
-                  }}
+                  onChange={chooseSupport}
                 />
               </label>
               {!isSale && (
@@ -467,7 +530,21 @@ export function TotalizeDialog({
               {mode === "receipt" && (
                 <label>
                   <span>Vendedor <i>*</i></span>
-                  <input value={seller} onChange={(event) => setSeller(event.target.value)} />
+                  {sellers.length ? (
+                    <select
+                      value={seller}
+                      onChange={(event) => setSeller(event.target.value)}
+                    >
+                      <option value="">Seleccionar vendedor</option>
+                      {sellers.map((item) => (
+                        <option key={item.id ?? item.username} value={item.username ?? item.name}>
+                          {item.name ?? item.username}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input value={seller} onChange={(event) => setSeller(event.target.value)} />
+                  )}
                 </label>
               )}
               {!isSale && (

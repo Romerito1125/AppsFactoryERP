@@ -6,6 +6,7 @@ import { BadgePercent, CalendarClock, Check, CircleX, Filter, LoaderCircle, Plus
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
+import { dateInputToIso, toDateInputLocal } from "@/lib/date-input";
 
 const DISCOUNT_TYPES = [
   ["PORCENTAJE", "Porcentaje"],
@@ -112,8 +113,8 @@ export function OffersWindow({ onClose, onRequestLogin }) {
       description: draft.description.trim() || undefined,
       discountType: draft.discountType,
       discountValue: Number(draft.discountValue),
-      startsAt: draft.startsAt ? new Date(`${draft.startsAt}T00:00:00`).toISOString() : undefined,
-      endsAt: draft.endsAt ? new Date(`${draft.endsAt}T23:59:59`).toISOString() : undefined,
+      startsAt: dateInputToIso(draft.startsAt, "00:00:00"),
+      endsAt: dateInputToIso(draft.endsAt, "23:59:59"),
       minimumProductQuantity: draft.minimumProductQuantity ? Number(draft.minimumProductQuantity) : undefined,
       maximumProductQuantity: draft.maximumProductQuantity ? Number(draft.maximumProductQuantity) : undefined,
       isStackable: draft.isStackable,
@@ -206,5 +207,5 @@ function dateLabel(startsAt, endsAt) {
   return `${startsAt ? new Date(startsAt).toLocaleDateString("es-CO") : "Desde hoy"} – ${endsAt ? new Date(endsAt).toLocaleDateString("es-CO") : "Sin vencimiento"}`;
 }
 
-function toDateInput(value) { return value ? new Date(value).toISOString().slice(0, 10) : ""; }
+function toDateInput(value) { return value ? toDateInputLocal(value) : ""; }
 function formatNumber(value) { return Number(value ?? 0).toLocaleString("es-CO", { maximumFractionDigits: 2 }); }

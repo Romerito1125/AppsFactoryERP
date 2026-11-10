@@ -60,6 +60,7 @@ export class UsuariosService {
         id: true,
         username: true,
         role: true,
+        isActive: true,
         employee: {
           select: {
             firstName: true,

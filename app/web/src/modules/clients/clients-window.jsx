@@ -32,6 +32,7 @@ const emptyClient = {
   priceLevel: 0,
   hasCredit: false,
   maxCredit: "0",
+  retentionId: "",
   clientType: "MINORISTA",
   email: "",
   password: "",
@@ -43,6 +44,7 @@ const emptyClient = {
 
 export function ClientsWindow({ onClose, onRequestLogin, canAccess }) {
   const [clients, setClients] = useState([]);
+  const [retentions, setRetentions] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("todos");
@@ -65,9 +67,14 @@ export function ClientsWindow({ onClose, onRequestLogin, canAccess }) {
     setLoading(true);
     setError("");
     try {
-      const result = await apiClient.getAllPages("/clientes", {
-        estado: "todos",
-      });
+      const [clientsResult, retentionsResult] = await Promise.allSettled([
+        apiClient.getAllPages("/clientes", { estado: "todos" }),
+        apiClient.getAllPages("/retenciones", { estado: "activos" }),
+      ]);
+      if (clientsResult.status === "rejected") throw clientsResult.reason;
+      const result = clientsResult.value;
+      const retentionItems = retentionsResult.status === "fulfilled" ? retentionsResult.value : [];
+      setRetentions(retentionItems);
       const nextSelectedId = result.some(
         (client) => client.id === preferredSelectedId,
       )
@@ -94,11 +101,17 @@ export function ClientsWindow({ onClose, onRequestLogin, canAccess }) {
 
   useEffect(() => {
     let cancelled = false;
-    apiClient
-      .getAllPages("/clientes", { estado: "todos" })
-      .then((result) => {
+    Promise.allSettled([
+      apiClient.getAllPages("/clientes", { estado: "todos" }),
+      apiClient.getAllPages("/retenciones", { estado: "activos" }),
+    ])
+      .then(([clientsResult, retentionsResult]) => {
         if (cancelled) return;
+        if (clientsResult.status === "rejected") throw clientsResult.reason;
+        const result = clientsResult.value;
+        const retentionItems = retentionsResult.status === "fulfilled" ? retentionsResult.value : [];
         setClients(result);
+        setRetentions(retentionItems);
         const firstClient = result[0];
         setSelectedId(firstClient?.id ?? null);
         if (firstClient) {
@@ -202,6 +215,7 @@ export function ClientsWindow({ onClose, onRequestLogin, canAccess }) {
       priceLevel: Number(draft.priceLevel ?? 0),
       hasCredit: Boolean(draft.hasCredit),
       maxCredit: parseCreditAmount(draft.maxCredit),
+      ...(draft.retentionId ? { retentionId: Number(draft.retentionId) } : {}),
       email: draft.email.trim() || undefined,
       password: draft.password || undefined,
       isActive: Boolean(draft.isActive),
@@ -434,6 +448,7 @@ export function ClientsWindow({ onClose, onRequestLogin, canAccess }) {
               editing={editing && canEdit}
               onChange={updateDraft}
               fieldErrors={fieldErrors}
+              retentions={retentions}
             />
           )}
           {hasChanges && (
@@ -520,7 +535,7 @@ export function ClientsWindow({ onClose, onRequestLogin, canAccess }) {
   );
 }
 
-function ClientMain({ client, editing, onChange, fieldErrors }) {
+function ClientMain({ client, editing, onChange, fieldErrors, retentions = [] }) {
   return (
     <div className="provider-main-details client-main-details">
       <EditableField
@@ -612,6 +627,19 @@ function ClientMain({ client, editing, onChange, fieldErrors }) {
         error={fieldErrors.maxCredit}
         disabled={!client.hasCredit}
         money
+      />
+      <EditableField
+        label="Retención automática en cobros"
+        value={String(client.retentionId ?? "")}
+        displayValue={formatRetention(client.retention)}
+        editing={editing}
+        onChange={(value) => onChange("retentionId", value)}
+        select
+        options={["", ...retentions.map((retention) => String(retention.id))]}
+        optionLabels={[
+          "Sin retención",
+          ...retentions.map((retention) => formatRetention(retention)),
+        ]}
       />
       <EditableField
         label="Contraseña"
@@ -867,6 +895,7 @@ function toDraft(client) {
     ...client,
     email: client.user?.username ?? client.email ?? "",
     password: "",
+    retentionId: client.retentionId ? String(client.retentionId) : "",
   };
 }
 
@@ -876,6 +905,7 @@ function hasClientDraftChanges(draft, selectedClient) {
         ...selectedClient,
         email: selectedClient.user?.username ?? selectedClient.email ?? "",
         password: "",
+        retentionId: selectedClient.retentionId ? String(selectedClient.retentionId) : "",
       }
     : emptyClient;
 
@@ -890,6 +920,7 @@ function hasClientDraftChanges(draft, selectedClient) {
     "priceLevel",
     "hasCredit",
     "maxCredit",
+    "retentionId",
     "clientType",
     "email",
     "password",
@@ -972,4 +1003,12 @@ function formatCreditLimit(value) {
     currency: "COP",
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+function formatRetention(retention) {
+  if (!retention) return "Sin retención";
+  const ranges = Array.isArray(retention.ranges) ? retention.ranges : [];
+  const percentages = [...new Set(ranges.map((range) => Number(range.percentage)).filter((value) => Number.isFinite(value)))];
+  const rate = percentages.length ? percentages.map((value) => `${value}%`).join(" / ") : "configurada";
+  return `${retention.code ?? "Retención"} · ${rate}`;
 }

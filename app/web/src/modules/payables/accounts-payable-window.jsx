@@ -13,7 +13,7 @@ import { AllocationFlow } from "@/components/payments/allocation-flow";
 import { NotesCenter } from "@/components/accounts/notes-center";
 import { printReceipt } from "@/components/payments/print-receipt";
 import { ReceiptEditDialog } from "@/components/payments/receipt-dialogs";
-import { viewReceiptSupport } from "@/components/payments/support-file";
+import { openSupportData } from "@/components/payments/support-file";
 import { apiClient } from "@/lib/api-client";
 import { formatCop } from "@/lib/cop";
 
@@ -195,7 +195,10 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
       setError("Crea una cuenta bancaria activa antes de registrar un pago.");
       return;
     }
-    setPaymentFlow({ orderId: order?.id ?? null });
+    setPaymentFlow({
+      orderId: order?.id ?? null,
+      documentNumber: `PG-${selectedProvider.id}-${Date.now()}`,
+    });
     setError("");
   }
 
@@ -218,6 +221,12 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
       const receipt = await apiClient.get(`/recibos/${receiptId}`);
       if (mode === "print") {
         printReceipt(receipt, { party: selectedProvider?.name ?? "", copies: 1 });
+      } else if (mode === "support") {
+        if (receipt.supportData) {
+          await openSupportData(receipt.supportData);
+        } else {
+          setReceiptEdit({ receipt, error: "Este recibo no tiene soporte. Puedes adjuntarlo y guardar." });
+        }
       } else {
         setReceiptEdit({ receipt, error: "" });
       }
@@ -441,7 +450,7 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
               onPrint={(receiptId) => openReceipt(receiptId, "print")}
               onEdit={(receiptId) => openReceipt(receiptId, "edit")}
               onSupport={(receiptId) =>
-                viewReceiptSupport(receiptId).catch((requestError) =>
+                openReceipt(receiptId, "support").catch((requestError) =>
                   setError(requestError.message),
                 )
               }
@@ -469,6 +478,9 @@ export function AccountsPayableWindow({ onClose, onRequestLogin, canAccess }) {
               }))}
               initialId={paymentFlow.orderId}
               bankAccounts={bankAccounts}
+              initialDocumentNumber={paymentFlow.documentNumber}
+              initialDetail={`Pago de cuenta · ${selectedProvider.name}${payableOrders.length === 1 ? ` · ${payableOrders[0].consecutive ?? ""}` : ""}`}
+              initialOperationType="Pago a proveedor"
               totalLabel="Total debitado"
               mode="payment"
               onClose={() => {

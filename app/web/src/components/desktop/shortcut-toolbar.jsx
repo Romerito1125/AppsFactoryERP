@@ -124,12 +124,18 @@ function ToolbarGroup({
                             "reports",
                           ].includes(item.action)
                         ? () => onOpenBanksView?.(item.action)
-                        : item.action === "billing" ||
-                            item.action === "returns" ||
-                            item.action === "quotes" ||
-                            item.action === "orders" ||
-                            item.action === "deliveries" ||
-                            item.action === "reports"
+                        : [
+                              "billing",
+                              "print-invoices",
+                              "returns",
+                              "returns-print",
+                              "delivery-returns",
+                              "quotes",
+                              "orders",
+                              "delivery-notes",
+                              "deliveries",
+                              "reports",
+                            ].includes(item.action)
                           ? () => onOpenSalesView?.(item.action)
                           : undefined;
 

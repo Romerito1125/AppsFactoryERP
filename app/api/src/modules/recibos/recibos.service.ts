@@ -148,6 +148,7 @@ export class RecibosService {
       debit: number;
       credit: number;
       creditId?: number;
+      invoiceId?: number;
       paymentId?: number;
       receiptId?: number;
       voided?: boolean;
@@ -176,12 +177,13 @@ export class RecibosService {
         debit: originalAmount,
         credit: 0,
         creditId: credit.id,
+        invoiceId: credit.invoice?.id,
         docAmount: originalAmount,
         docBalance: round(Number(credit.balance)),
         dueDate: credit.dueDate,
       });
       for (const payment of credit.payments) {
-        const paid = round(Number(payment.amount) + Number(payment.retention));
+        const paid = round(Number(payment.amount));
         const voided = payment.receipt?.status === ReceiptStatus.ANULADO;
         rows.push({
           key: `p${payment.id}`,
@@ -458,7 +460,16 @@ export class RecibosService {
     if (!dto.clientId) throw new BadRequestException('Selecciona el cliente');
     const created = await this.prisma.$transaction(
       async (tx) => {
-        const client = await tx.client.findUnique({ where: { id: dto.clientId } });
+        const client = await tx.client.findUnique({
+          where: { id: dto.clientId },
+          include: {
+            retention: {
+              include: {
+                ranges: { orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }] },
+              },
+            },
+          },
+        });
         if (!client) throw new NotFoundException('Cliente no encontrado');
         await this.ensureDocumentFree(tx, ReceiptKind.COBRO, dto.documentNumber);
 
@@ -470,25 +481,34 @@ export class RecibosService {
         let total = 0;
         let retentionTotal = 0;
         const allocations: Array<Record<string, unknown>> = [];
+        const normalizedLines = [] as Array<{
+          creditId: number;
+          amount: number;
+          retention: number;
+        }>;
         for (const line of lines) {
           const credit = credits.find((item) => item.id === line.creditId);
           if (!credit) {
             throw new BadRequestException('Un documento no pertenece a este cliente');
           }
-          const retention = round(line.retention ?? 0);
           const balance = Number(credit.balance);
-          if (line.amount + retention > balance + TOLERANCE) {
+          const normalized = this.resolveCollectionLine(
+            Number(line.amount),
+            client.retention,
+          );
+          if (normalized.amount > balance + TOLERANCE) {
             throw new BadRequestException(
-              `El abono más la retención supera el saldo pendiente (${balance.toFixed(2)})`,
+              `El abono supera el saldo pendiente (${balance.toFixed(2)})`,
             );
           }
-          total += line.amount;
-          retentionTotal += retention;
+          total += normalized.amount;
+          retentionTotal += normalized.retention;
+          normalizedLines.push({ creditId: credit.id, ...normalized });
           allocations.push({
             creditId: credit.id,
             number: credit.invoice?.consecutive ?? `CR-${credit.id}`,
-            amount: line.amount,
-            retention,
+            amount: normalized.amount,
+            retention: normalized.retention,
           });
         }
         total = round(total);
@@ -531,9 +551,9 @@ export class RecibosService {
           },
         });
 
-        for (const line of lines) {
+        for (const line of normalizedLines) {
           const credit = credits.find((item) => item.id === line.creditId)!;
-          const retention = round(line.retention ?? 0);
+          const retention = line.retention;
           await tx.creditPayment.create({
             data: {
               invoiceCreditId: credit.id,
@@ -545,14 +565,13 @@ export class RecibosService {
               paidAt: receipt.paidAt,
             },
           });
-          const nextBalance = Math.max(
-            0,
-            round(Number(credit.balance) - line.amount - retention),
-          );
+          // La retención queda registrada para contabilidad, pero no se suma
+          // al efectivo recibido ni genera un cobro adicional a la factura.
+          const nextBalance = Math.max(0, round(Number(credit.balance) - line.amount));
           await tx.invoiceCredit.update({
             where: { id: credit.id },
             data: {
-              paidAmount: { increment: line.amount + retention },
+              paidAmount: { increment: line.amount },
               balance: nextBalance,
               status: nextBalance === 0 ? CreditStatus.PAGADA : CreditStatus.PARCIAL,
             },
@@ -757,12 +776,10 @@ export class RecibosService {
           const credit = await tx.invoiceCredit.findUniqueOrThrow({
             where: { id: payment.invoiceCreditId },
           });
-          const restored = round(
-            Number(credit.balance) + Number(payment.amount) + Number(payment.retention),
-          );
+          const restored = round(Number(credit.balance) + Number(payment.amount));
           const paidAmount = Math.max(
             0,
-            round(Number(credit.paidAmount) - Number(payment.amount) - Number(payment.retention)),
+            round(Number(credit.paidAmount) - Number(payment.amount)),
           );
           await tx.invoiceCredit.update({
             where: { id: credit.id },
@@ -817,6 +834,36 @@ export class RecibosService {
       line.amount = round(Number(line.amount));
     }
     return lines;
+  }
+
+  /** Calcula la retención informativa sobre el monto bruto recibido. */
+  private resolveCollectionLine(
+    amountInput: number,
+    retention: {
+      isActive: boolean;
+      ranges: Array<{ minimum: unknown; maximum: unknown; percentage: unknown }>;
+    } | null,
+  ) {
+    const amount = round(amountInput);
+    const rate = this.retentionRateFor(retention, amount);
+    const calculatedRetention = round((amount * rate) / 100);
+    return { amount, retention: calculatedRetention };
+  }
+
+  private retentionRateFor(
+    retention: {
+      isActive: boolean;
+      ranges: Array<{ minimum: unknown; maximum: unknown; percentage: unknown }>;
+    } | null,
+    base: number,
+  ) {
+    if (!retention?.isActive) return 0;
+    const match = retention.ranges.find((range) => {
+      const minimum = Number(range.minimum);
+      const maximum = Number(range.maximum);
+      return base >= minimum && base <= maximum;
+    });
+    return Math.min(99.99, Math.max(0, Number(match?.percentage ?? 0)));
   }
 
   /** Efectivo + instrumentos de pago deben desglosar exactamente el total. */

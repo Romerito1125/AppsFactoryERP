@@ -512,7 +512,12 @@ export class ClientesService {
         isActive: true,
       },
     },
-  } as const;
+    retention: {
+      include: {
+        ranges: true,
+      },
+    },
+  };
 
   private buildReferralCode(firstName: string, id: number) {
     const prefix = firstName

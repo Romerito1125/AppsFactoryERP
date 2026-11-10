@@ -70,14 +70,14 @@ describe('RecibosService.createCollection', () => {
       actor,
     );
     expect(Number(receipt.totalAmount)).toBe(80_000);
-    expect(Number(receipt.retentionTotal)).toBe(5_000);
+    expect(Number(receipt.retentionTotal)).toBe(0);
     expect(tx.bankAccountMovement.create).toHaveBeenCalledTimes(2);
     expect(tx.creditPayment.create).toHaveBeenCalledTimes(2);
-    // 50.000 - 20.000 abono - 5.000 retención = 25.000
+    // La retención es informativa y no reduce el saldo de la factura.
     expect(tx.invoiceCredit.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 2 },
-        data: expect.objectContaining({ balance: 25_000, status: 'PARCIAL' }),
+        data: expect.objectContaining({ balance: 30_000, status: 'PARCIAL' }),
       }),
     );
   });
@@ -97,14 +97,14 @@ describe('RecibosService.createCollection', () => {
     expect(tx.bankAccountMovement.create).not.toHaveBeenCalled();
   });
 
-  it('rechaza abonar más que el saldo (incluida la retención)', async () => {
+  it('rechaza abonar más que el saldo', async () => {
     const { service } = setup({ credits: [credit(1, 100_000)] });
     await expect(
       service.createCollection(
         {
           ...base,
-          allocations: [{ creditId: 1, amount: 99_000, retention: 2_000 }],
-          instruments: [{ bankAccountId: 2, amount: 99_000 }],
+          allocations: [{ creditId: 1, amount: 100_001, retention: 2_000 }],
+          instruments: [{ bankAccountId: 2, amount: 100_001 }],
         },
         actor,
       ),

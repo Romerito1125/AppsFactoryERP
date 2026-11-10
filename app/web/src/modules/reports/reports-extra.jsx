@@ -182,7 +182,7 @@ export function CrossSalesReport({ invoices, inPeriod, warehouses }) {
 /** #38 · Cierre del día: lo que suma y lo que no suma en caja. */
 export function DayCloseReport() {
   const [date, setDate] = useState(() => new Date().toLocaleDateString("en-CA"));
-  const [data, setData] = useState({ loading: true, invoices: [], advances: [], returns: [], movements: [] });
+  const [data, setData] = useState({ loading: true, invoices: [], advances: [], returns: [], movements: [], notes: [] });
 
   useEffect(() => {
     let cancelled = false;
@@ -191,10 +191,11 @@ export function DayCloseReport() {
       apiClient.getAllPages("/anticipos"),
       apiClient.getAllPages("/devoluciones"),
       apiClient.getAllPages("/movimientos-bancarios"),
+      apiClient.getAllPages("/notas"),
     ]).then((results) => {
       if (cancelled) return;
-      const [invoices, advances, returns, movements] = results.map((r) => (r.status === "fulfilled" ? r.value : []));
-      setData({ loading: false, invoices, advances, returns, movements });
+      const [invoices, advances, returns, movements, notes] = results.map((r) => (r.status === "fulfilled" ? r.value : []));
+      setData({ loading: false, invoices, advances, returns, movements, notes });
     });
     return () => { cancelled = true; };
   }, []);
@@ -204,6 +205,8 @@ export function DayCloseReport() {
     const invoices = data.invoices.filter((i) => same(i.createdAt) && i.status !== "ANULADA");
     const creditSales = invoices.filter((i) => i.credit != null);
     const advancesApplied = data.advances.filter((a) => same(a.updatedAt) && Number(a.appliedAmount ?? 0) > 0);
+    const availableAdvances = data.advances.filter((a) => a.status === "DISPONIBLE" && Number(a.balance ?? 0) > 0);
+    const notes = data.notes.filter((note) => same(note.issuedAt) && note.status !== "ANULADO");
     const mv = data.movements.filter((m) => same(m.createdAt ?? m.movementDate));
     const sum = (rows, key) => rows.reduce((total, row) => total + Number(row[key] ?? 0), 0);
     const desc = (m) => m.description ?? "";
@@ -216,10 +219,20 @@ export function DayCloseReport() {
     const otherIn = income.filter((m) => !salesIn.includes(m) && !collections.includes(m) && !advancesIn.includes(m));
     const returns = expense.filter((m) => /^Devoluci/i.test(desc(m)));
     const supplier = expense.filter((m) => /^Pago compra/i.test(desc(m)) && !isGmf(m));
+    const supplierAdvances = expense.filter((m) => /^Anticipo proveedor/i.test(desc(m)));
     const gmf = expense.filter(isGmf);
     const voids = expense.filter((m) => /^Anulaci/i.test(desc(m)));
-    const otherOut = expense.filter((m) => ![...returns, ...supplier, ...gmf, ...voids].includes(m));
+    const otherOut = expense.filter((m) => ![...returns, ...supplier, ...supplierAdvances, ...gmf, ...voids].includes(m));
     const neg = (rows) => 0 - sum(rows, "amount");
+    const receivableNotes = notes.filter((note) => note.side === "COBRAR");
+    const payableNotes = notes.filter((note) => note.side === "PAGAR");
+    const noteImpact = (rows, side) => rows.reduce((total, note) => {
+      const amount = Number(note.amount ?? 0);
+      const sign = side === "PAGAR" ? -1 : 1;
+      if (note.kind === "DEBITO") return total + amount * sign;
+      if (note.kind === "CREDITO") return total - amount * sign;
+      return total;
+    }, 0);
     return [
       ["Ventas cobradas (recaudo)", salesIn.length, sum(salesIn, "amount"), "SUMA"],
       ["Cobros de cartera", collections.length, sum(collections, "amount"), "SUMA"],
@@ -227,11 +240,15 @@ export function DayCloseReport() {
       ["Otros ingresos", otherIn.length, sum(otherIn, "amount"), "SUMA"],
       ["Devoluciones", returns.length, neg(returns), "RESTA"],
       ["Pagos a proveedores", supplier.length, neg(supplier), "RESTA"],
+      ["Anticipos a proveedores", supplierAdvances.length, neg(supplierAdvances), "RESTA"],
       ["4x1000 (GMF)", gmf.length, neg(gmf), "RESTA"],
       ["Anulaciones de recibos", voids.length, neg(voids), "RESTA"],
       ["Otros egresos", otherOut.length, neg(otherOut), "RESTA"],
       ["Ventas a crédito (no entra dinero)", creditSales.length, sum(creditSales, "total"), "NO SUMA"],
       ["Anticipos aplicados a ventas", advancesApplied.length, sum(advancesApplied, "appliedAmount"), "NO SUMA"],
+      ["Ajustes de cartera (notas débito/crédito)", receivableNotes.length, noteImpact(receivableNotes, "COBRAR"), "NO SUMA"],
+      ["Ajustes de proveedores (notas débito/crédito)", payableNotes.length, noteImpact(payableNotes, "PAGAR"), "NO SUMA"],
+      ["Saldo a favor disponible al cierre", availableAdvances.length, sum(availableAdvances, "balance"), "NO SUMA"],
       ["Transferencias entre cuentas", mv.filter((m) => /TRANSFERENCIA/.test(m.movementType)).length, 0, "NO SUMA"],
     ];
   }, [data, date]);

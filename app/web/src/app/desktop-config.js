@@ -5,6 +5,7 @@ import {
   FileText,
   Package,
   ReceiptText,
+  RotateCcw,
   ShoppingCart,
   ClipboardList,
   Landmark,
@@ -52,8 +53,15 @@ export const moduleMenuItems = [
 
 export const salesMenuItems = [
   { label: "Facturación", action: "billing", permission: "SALES_CREATE" },
+  { label: "Imprimir facturas", action: "print-invoices", permission: "SALES_CREATE" },
+  { label: "Devoluciones de venta", action: "returns", permission: "RETURNS_VIEW" },
+  { label: "Imprimir devoluciones", action: "returns-print", permission: "RETURNS_VIEW" },
+  { divider: true },
   { label: "Cotizaciones", action: "quotes", permission: "SALES_CREATE" },
   { label: "Pedidos y domicilios", action: "orders", permission: "SALES_CREATE" },
+  { label: "Notas de entrega", action: "delivery-notes", permission: "SALES_CREATE" },
+  { label: "Devolución de nota de entrega (Dev.N.E.)", action: "delivery-returns", permission: "RETURNS_VIEW" },
+  { divider: true },
   { label: "Reportes", action: "reports", permission: "SALES_CREATE" },
 ];
 
@@ -109,6 +117,13 @@ export const salesToolbarItems = [
     tone: "blue",
     action: "billing",
     permission: "SALES_CREATE",
+  },
+  {
+    label: "Devolución",
+    icon: RotateCcw,
+    tone: "red",
+    action: "returns",
+    permission: "RETURNS_VIEW",
   },
   {
     label: "Cotizaciones",

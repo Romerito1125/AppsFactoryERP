@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import "./account-panels.css";
 import { formatCop } from "@/lib/cop";
+import { toDateInputLocal } from "@/lib/date-input";
 
 const round = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
@@ -25,8 +26,7 @@ const longDate = (value) =>
     : "";
 
 const toInput = (date) => {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 10);
+  return toDateInputLocal(date);
 };
 
 /* ------------------------------- Operaciones ------------------------------- */
@@ -49,7 +49,7 @@ export function AccountOperations({
     ["Giros o cuotas", onSchedule],
     ["Notas de débito", onDebitNotes],
     ["Pagos y abonos", onPayment],
-    [kind === "cobrar" ? "Notas crédito / Anticipos" : "Notas débito / Anticipos", onAdvances],
+    [kind === "cobrar" ? "Anticipos y saldos a favor" : "Anticipos a proveedores", onAdvances],
     ["Notas de crédito", onCreditNotes],
     ["Anular Notas crédito / Anticipos", onVoidNotes],
   ];
@@ -93,6 +93,10 @@ export function LedgerPanel({
   onEdit,
   onVoid,
   onSupport,
+  onInvoicePrint,
+  onInvoiceEdit,
+  onInvoiceSupport,
+  onInvoiceVoid,
   onError,
 }) {
   const [filter, setFilter] = useState("ALL");
@@ -127,9 +131,24 @@ export function LedgerPanel({
     if (filter === "ABONOS") return row.kind === "ABONO" || row.kind === "ANULACION";
     return true;
   });
+  useEffect(() => {
+    setSelectedKey((current) => {
+      if (current && rows.some((row) => row.key === current)) return current;
+      return rows.find((row) => row.kind === "ABONO" && row.receiptId)?.key ?? rows.at(-1)?.key ?? null;
+    });
+  }, [data, filter]);
   const selected =
     rows.find((row) => row.key === selectedKey) ?? rows[rows.length - 1] ?? null;
   const canAct = selected?.kind === "ABONO" && selected.receiptId;
+  const isInvoice = selected?.kind === "FACTURA" && selected.invoiceId;
+  const canPrint = Boolean(canAct || (isInvoice && onInvoicePrint));
+  const canInvoiceEdit = Boolean(isInvoice && onInvoiceEdit);
+  const canInvoiceSupport = Boolean(isInvoice && onInvoiceSupport);
+  const canInvoiceVoid = Boolean(isInvoice && onInvoiceVoid);
+  const actionHint = selected && !canAct
+    && !isInvoice
+    ? "Selecciona un movimiento PAG para imprimir, editar, ver soporte o anular."
+    : "";
 
   return (
     <div className="saint-panel" data-filter-key={filterKey}>
@@ -193,22 +212,43 @@ export function LedgerPanel({
       </div>
       <div className="saint-footer">
         <div className="saint-footer-actions">
-          <button type="button" disabled={!canAct} onClick={() => onPrint(selected.receiptId)}>
+          <button
+            type="button"
+            title={actionHint || (isInvoice ? "Imprimir factura" : "Imprimir recibo")}
+            disabled={!canPrint}
+            onClick={() => (isInvoice ? onInvoicePrint(selected.invoiceId) : onPrint(selected.receiptId))}
+          >
             Imprime
           </button>
-          <button type="button" disabled={!canAct || !canEdit || selected?.voided} onClick={() => onEdit(selected.receiptId)}>
+          <button
+            type="button"
+            title={!canEdit && (canAct || isInvoice) ? "Tu usuario no tiene permiso para editar documentos." : actionHint || (isInvoice ? "Editar número de factura" : "Editar recibo")}
+            disabled={(!canAct && !canInvoiceEdit) || !canEdit || selected?.voided}
+            onClick={() => (isInvoice ? onInvoiceEdit(selected.invoiceId) : onEdit(selected.receiptId))}
+          >
             Editar
           </button>
           {onSupport && (
-            <button type="button" disabled={!canAct} onClick={() => onSupport(selected.receiptId)}>
+            <button
+              type="button"
+              title={actionHint || (isInvoice ? "Ver soporte de pago de la factura" : "Ver o cargar soporte")}
+              disabled={!canAct && !canInvoiceSupport}
+              onClick={() => (isInvoice ? onInvoiceSupport(selected.invoiceId) : onSupport(selected.receiptId))}
+            >
               Soporte
             </button>
           )}
           {onVoid && (
-            <button type="button" disabled={!canAct || !canVoid || selected?.voided} onClick={() => onVoid(selected.receiptId)}>
+            <button
+              type="button"
+              title={!canVoid && (canAct || isInvoice) ? "Tu usuario no tiene permiso para anular documentos." : actionHint || (isInvoice ? "Anular factura" : "Anular recibo")}
+              disabled={(!canAct && !canInvoiceVoid) || !canVoid || selected?.voided}
+              onClick={() => (isInvoice ? onInvoiceVoid(selected.invoiceId, selected.number) : onVoid(selected.receiptId))}
+            >
               Anular
             </button>
           )}
+          {actionHint && <span className="saint-footer-hint">{actionHint}</span>}
           <span className="saint-footer-doc">
             {selected ? rowLabel(selected) : ""}
           </span>

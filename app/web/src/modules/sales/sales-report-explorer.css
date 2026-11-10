@@ -1,0 +1,131 @@
+/* Explorador de ventas: filtros de todos los datos, ranking y cruce de dos dimensiones. */
+
+.sales-explorer {
+  display: grid;
+  gap: 12px;
+}
+
+.sales-explorer-filters {
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)) !important;
+}
+
+.sales-explorer-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.sales-explorer-kpis > div {
+  display: grid;
+  gap: 4px;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid #d4dce6;
+  border-top: 3px solid #2f6aa6;
+  border-radius: 4px;
+}
+
+.sales-explorer-kpis span {
+  color: #5b6b7d;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.sales-explorer-kpis strong {
+  color: #16263a;
+  font-size: 18px;
+}
+
+.sales-explorer-card {
+  display: grid;
+  gap: 10px;
+}
+
+.sales-explorer-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.sales-explorer-controls label {
+  display: grid;
+  gap: 3px;
+  min-width: 200px;
+}
+
+.sales-explorer-controls label > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #3c4a5a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sales-explorer-controls select {
+  height: 30px;
+  padding: 0 6px;
+}
+
+.sales-explorer-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  margin-left: auto;
+  padding: 0 12px;
+  background: #f7f7f7;
+  border: 1px solid #b5bec8;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.sales-explorer-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sales-explorer-presets button {
+  padding: 4px 10px;
+  color: #1d4f82;
+  font-size: 13px;
+  background: #eef4fb;
+  border: 1px solid #b9cde3;
+  border-radius: 14px;
+  cursor: pointer;
+}
+
+.sales-explorer-presets button.is-active {
+  color: #fff;
+  background: #2f6aa6;
+  border-color: #2f6aa6;
+}
+
+.sales-explorer-table th,
+.sales-explorer-table td {
+  white-space: nowrap;
+}
+
+.sales-explorer-heat {
+  background: rgba(47, 106, 166, var(--heat, 0));
+}
+
+.sales-explorer-share {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 90px;
+  gap: 6px;
+}
+
+.sales-explorer-share i {
+  display: inline-block;
+  max-width: 50px;
+  height: 6px;
+  background: #2f6aa6;
+  border-radius: 3px;
+}

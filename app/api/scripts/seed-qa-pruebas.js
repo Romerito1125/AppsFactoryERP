@@ -31,6 +31,14 @@ const list = async (path, params = '') => {
 const log = (msg) => console.log(msg);
 const summary = [];
 
+// ensure() solo crea; reconcile() corrige los campos que la guía de Compras necesita en registros que ya existían.
+async function reconcile(label, item, path, desired) {
+  const drift = Object.entries(desired).filter(([key, value]) => (typeof value === 'number' ? Number(item[key]) !== value : item[key] !== value));
+  if (!drift.length) return;
+  await api('PATCH', `${path}/${item.id}`, Object.fromEntries(drift));
+  log(`~ ${label}: ${drift.map(([key, value]) => `${key}=${value}`).join(', ')}`);
+}
+
 async function ensure(label, finder, creator) {
   let item = await finder();
   if (item) { log(`= ${label} (ya existía)`); return item; }
@@ -76,6 +84,9 @@ async function ensure(label, finder, creator) {
   const provRet = await prov('QA Proveedor con retencion', { hasIslrWithholding: true, withholdingType: 'Retefuente 2.5%', withholdingRate: 2.5, withholdingMinimumBase: 100000 });
   const provSin = await prov('QA Proveedor sin retencion', {});
   const provAuto = await prov('QA Proveedor autorretenedor', { hasIslrWithholding: true, isSelfWithholding: true, withholdingRate: 2.5 });
+  await reconcile('Proveedor QA con retencion', provRet, '/proveedores', { hasIslrWithholding: true, isSelfWithholding: false, withholdingType: 'Retefuente 2.5%', withholdingRate: 2.5, withholdingMinimumBase: 100000, isActive: true });
+  await reconcile('Proveedor QA sin retencion', provSin, '/proveedores', { hasIslrWithholding: false, isSelfWithholding: false, isActive: true });
+  await reconcile('Proveedor QA autorretenedor', provAuto, '/proveedores', { hasIslrWithholding: true, isSelfWithholding: true, withholdingRate: 2.5, isActive: true });
 
   // ---- Tipo de producto
   const types = await list('/tipos-producto');
@@ -109,6 +120,8 @@ async function ensure(label, finder, creator) {
   await stock(pSolo, norte, 40); // sin stock en Sur: prueba de "otra bodega"
   await stock(pFalta, norte, 50);
   await stock(pFalta, sur, 3); // bajo el mínimo (10): genera traslado sugerido desde Norte
+  await reconcile('Producto QA Gaseosa IVA 19', pIva19, '/productos', { taxRate: 19, providerId: provRet.id, isActive: true });
+  await reconcile('Producto QA Aceite IVA 5', pIva5, '/productos', { taxRate: 5, providerId: provSin.id, isActive: true });
 
   // ---- Clientes
   const clients = await list('/clientes', 'estado=activos');
@@ -124,6 +137,8 @@ async function ensure(label, finder, creator) {
     () => api('POST', '/cuentas-bancarias', { name, bankName: 'QA Banco', accountNumber: `QA-${name.replace(/\W/g, '').slice(0, 10)}`, accountType: 'CORRIENTE', currentBalance: 3000000, ...extra }));
   const caja = await bank('QA Caja efectivo', {});
   const gmf = await bank('QA Banco con 4x1000', { autoGmf: true });
+  await reconcile('Cuenta QA Caja efectivo', caja, '/cuentas-bancarias', { isActive: true });
+  await reconcile('Cuenta QA Banco con 4x1000', gmf, '/cuentas-bancarias', { autoGmf: true, isActive: true });
 
   const out = {
     password: PASSWORD,

@@ -24,6 +24,7 @@ import {
 import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { TransientMessage } from "@/components/desktop/transient-message";
 import { apiClient } from "@/lib/api-client";
+import { toDateInputLocal } from "@/lib/date-input";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import "./banks-reports.css";
 import { formatCop, readCopInput } from "@/lib/cop";
@@ -1241,7 +1242,7 @@ function formatDate(value) {
 }
 
 function todayValue() {
-  return new Date().toISOString().slice(0, 10);
+  return toDateInputLocal();
 }
 
 function isAuthError(error) {

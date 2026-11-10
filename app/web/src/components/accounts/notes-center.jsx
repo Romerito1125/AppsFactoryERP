@@ -6,12 +6,13 @@ import { shortDate } from "./account-panels";
 import { CopInput } from "@/components/money/cop-input";
 import "./notes-center.css";
 import { formatCop, readCopInput } from "@/lib/cop";
+import { dateInputToIso } from "@/lib/date-input";
 
 const TITLES = {
   cobrar: {
     debito: "NOTAS DE DÉBITO",
     credito: "NOTAS DE CRÉDITO",
-    anticipo: "NOTAS CRÉDITO / ANTICIPOS",
+    anticipo: "ANTICIPOS Y SALDOS A FAVOR",
     anular: "ANULAR NOTAS CRÉDITO / ANTICIPOS",
   },
   pagar: {
@@ -176,7 +177,7 @@ export function NotesCenter({
         ...(side === "cobrar" && form.documentId ? { creditId: Number(form.documentId) } : {}),
         ...(side === "pagar" && form.documentId ? { purchaseOrderId: Number(form.documentId) } : {}),
         ...(side === "cobrar" && mode === "debito" && form.dueDate
-          ? { dueDate: new Date(`${form.dueDate}T00:00:00`).toISOString() }
+          ? { dueDate: dateInputToIso(form.dueDate) }
           : {}),
         ...(needsBank ? { bankAccountId: Number(form.bankAccountId) } : {}),
       });

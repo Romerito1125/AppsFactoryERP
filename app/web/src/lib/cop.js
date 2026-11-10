@@ -54,6 +54,17 @@ export function formatCop(value) {
   return `${sign}${CURRENCY_PREFIX}${groupThousands(String(Math.abs(amount)))}`;
 }
 
+// Formato de cartera: conserva hasta dos decimales cuando el saldo los tiene.
+export function formatCopExact(value) {
+  const amount = Math.round((Number(value) || 0) * 100) / 100;
+  const decimals = Number.isInteger(amount) ? 0 : 2;
+  const formatted = new Intl.NumberFormat("es-CO", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: 2,
+  }).format(Math.abs(amount));
+  return `${amount < 0 ? "-" : ""}$ ${formatted}`;
+}
+
 // Posición del cursor en el texto formateado, dado cuántos dígitos había a su izquierda.
 export function caretFromDigitCount(formatted, digitCount) {
   if (digitCount <= 0) return 0;

@@ -1,8 +1,8 @@
 import { apiClient } from "@/lib/api-client";
 
-// Soportes (imagen o PDF) de recibos y abonos. Máximo ~3 MB en el navegador;
-// el API acepta hasta ~4 MB en base64.
-export const MAX_SUPPORT_BYTES = 3 * 1024 * 1024;
+// Soportes (imagen o PDF) de recibos y abonos. Dejamos margen para la
+// conversión Base64 y el resto del JSON antes del límite de 24 MB de la API.
+export const MAX_SUPPORT_BYTES = 5 * 1024 * 1024;
 
 export function readSupportFile(file) {
   return new Promise((resolve, reject) => {
@@ -11,7 +11,7 @@ export function readSupportFile(file) {
       return reject(new Error("El soporte debe ser una imagen o un PDF."));
     }
     if (file.size > MAX_SUPPORT_BYTES) {
-      return reject(new Error("El soporte no puede superar 3 MB."));
+      return reject(new Error("El soporte no puede superar 5 MB."));
     }
     const reader = new FileReader();
     reader.onload = () =>

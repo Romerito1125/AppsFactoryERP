@@ -139,8 +139,11 @@ async function request(path, options = {}, params, allowRefresh = true) {
   if (response.status === 401 && !session?.accessToken && !isAuthPath(path)) {
     throw new Error("Necesitas iniciar sesión para realizar esta acción.");
   }
-  if (!response.ok)
+  if (!response.ok) {
+    if (response.status === 413)
+      throw new Error("La solicitud es demasiado grande. Si adjuntaste soporte, usa una imagen o PDF de hasta 5 MB.");
     throw new Error(errorMessage(payload, "No se pudo completar la solicitud"));
+  }
   return payload;
 }
 

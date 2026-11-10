@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { apiClient } from "@/lib/api-client";
+import { dateInputToIso, toDateInputLocal } from "@/lib/date-input";
 import {
   activeSalePrices,
   calculateLineTotals,
@@ -43,6 +44,7 @@ const PRICE_LEVELS = [0, 1, 2, 3];
 const POS_CLIENT_STORAGE_KEY = "mmm-pos-client-id";
 const POS_WAREHOUSE_STORAGE_KEY = "mmm-pos-warehouse-id";
 const POS_SELLER_STORAGE_KEY = "mmm-pos-seller-id";
+const POS_CASHIER_STORAGE_KEY = "mmm-pos-cashier-id";
 
 export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
   const [clients, setClients] = useState([]);
@@ -50,12 +52,14 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
   const [warehouses, setWarehouses] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
   const [sellers, setSellers] = useState([]);
+  const [cashiers, setCashiers] = useState([]);
   const [favoriteIds, setFavoriteIds] = useState([]);
   const [offerPrices, setOfferPrices] = useState({});
   const [offerPricingLoading, setOfferPricingLoading] = useState(false);
   const [selectedClientId, setSelectedClientId] = useState(() => readStoredSelection(POS_CLIENT_STORAGE_KEY));
   const [selectedWarehouseId, setSelectedWarehouseId] = useState(() => readStoredSelection(POS_WAREHOUSE_STORAGE_KEY));
   const [selectedSellerId, setSelectedSellerId] = useState(() => readStoredSelection(POS_SELLER_STORAGE_KEY));
+  const [selectedCashierId, setSelectedCashierId] = useState(() => readStoredSelection(POS_CASHIER_STORAGE_KEY));
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [selectedPriceLevel, setSelectedPriceLevel] = useState("0");
   const [saleMode, setSaleMode] = useState("CONTADO");
@@ -121,6 +125,15 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
         const nextSellerId = String(preferredSeller?.id ?? "");
         setSelectedSellerId(nextSellerId);
         persistSelection(POS_SELLER_STORAGE_KEY, nextSellerId);
+        const nextCashiers = nextSellers.filter((user) => ["ADMIN", "CAJERO"].includes(user.role));
+        setCashiers(nextCashiers);
+        const storedCashierId = readStoredSelection(POS_CASHIER_STORAGE_KEY);
+        const preferredCashier = nextCashiers.find((user) => String(user.id) === String(storedCashierId))
+          ?? nextCashiers.find((user) => String(user.id) === String(currentUserId))
+          ?? nextCashiers[0];
+        const nextCashierId = String(preferredCashier?.id ?? "");
+        setSelectedCashierId(nextCashierId);
+        persistSelection(POS_CASHIER_STORAGE_KEY, nextCashierId);
       }
       if (favoritesResult.status === "fulfilled") setFavoriteIds(favoritesResult.value.map((product) => String(product.id)));
 
@@ -330,6 +343,11 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
     persistSelection(POS_SELLER_STORAGE_KEY, nextSellerId);
   }
 
+  function handleCashierChange(nextCashierId) {
+    setSelectedCashierId(String(nextCashierId));
+    persistSelection(POS_CASHIER_STORAGE_KEY, nextCashierId);
+  }
+
   function addProduct(product) {
     const price = priceForClient(product, selectedClient, selectedPriceLevel);
     if (!price) {
@@ -424,6 +442,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
   async function saveInvoice() {
     if (!cart.length) return setError("Agrega al menos un producto para facturar.");
     if (!selectedSellerId) return setError("Selecciona quién realiza la venta.");
+    if (!selectedCashierId) return setError("Selecciona el cajero que registra la venta.");
     if (saleMode === "CONTADO" && !selectedAccountId) return setError("Selecciona una cuenta de recaudo.");
     if (saleMode === "CREDITO" && !hasCreditCapacity(selectedClient)) return setError("Configura el crédito y su límite en la ficha del cliente para vender a crédito.");
     if (saleMode === "CREDITO" && !creditDueDate) return setError("Selecciona la fecha de vencimiento.");
@@ -432,11 +451,12 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
     try {
       const invoice = await apiClient.post("/facturas", {
         clientId: selectedClientId ? Number(selectedClientId) : undefined,
-        createdByUserId: Number(selectedSellerId),
+        sellerUserId: Number(selectedSellerId),
+        cashierUserId: Number(selectedCashierId),
         warehouseId: selectedWarehouseId ? Number(selectedWarehouseId) : undefined,
         source: "POS",
         saleMode,
-        ...(saleMode === "CREDITO" ? { creditDueDate: new Date(`${creditDueDate}T00:00:00`).toISOString() } : {}),
+        ...(saleMode === "CREDITO" ? { creditDueDate: dateInputToIso(creditDueDate) } : {}),
         priceLevel: Number(selectedPriceLevel),
         items: cart.map((item) => ({
           productId: item.productId,
@@ -508,9 +528,11 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
             clients={clients}
             warehouses={warehouses}
             sellers={sellers}
+            cashiers={cashiers}
             selectedClientId={selectedClientId}
             selectedWarehouseId={selectedWarehouseId}
             selectedSellerId={selectedSellerId}
+            selectedCashierId={selectedCashierId}
             selectedAccountId={selectedAccountId}
             selectedWarehouse={selectedWarehouse}
             selectedPriceLevel={selectedPriceLevel}
@@ -537,6 +559,7 @@ export function PosWorkspace({ session, onRequestLogin, onOpenNotification }) {
             onWarehouseChange={handleWarehouseChange}
             onPriceLevelChange={handlePriceLevelChange}
             onSellerChange={handleSellerChange}
+            onCashierChange={handleCashierChange}
             onAccountChange={setSelectedAccountId}
             onSearch={setSearchTerm}
             onBarcode={setBarcode}
@@ -600,9 +623,11 @@ function BillingView({
   clients,
   warehouses,
   sellers,
+  cashiers,
   selectedClientId,
   selectedWarehouseId,
   selectedSellerId,
+  selectedCashierId,
   selectedAccountId,
   selectedWarehouse,
   selectedPriceLevel,
@@ -629,6 +654,7 @@ function BillingView({
   onWarehouseChange,
   onPriceLevelChange,
   onSellerChange,
+  onCashierChange,
   onAccountChange,
   onSearch,
   onBarcode,
@@ -657,6 +683,7 @@ function BillingView({
             <SearchableSelect label="Bodega / depósito" icon={<Warehouse size={14} />} value={selectedWarehouseId} onChange={onWarehouseChange} placeholder="Seleccionar depósito" options={warehouses.map((warehouse) => ({ value: warehouse.id, label: `${warehouseName(warehouse)}${warehouse.isDefault ? " · Predeterminado" : ""}` }))} />
             <SearchableSelect label="Precio general" icon={<Tag size={14} />} value={selectedPriceLevel} onChange={onPriceLevelChange} placeholder="Precio 0" options={PRICE_LEVELS.map((level) => ({ value: level, label: `Precio ${level}` }))} />
             <SearchableSelect label="Vendedor" icon={<UserRound size={14} />} value={selectedSellerId} onChange={onSellerChange} placeholder="Seleccionar vendedor" options={sellers.map((seller) => ({ value: seller.id, label: `${userName(seller)} · ${roleLabel(seller.role)}` }))} />
+            <SearchableSelect label="Cajero" icon={<UserRound size={14} />} value={selectedCashierId} onChange={onCashierChange} placeholder="Seleccionar cajero" options={cashiers.map((cashier) => ({ value: cashier.id, label: `${userName(cashier)} · ${roleLabel(cashier.role)}` }))} />
           </div>
           <div className="new-pos-search-row">
             <label className="new-pos-search-box"><Search size={17} /><input ref={searchRef} value={searchTerm} onChange={(event) => onSearch(event.target.value)} placeholder="Buscar producto por nombre, código o marca…" aria-label="Buscar productos" /><kbd>F2</kbd></label>
@@ -1011,7 +1038,7 @@ function persistSelection(key, value) {
 function defaultDueDate() {
   const date = new Date();
   date.setDate(date.getDate() + 15);
-  return date.toISOString().slice(0, 10);
+  return toDateInputLocal(date);
 }
 
 function hasCreditCapacity(client) {

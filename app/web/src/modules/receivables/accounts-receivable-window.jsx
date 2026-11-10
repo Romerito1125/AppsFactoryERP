@@ -11,10 +11,11 @@ import { useDraggableWindow } from "@/components/desktop/use-draggable-window";
 import { TransientMessage } from "@/components/desktop/transient-message";
 import { NotesCenter } from "@/components/accounts/notes-center";
 import { printReceipt } from "@/components/payments/print-receipt";
+import { printInvoiceTicket } from "@/lib/invoice-ticket";
 import { apiClient } from "@/lib/api-client";
 import { AdvancesPanel } from "./advances-panel";
-import { ReceiptEditDialog, VoidReceiptDialog } from "@/components/payments/receipt-dialogs";
-import { viewReceiptSupport } from "@/components/payments/support-file";
+import { InvoiceEditDialog, ReceiptEditDialog, VoidReceiptDialog } from "@/components/payments/receipt-dialogs";
+import { openSupportData } from "@/components/payments/support-file";
 import { CollectionFlow } from "./cobrar-panels";
 import { clientDisplayName } from "./receivable-utils";
 import { formatCop } from "@/lib/cop";
@@ -30,10 +31,12 @@ export function AccountsReceivableWindow({
   onClose,
   onRequestLogin,
   canAccess,
+  session,
 }) {
   const [clients, setClients] = useState([]);
   const [credits, setCredits] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
+  const [sellers, setSellers] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("operations");
@@ -43,6 +46,7 @@ export function AccountsReceivableWindow({
   const [collection, setCollection] = useState(null);
   const [receiptEdit, setReceiptEdit] = useState(null);
   const [receiptVoid, setReceiptVoid] = useState(null);
+  const [invoiceEdit, setInvoiceEdit] = useState(null);
   const [statementKey, setStatementKey] = useState(0);
   const [advancesOpen, setAdvancesOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -62,12 +66,14 @@ export function AccountsReceivableWindow({
       apiClient.getAllPages("/clientes", { estado: "todos" }),
       apiClient.getAllPages("/creditos"),
       apiClient.getAllPages("/cuentas-bancarias", { estado: "activos" }),
+      apiClient.get("/usuarios/vendedores"),
     ])
       .then(
         ([
           clientsResult,
           creditsResult,
           bankAccountsResult,
+          sellersResult,
         ]) => {
         if (cancelled) return;
         if (clientsResult.status === "rejected") throw clientsResult.reason;
@@ -91,6 +97,21 @@ export function AccountsReceivableWindow({
         setClients(nextClients);
         setCredits(nextCredits);
         setBankAccounts(bankItems);
+        setSellers(
+          sellersResult.status === "fulfilled"
+            ? sellersResult.value
+                .map((seller) => ({
+                  id: seller.id,
+                  username: seller.username,
+                  name:
+                    [seller.employee?.firstName, seller.employee?.lastName]
+                      .filter(Boolean)
+                      .join(" ")
+                      .trim() || seller.username || `Usuario #${seller.id}`,
+                }))
+                .filter((seller) => seller.username)
+            : [],
+        );
         const firstClientWithBalance = nextClients.find((client) =>
           nextCredits.some(
             (credit) =>
@@ -164,6 +185,9 @@ export function AccountsReceivableWindow({
 
   const selectedClient =
     clients.find((client) => client.id === selectedClientId) ?? null;
+  const isGlobalView = selectedClientId === "ALL";
+  const currentUsername = session?.user?.username ?? session?.username ?? "";
+  const currentSeller = sellers.find((seller) => seller.username === currentUsername) ?? sellers[0];
   const selectedClientIndex = filteredClients.findIndex(
     (client) => client.id === selectedClientId,
   );
@@ -175,9 +199,9 @@ export function AccountsReceivableWindow({
   const clientCredits = useMemo(
     () =>
       credits.filter(
-        (credit) => !selectedClientId || credit.clientId === selectedClientId,
+        (credit) => isGlobalView || !selectedClientId || credit.clientId === selectedClientId,
       ),
-    [credits, selectedClientId],
+    [credits, selectedClientId, isGlobalView],
   );
   const openCredits = clientCredits.filter((credit) =>
     credit.balance > 0 &&
@@ -187,7 +211,7 @@ export function AccountsReceivableWindow({
   );
   const balance = openCredits.reduce((sum, credit) => sum + credit.balance, 0);
   const clientAdvances = advances.filter(
-    (advance) => !selectedClientId || advance.clientId === selectedClientId,
+    (advance) => isGlobalView || !selectedClientId || advance.clientId === selectedClientId,
   );
   const advanceBalance =
     clientAdvances
@@ -199,17 +223,21 @@ export function AccountsReceivableWindow({
 
   const loadStatement = useCallback(
     (params) =>
-      selectedClient
+      selectedClient && !isGlobalView
         ? apiClient.get(`/recibos/estado-cuenta/cliente/${selectedClient.id}`, params)
         : Promise.resolve(null),
-    [selectedClient],
+    [selectedClient, isGlobalView],
+  );
+  const clientById = useMemo(
+    () => new Map(clients.map((client) => [client.id, client])),
+    [clients],
   );
   const pendingRows = openCredits.map((credit) => ({
     id: credit.id,
     number: credit.invoice?.consecutive ?? `CR-${String(credit.id).padStart(6, "0")}`,
-    detail: credit.invoice?.consecutive
+    detail: `${isGlobalView ? `${clientName(clientById.get(credit.clientId))} · ` : ""}${credit.invoice?.consecutive
       ? `FAC ${credit.invoice.consecutive}`
-      : "Crédito directo",
+      : "Crédito directo"}`,
     dueAt: credit.dueDate,
     issuedAt: credit.createdAt,
     amount: credit.totalAmount,
@@ -228,6 +256,10 @@ export function AccountsReceivableWindow({
   }
 
   function startPayment(credit = null) {
+    if (isGlobalView) {
+      setError("Selecciona un cliente específico para registrar un pago o abono.");
+      return;
+    }
     if (!selectedClient) return;
     if (!canEdit) {
       setError("Tu usuario no tiene permiso para registrar pagos y abonos.");
@@ -255,11 +287,68 @@ export function AccountsReceivableWindow({
           party: clientDisplayName(selectedClient),
           copies: 1,
         });
+      } else if (mode === "support") {
+        if (receipt.supportData) {
+          await openSupportData(receipt.supportData);
+        } else {
+          setReceiptEdit({ receipt, error: "Este recibo no tiene soporte. Puedes adjuntarlo y guardar." });
+        }
       } else {
         setReceiptEdit({ receipt, error: "" });
       }
     } catch (requestError) {
       setError(requestError.message);
+    }
+  }
+
+  async function openInvoice(invoiceId, mode) {
+    try {
+      const invoice = await apiClient.get(`/facturas/${invoiceId}`);
+      if (mode === "print") {
+        printInvoiceTicket(invoice);
+      } else if (mode === "support") {
+        try {
+          const support = await apiClient.get(`/facturas/${invoiceId}/soporte-pago`);
+          if (!support.supportData) throw new Error("La factura no tiene soporte de pago.");
+          await openSupportData(support.supportData);
+        } catch (requestError) {
+          setError(requestError.message);
+        }
+      } else {
+        setInvoiceEdit({ invoice, error: "" });
+      }
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function saveInvoiceEdit(changes) {
+    if (!invoiceEdit?.invoice?.id) return;
+    setSaving(true);
+    try {
+      await apiClient.patch(`/facturas/${invoiceEdit.invoice.id}`, changes);
+      setInvoiceEdit(null);
+      setStatementKey((key) => key + 1);
+      setNotice("Factura actualizada; el cambio quedó en la auditoría.");
+    } catch (requestError) {
+      setInvoiceEdit((current) => ({ ...current, error: requestError.message }));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function voidInvoice(invoiceId, number) {
+    if (!window.confirm(`¿Deseas anular la factura ${number}?`)) return;
+    setSaving(true);
+    try {
+      await apiClient.delete(`/facturas/${invoiceId}`);
+      await reloadCredits();
+      setStatementKey((key) => key + 1);
+      setNotice(`Factura ${number} anulada y existencias devueltas.`);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -365,6 +454,18 @@ export function AccountsReceivableWindow({
               <ChevronDown size={14} />
             </button>
           </div>
+          <button
+            type="button"
+            className={`receivable-global-button ${isGlobalView ? "is-active" : ""}`}
+            onClick={() => {
+              setSelectedClientId("ALL");
+              setCollection(null);
+              setActiveTab("pending");
+              setError("");
+            }}
+          >
+            Toda la cartera · vencimientos generales
+          </button>
           <div
             className="provider-table receivable-client-table"
             role="table"
@@ -418,14 +519,23 @@ export function AccountsReceivableWindow({
           <div className="payable-heading receivable-heading saint-heading">
             <div>
               <strong>
-                {selectedClient
+                {isGlobalView
+                  ? "TODA LA CARTERA · RESUMEN GENERAL"
+                  : selectedClient
                   ? `${selectedClient.identification} ${clientName(selectedClient)}`
                   : "Sin cliente seleccionado"}
               </strong>
-              <span>{selectedClient?.address ?? ""}</span>
-              <span>{selectedClient?.phone ?? ""}</span>
+              {isGlobalView ? (
+                <span>{clients.length} clientes con crédito o saldo pendiente · {openCredits.length} documentos abiertos</span>
+              ) : (
+                <>
+                  <span>{selectedClient?.address ?? ""}</span>
+                  <span>{selectedClient?.phone ?? ""}</span>
+                </>
+              )}
               <span className="saint-credit-limit">
-                Límite de crédito: <b>{formatCop(selectedClient?.maxCredit ?? 0)}</b>
+                {isGlobalView ? "Saldo total pendiente: " : "Límite de crédito: "}
+                <b>{formatCop(isGlobalView ? balance : selectedClient?.maxCredit ?? 0)}</b>
               </span>
             </div>
             <div className="payable-balance-grid">
@@ -450,7 +560,7 @@ export function AccountsReceivableWindow({
               </button>
             ))}
           </div>
-          {activeTab === "operations" && (
+          {activeTab === "operations" && !isGlobalView && (
             <AccountOperations
               kind="cobrar"
               onInvoices={() => setActiveTab("statement")}
@@ -462,8 +572,25 @@ export function AccountsReceivableWindow({
               onVoidNotes={() => setNotesMode("anular")}
             />
           )}
+          {activeTab === "operations" && isGlobalView && (
+            <GlobalReceivablesSummary
+              clients={clients}
+              rows={pendingRows}
+              total={balance}
+              onPending={() => setActiveTab("pending")}
+              onDue={() => setActiveTab("due")}
+            />
+          )}
           {activeTab === "statement" && (
-            <LedgerPanel
+            isGlobalView ? (
+              <GlobalReceivablesSummary
+                clients={clients}
+                rows={pendingRows}
+                total={balance}
+                onPending={() => setActiveTab("pending")}
+                onDue={() => setActiveTab("due")}
+              />
+            ) : <LedgerPanel
               key={selectedClient?.id ?? "none"}
               load={loadStatement}
               refreshKey={statementKey}
@@ -472,8 +599,12 @@ export function AccountsReceivableWindow({
               onPrint={(receiptId) => openReceipt(receiptId, "print")}
               onEdit={(receiptId) => openReceipt(receiptId, "edit")}
               onVoid={askVoid}
+              onInvoicePrint={(invoiceId) => openInvoice(invoiceId, "print")}
+              onInvoiceEdit={(invoiceId) => openInvoice(invoiceId, "edit")}
+              onInvoiceSupport={(invoiceId) => openInvoice(invoiceId, "support")}
+              onInvoiceVoid={voidInvoice}
               onSupport={(receiptId) =>
-                viewReceiptSupport(receiptId).catch((requestError) =>
+                openReceipt(receiptId, "support").catch((requestError) =>
                   setError(requestError.message),
                 )
               }
@@ -492,7 +623,7 @@ export function AccountsReceivableWindow({
             <div className="module-dialog-backdrop totalize-backdrop">
               <section className="module-dialog saint-advances-dialog" role="dialog" aria-modal="true">
                 <header className="module-dialog-titlebar">
-                  <strong>NOTAS CRÉDITO / ANTICIPOS · {selectedClient ? clientName(selectedClient) : ""}</strong>
+                  <strong>ANTICIPOS Y SALDOS A FAVOR · {selectedClient ? clientName(selectedClient) : ""}</strong>
                   <button type="button" aria-label="Cerrar" onClick={() => setAdvancesOpen(false)}>
                     <X size={17} />
                   </button>
@@ -555,6 +686,8 @@ export function AccountsReceivableWindow({
               credits={openCredits}
               initialCreditId={collection.creditId}
               bankAccounts={bankAccounts}
+              sellers={sellers}
+              sellerName={currentSeller?.username ?? ""}
               onClose={() => setCollection(null)}
               onDone={async (receipt) => {
                 setCollection(null);
@@ -572,6 +705,15 @@ export function AccountsReceivableWindow({
               saving={saving}
               onSave={saveReceiptEdit}
               onCancel={() => setReceiptEdit(null)}
+            />
+          )}
+          {invoiceEdit && (
+            <InvoiceEditDialog
+              invoice={invoiceEdit.invoice}
+              error={invoiceEdit.error}
+              saving={saving}
+              onSave={saveInvoiceEdit}
+              onCancel={() => setInvoiceEdit(null)}
             />
           )}
           {receiptVoid && (
@@ -631,6 +773,32 @@ function BalanceField({ label, value, muted, accent }) {
   );
 }
 
+function GlobalReceivablesSummary({ clients, rows, total, onPending, onDue }) {
+  const [today] = useState(() => Date.now());
+  const overdue = rows.filter((row) => row.dueAt && new Date(row.dueAt).getTime() < today);
+  const overdueTotal = overdue.reduce((sum, row) => sum + Number(row.balance || 0), 0);
+  const dueTotal = Math.max(0, Number(total || 0) - overdueTotal);
+  return (
+    <div className="saint-panel receivable-global-summary">
+      <div className="saint-ops-title">Resumen general de cuentas por cobrar</div>
+      <div className="receivable-global-kpis">
+        <div><span>Clientes con crédito o saldo</span><b>{clients.length}</b></div>
+        <div><span>Documentos pendientes</span><b>{rows.length}</b></div>
+        <div><span>Total pendiente</span><b>{formatCop(total)}</b></div>
+        <div className="is-danger"><span>Total vencido</span><b>{formatCop(overdueTotal)}</b></div>
+        <div className="is-success"><span>Total por vencer</span><b>{formatCop(dueTotal)}</b></div>
+      </div>
+      <p className="receivable-global-help">
+        Esta vista consolida todos los clientes. Usa <strong>Pendiente</strong> para ver cada factura y <strong>Vencimientos</strong> para el análisis por rangos.
+      </p>
+      <div className="receivable-global-actions">
+        <button type="button" className="primary-action" onClick={onPending}>Ver todos los documentos</button>
+        <button type="button" onClick={onDue}>Ver todos los vencimientos</button>
+      </div>
+    </div>
+  );
+}
+
 function mapClient(client) {
   return { ...client, id: Number(client.id) };
 }
@@ -645,6 +813,7 @@ function mapCredit(credit) {
   };
 }
 function clientName(client) {
+  if (!client) return "Cliente sin identificar";
   return (
     client.name ??
     ([client.firstName, client.lastName].filter(Boolean).join(" ") ||

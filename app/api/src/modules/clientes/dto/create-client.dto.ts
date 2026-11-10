@@ -8,6 +8,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsPositive,
   Max,
   Min,
   MinLength,
@@ -63,6 +64,12 @@ export class CreateClientDto {
   @IsCop()
   @Min(0, { message: 'El límite de crédito no puede ser negativo.' })
   maxCredit?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'La retención del cliente no es válida.' })
+  @IsPositive({ message: 'La retención del cliente no es válida.' })
+  retentionId?: number;
 
   @IsEnum(ClientType, { message: 'El tipo de cliente no es válido.' })
   clientType: ClientType;

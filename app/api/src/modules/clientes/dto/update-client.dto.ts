@@ -8,6 +8,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsPositive,
   Max,
   Min,
   MinLength,
@@ -70,6 +71,12 @@ export class UpdateClientDto {
   @IsCop()
   @Min(0, { message: 'El límite de crédito no puede ser negativo.' })
   maxCredit?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'La retención del cliente no es válida.' })
+  @IsPositive({ message: 'La retención del cliente no es válida.' })
+  retentionId?: number;
 
   @IsOptional()
   @IsEmail({}, { message: 'El correo no es válido.' })

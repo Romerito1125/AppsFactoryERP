@@ -1,0 +1,530 @@
+/* Ventana de devolución de ventas (SAINT-like): encabezado de campos, nota crédito naranja,
+   líneas de la factura, barra de teclas y historial siempre visible. */
+
+.returns-window {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+  overflow: auto;
+  font-size: 13px;
+  color: #1c1c1c;
+  background: #e9edf2;
+  outline: none;
+}
+
+.rw-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  gap: 10px;
+}
+
+.rw-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid #c4ccd4;
+}
+
+.rw-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.rw-field > span {
+  color: #4f5b67;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.rw-field > strong {
+  min-height: 26px;
+  padding: 4px 6px;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: #dfeaf5;
+  border: 1px solid #b7cbe0;
+}
+
+.rw-field > strong.is-credit {
+  color: #8a4b00;
+  background: #fff1d6;
+  border-color: #e5b96b;
+}
+
+.rw-field-wide {
+  grid-column: span 2;
+}
+
+.rw-pick {
+  display: flex;
+  gap: 6px;
+}
+
+.rw-pick strong {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: #dfeaf5;
+  border: 1px solid #b7cbe0;
+}
+
+.rw-totals {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 10px 12px;
+  color: #fff;
+  background: linear-gradient(#f7a13f, #e0791a);
+  border: 1px solid #c4670f;
+}
+
+.rw-totals p {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.rw-totals p b {
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-totals .rw-total {
+  padding-top: 4px;
+  font-size: 17px;
+  font-weight: 700;
+  border-top: 1px solid rgba(255, 255, 255, 0.75);
+}
+
+.rw-note-number {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+.rw-note-number strong {
+  font-size: 15px;
+}
+
+.rw-lines,
+.rw-history {
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #c4ccd4;
+}
+
+.rw-table-scroll {
+  overflow: auto;
+}
+
+.rw-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.rw-table td {
+  white-space: nowrap;
+}
+
+.rw-table td.rw-wrap {
+  min-width: 150px;
+  white-space: normal;
+}
+
+.invoice-print-window .rw-history-body {
+  max-height: none;
+  flex: 1;
+}
+
+.invoice-print-window {
+  height: 100%;
+}
+
+.rw-table th {
+  position: sticky;
+  top: 0;
+  padding: 6px 8px;
+  color: #fff;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+  background: #2f6aa6;
+}
+
+.rw-table td {
+  padding: 6px 8px;
+  vertical-align: top;
+  border-bottom: 1px solid #d7dde4;
+}
+
+.rw-table .rw-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.rw-table input {
+  width: 96px;
+  padding: 3px 5px;
+  text-align: right;
+}
+
+.rw-table tr.is-picked td {
+  background: #fff7e6;
+}
+
+.rw-empty {
+  padding: 22px !important;
+  color: #5b6670;
+  text-align: center;
+}
+
+.rw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  background: #dfe5ec;
+  border: 1px solid #b9c3cd;
+}
+
+.rw-units {
+  margin-left: auto;
+  color: #33414f;
+}
+
+.returns-window button {
+  min-height: 26px;
+  padding: 3px 9px;
+  color: #141414;
+  font-size: 13px;
+  white-space: nowrap;
+  background: #f7f7f7;
+  border: 1px solid #b5bec8;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.returns-window button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.returns-window .rw-primary {
+  color: #fff;
+  background: #2f6aa6;
+  border-color: #1f4f80;
+}
+
+.rw-messages p {
+  margin: 0;
+  padding: 7px 10px;
+}
+
+.rw-error {
+  color: #8c1d1d;
+  background: #fde9e9;
+  border: 1px solid #e4b3b3;
+}
+
+.rw-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #1f5a33;
+  background: #e9f7ee;
+  border: 1px solid #a9d4b7;
+}
+
+.rw-history-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.rw-history-bar h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 auto 0 0;
+  color: #184578;
+  font-size: 14px;
+}
+
+.rw-search {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 240px;
+  height: 28px;
+  padding: 0 6px;
+  background: #fff;
+  border: 1px solid #c5c5c5;
+}
+
+.rw-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+}
+
+.rw-count {
+  color: #4f5b67;
+}
+
+.rw-history-body {
+  max-height: 320px;
+}
+
+.rw-origin {
+  padding: 1px 6px;
+  font-size: 12px;
+  background: #eef3f8;
+  border: 1px solid #b7c6d6;
+}
+
+.rw-origin.is-delivery {
+  background: #f3efff;
+  border-color: #c3b5e6;
+}
+
+.rw-print {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rw-lookup {
+  display: flex;
+  flex-direction: column;
+  width: min(860px, calc(100% - 34px));
+  max-height: calc(100% - 40px);
+}
+
+.rw-lookup-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  margin: 10px 10px 0;
+  padding: 0 8px;
+  background: #fff;
+  border: 1px solid #c5c5c5;
+}
+
+.rw-lookup-search input {
+  flex: 1;
+  border: 0;
+  outline: 0;
+}
+
+.rw-lookup-body {
+  max-height: 60vh;
+  margin: 8px 10px 10px;
+}
+
+.rw-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(860px, calc(100% - 34px));
+  max-height: calc(100% - 30px);
+}
+
+.rw-dialog-tab {
+  padding: 6px 12px;
+  color: #fff;
+  font-weight: 600;
+  background: #2f6aa6;
+}
+
+.rw-dialog .rw-table-scroll {
+  max-height: 180px;
+  margin: 10px 10px 0;
+}
+
+.rw-dialog-hint {
+  margin: 6px 12px 0;
+  color: #5b6670;
+  font-size: 12px;
+}
+
+.rw-dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  padding: 10px 12px;
+  overflow: auto;
+}
+
+.rw-dialog-grid label {
+  display: grid;
+  gap: 3px;
+  color: #334155;
+  font-weight: 600;
+}
+
+.rw-dialog-grid .rw-wide {
+  grid-column: 1 / -1;
+}
+
+.rw-dialog-grid output {
+  padding: 5px 6px;
+  font-weight: 600;
+  background: #f1f4f7;
+  border: 1px solid #cbd3dc;
+}
+
+.rw-dialog-grid input,
+.rw-dialog-grid select,
+.rw-dialog-grid textarea {
+  padding: 5px 6px;
+}
+
+.rw-dialog-summary {
+  margin-right: auto;
+  color: #33414f;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .rw-top {
+    grid-template-columns: 1fr;
+  }
+  .rw-dialog-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Devolución usa el mismo lienzo y layout de Facturación (pantalla completa). */
+.sales-window.sales-window-returns,
+.sales-window.sales-window-returns-print,
+.sales-window.sales-window-delivery-returns {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  transform: none !important;
+  border-radius: 0;
+}
+
+.returns-billing {
+  outline: none;
+}
+
+.returns-billing .rw-qty-input {
+  width: 90px;
+  height: 26px;
+  padding: 2px 6px;
+  text-align: right;
+  border: 1px solid #9fb3c8;
+  border-radius: 2px;
+}
+
+.returns-billing .rw-messages {
+  margin: 4px 0;
+}
+
+.returns-history-tab {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.returns-history-tab .rw-history-body {
+  flex: 1;
+  max-height: none;
+}
+
+.returns-history-tab .rw-print,
+.returns-billing .rw-notice button {
+  min-height: 26px;
+  padding: 3px 9px;
+  background: #f7f7f7;
+  border: 1px solid #b5bec8;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.returns-billing .sales-cart-table {
+  table-layout: fixed;
+  width: 100%;
+}
+.returns-billing .sales-cart-table th:nth-child(1) { width: 9% !important; }
+.returns-billing .sales-cart-table th:nth-child(2) { width: 33% !important; }
+.returns-billing .sales-cart-table th:nth-child(3),
+.returns-billing .sales-cart-table th:nth-child(4) { width: 8% !important; }
+.returns-billing .sales-cart-table th:nth-child(5) { width: 13% !important; }
+.returns-billing .sales-cart-table th:nth-child(6) { width: 7% !important; }
+.returns-billing .sales-cart-table th:nth-child(7),
+.returns-billing .sales-cart-table th:nth-child(8) { width: 11% !important; }
+.returns-billing .sales-cart-table td:nth-child(n + 3) { text-align: right; }
+.returns-billing .sales-cart-description-cell strong {
+  white-space: normal;
+}
+
+/* Botones de teclas de Devolución con el mismo estilo blanco de Facturación. Las reglas globales
+   pintan los botones según su ícono (rotar, check, ojo…); aquí se fuerza el estilo de la barra. */
+.returns-billing .sales-shortcut-bar button,
+.returns-billing .sales-shortcut-bar button:has(> svg) {
+  color: #151515 !important;
+  background: #fff !important;
+  border: 1px solid #c7c7c7 !important;
+}
+.returns-billing .sales-shortcut-bar button:hover:not(:disabled),
+.returns-billing .sales-shortcut-bar button:has(> svg):hover:not(:disabled) {
+  color: #fff !important;
+  background: #353535 !important;
+  border-color: #2b2b2b !important;
+}
+.returns-billing .sales-shortcut-bar kbd {
+  color: #111111 !important;
+  background: #f4f4f4 !important;
+  border: 1px solid #d0d0d0 !important;
+}
+.returns-billing .sales-shortcut-bar button:hover:not(:disabled) kbd {
+  color: #fff !important;
+  background: rgba(255, 255, 255, 0.16) !important;
+  border-color: rgba(255, 255, 255, 0.45) !important;
+}
+
+/* Buscador de factura: sin scroll horizontal; el cliente puede partirse en dos líneas. */
+.rw-lookup-body {
+  overflow-x: hidden;
+}
+.rw-lookup .rw-table {
+  min-width: 0;
+}
+.rw-lookup .rw-table td,
+.rw-lookup .rw-table th {
+  white-space: normal;
+}
+.rw-lookup .rw-table th:last-child,
+.rw-lookup .rw-table td:last-child {
+  width: 1%;
+}
+.rw-lookup .rw-table td:last-child button {
+  min-width: 96px;
+}

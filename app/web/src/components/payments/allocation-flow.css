@@ -1,11 +1,54 @@
 .allocation-dialog {
-  width: min(820px, 96vw);
+  width: min(1180px, 96vw);
+  height: min(760px, calc(100vh - 48px));
+  max-height: calc(100vh - 48px);
 }
 
 .allocation-table-wrap {
-  max-height: 46vh;
+  flex: 1 1 auto;
+  min-height: 260px;
+  max-height: none;
   overflow: auto;
-  margin: 8px 10px 0;
+  margin: 14px 18px 0;
+}
+
+.allocation-retention-notice {
+  margin: 12px 18px 0;
+  padding: 9px 12px;
+  color: #174b7a;
+  background: #eaf4ff;
+  border: 1px solid #b9d5ee;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.allocation-table {
+  font-size: 15px;
+}
+
+.allocation-table th,
+.allocation-table td {
+  min-height: 42px;
+  padding: 9px 10px;
+}
+
+.allocation-table tbody tr {
+  cursor: pointer;
+  outline: none;
+}
+
+.allocation-table tbody tr:hover td {
+  background: #eef6ff;
+}
+
+.allocation-table tbody tr.is-selected td {
+  color: #fff;
+  background: #1c5a96;
+}
+
+.allocation-table tbody tr.is-selected input {
+  color: #111;
+  background: #fff;
 }
 
 .allocation-table .n,
@@ -17,16 +60,24 @@
 .allocation-table input {
   width: 100%;
   box-sizing: border-box;
-  padding: 3px 6px;
+  min-height: 36px;
+  padding: 5px 8px;
   text-align: right;
+  font-size: 15px;
+}
+
+.allocation-retention-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 
 .allocation-totals {
   display: grid;
   grid-template-columns: 2.4fr repeat(4, 1fr);
   gap: 8px;
-  margin: 6px 10px;
-  padding: 6px 8px;
+  margin: 10px 18px;
+  padding: 10px 12px;
+  font-size: 15px;
   text-align: right;
   background: #d8e6f3;
 }
@@ -42,8 +93,28 @@
 .allocation-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 10px 10px;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 18px 16px;
+  font-size: 15px;
+}
+
+.allocation-actions input {
+  min-height: 36px;
+  min-width: 260px;
+  padding: 5px 8px;
+  font-size: 15px;
+}
+
+.allocation-actions button {
+  min-height: 38px;
+  padding: 7px 14px;
+  font-size: 15px;
+}
+
+.allocation-selected {
+  color: #1c5a96;
+  font-weight: 700;
 }
 
 .allocation-actions .totalize-hint {

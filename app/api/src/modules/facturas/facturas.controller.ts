@@ -72,8 +72,9 @@ export class FacturasController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateInvoiceDto: UpdateInvoiceDto,
+    @Req() request: AuthRequest,
   ) {
-    return this.facturasService.update(id, updateInvoiceDto);
+    return this.facturasService.update(id, updateInvoiceDto, request.user);
   }
 
   @Patch(':id/validar')

@@ -563,23 +563,44 @@ export class FacturasService {
         );
       }
 
-      // Cajero = quien registra y cobra (usuario autenticado). Vendedor = quien vendió: se
-      // elige aparte (sellerUserId; createdByUserId se acepta por compatibilidad con la app móvil).
+      // El usuario autenticado queda como actor de auditoría. El cajero y el vendedor
+      // se seleccionan por separado para que la factura conserve ambas responsabilidades.
       const creatorId = authUser.sub;
       const creatorRole = authUser.role as PrismaRole;
       const creatorUsername = authUser.username;
       let sellerUserId: number | null = authUser.sub;
       let sellerUsername: string | null = authUser.username;
+      let cashierUserId: number | null = authUser.sub;
+      let cashierUsername: string | null = authUser.username;
       const requestedSellerId =
         createInvoiceDto.sellerUserId ?? createInvoiceDto.createdByUserId;
-      if (requestedSellerId && requestedSellerId !== authUser.sub) {
+      if (requestedSellerId) {
         const sellerUser = await tx.user.findUnique({
-          where: { id: requestedSellerId, isActive: true },
+          where: { id: requestedSellerId },
+          select: { id: true, username: true, role: true, isActive: true },
         });
-        if (sellerUser) {
-          sellerUserId = sellerUser.id;
-          sellerUsername = sellerUser.username;
+        if (!sellerUser || !sellerUser.isActive) {
+          throw new BadRequestException('El vendedor seleccionado no está activo');
         }
+        if (sellerUser.role !== PrismaRole.ADMIN && sellerUser.role !== PrismaRole.CAJERO && sellerUser.role !== PrismaRole.VENDEDOR) {
+          throw new BadRequestException('El usuario seleccionado no tiene rol de vendedor');
+        }
+        sellerUserId = sellerUser.id;
+        sellerUsername = sellerUser.username;
+      }
+      if (createInvoiceDto.cashierUserId) {
+        const cashierUser = await tx.user.findUnique({
+          where: { id: createInvoiceDto.cashierUserId },
+          select: { id: true, username: true, role: true, isActive: true },
+        });
+        if (!cashierUser || !cashierUser.isActive) {
+          throw new BadRequestException('El cajero seleccionado no está activo');
+        }
+        if (cashierUser.role !== PrismaRole.ADMIN && cashierUser.role !== PrismaRole.CAJERO) {
+          throw new BadRequestException('El usuario seleccionado no tiene rol de cajero');
+        }
+        cashierUserId = cashierUser.id;
+        cashierUsername = cashierUser.username;
       }
 
       // Una preventa/cotización solo se convierte en factura una vez.
@@ -605,6 +626,8 @@ export class FacturasService {
           createdByUserId: creatorId,
           createdByRole: creatorRole,
           createdByUsername: creatorUsername,
+          cashierUserId,
+          cashierUsername,
           sellerUserId,
           sellerUsername,
           source,
@@ -710,9 +733,12 @@ export class FacturasService {
     return invoice;
   }
 
-  async update(id: number, updateInvoiceDto: UpdateInvoiceDto) {
+  async update(id: number, updateInvoiceDto: UpdateInvoiceDto, actor?: AuthUser) {
     this.ensurePositiveId(id);
-    await this.findOne(id);
+    const current = await this.findOne(id);
+    if (current.status === InvoiceStatus.ANULADA) {
+      throw new BadRequestException('No se puede editar una factura anulada');
+    }
 
     if (updateInvoiceDto.consecutive) {
       const existingInvoice = await this.prisma.invoice.findUnique({
@@ -725,21 +751,63 @@ export class FacturasService {
     }
 
     // Los totales e items no se actualizan aquí para evitar inconsistencias contables.
-    return this.prisma.invoice.update({
+    const updated = await this.prisma.invoice.update({
       where: { id },
       data: updateInvoiceDto,
       include: this.invoiceInclude,
     });
+    await this.auditLogService.log({
+      actor,
+      module: 'FACTURAS',
+      action: 'UPDATE',
+      entityType: 'Invoice',
+      entityId: updated.id,
+      entityLabel: updated.consecutive,
+      description: `Edito la factura ${updated.consecutive}`,
+      metadata: {
+        changed: Object.keys(updateInvoiceDto),
+        before: { consecutive: current.consecutive },
+        after: { consecutive: updated.consecutive },
+      },
+    });
+    return updated;
   }
 
   async paymentSupport(invoiceId: number) {
     const support = await this.prisma.invoicePaymentSupport.findUnique({
       where: { invoiceId },
     });
-    if (!support?.supportData) {
-      throw new NotFoundException('La factura no tiene soporte de pago');
+    if (support?.supportData) {
+      return support;
     }
-    return support;
+
+    // En ventas a crédito el soporte normalmente se adjunta al recibo de cobro.
+    // Permitir verlo desde la fila FAC evita obligar al usuario a localizar primero
+    // el PAG relacionado en el estado de cuenta.
+    const credit = await this.prisma.invoiceCredit.findUnique({
+      where: { invoiceId },
+      select: {
+        payments: {
+          orderBy: { paidAt: 'desc' },
+          select: {
+            receipt: {
+              select: {
+                supportData: true,
+                supportName: true,
+                supportMimeType: true,
+              },
+            },
+          },
+        },
+      },
+    });
+    const receiptSupport = credit?.payments
+      .map((payment) => payment.receipt)
+      .find((receipt) => receipt?.supportData);
+    if (receiptSupport?.supportData) {
+      return receiptSupport;
+    }
+    throw new NotFoundException('La factura no tiene soporte de pago');
   }
 
   /** Saldo de bonus / miembro fiel disponible para pagar una venta. */
@@ -784,6 +852,15 @@ export class FacturasService {
     const annulled = await this.prisma.$transaction(async (tx) => {
       const invoice = await tx.invoice.findUnique({
         where: { id },
+        include: {
+          credit: {
+            include: {
+              payments: {
+                include: { receipt: { select: { status: true } } },
+              },
+            },
+          },
+        },
       });
 
       if (!invoice) {
@@ -792,6 +869,21 @@ export class FacturasService {
 
       if (invoice.status === 'ANULADA') {
         throw new BadRequestException('La factura ya está anulada');
+      }
+
+      if (invoice.credit) {
+        const hasActivePayments = invoice.credit.payments.some(
+          (payment) => payment.receipt?.status !== 'ANULADO',
+        );
+        if (hasActivePayments) {
+          throw new BadRequestException(
+            'No se puede anular la factura porque tiene abonos vigentes. Anula primero los recibos de cobro.',
+          );
+        }
+        await tx.invoiceCredit.update({
+          where: { id: invoice.credit.id },
+          data: { balance: 0, status: CreditStatus.CANCELADA },
+        });
       }
 
       // Lo ya devuelto por devoluciones parciales no se repone otra vez al anular.
@@ -904,6 +996,19 @@ export class FacturasService {
     client: true,
     warehouse: true,
     createdByUser: {
+      select: {
+        id: true,
+        username: true,
+        role: true,
+        employee: {
+          select: {
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    },
+    cashierUser: {
       select: {
         id: true,
         username: true,

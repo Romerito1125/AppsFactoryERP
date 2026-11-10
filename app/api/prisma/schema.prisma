@@ -21,6 +21,7 @@ model User {
   warehouse       Warehouse? @relation("WarehouseStaff", fields: [warehouseId], references: [id])
   employee        Employee?
   createdInvoices Invoice[] @relation("InvoiceCreatedBy")
+  cashierInvoices Invoice[] @relation("InvoiceCashier")
   validatedInvoices Invoice[] @relation("InvoiceValidatedBy")
   favoriteProducts ProductFavorite[]
   auditLogs       AuditLog[]
@@ -92,6 +93,8 @@ model Client {
   referralsMade  Referral[]    @relation("ReferrerClient")
   referredBy     Referral?     @relation("ReferredClient")
   referralLevel  Int           @default(0)
+    retentionId    Int?
+    retention      Retention?     @relation(fields: [retentionId], references: [id], onDelete: SetNull)
   quotes         Quote[]
   credits        InvoiceCredit[]
   advances       ClientAdvance[]
@@ -100,7 +103,8 @@ model Client {
   generatedReferralBenefits ReferralBenefit[] @relation("BenefitBuyer")
   socialContributions ReferralSocialContribution[] @relation("SocialContributionBuyer")
 
-  @@index([isActive])
+    @@index([isActive])
+    @@index([retentionId])
 }
 
 model Referral {
@@ -422,6 +426,7 @@ model Retention {
   updatedAt            DateTime         @default(now()) @updatedAt
 
   ranges RetentionRange[]
+  clients Client[]
 
   @@index([isActive])
 }
@@ -486,6 +491,8 @@ model Invoice {
   validationStatus  InvoiceValidationStatus @default(VALIDADA)
   validatedAt       DateTime?
   validatedByUserId Int?
+  cashierUserId     Int?
+  cashierUsername   String?
   sellerUserId      Int?
   sellerUsername    String?
   createdAt         DateTime      @default(now())
@@ -493,6 +500,7 @@ model Invoice {
   client            Client        @relation(fields: [clientId], references: [id])
   warehouse         Warehouse?    @relation(fields: [warehouseId], references: [id])
   createdByUser     User?         @relation("InvoiceCreatedBy", fields: [createdByUserId], references: [id])
+  cashierUser       User?         @relation("InvoiceCashier", fields: [cashierUserId], references: [id])
 
   validatedByUser   User?             @relation("InvoiceValidatedBy", fields: [validatedByUserId], references: [id])
 
@@ -511,6 +519,7 @@ model Invoice {
   @@index([clientId])
   @@index([warehouseId])
   @@index([createdByUserId])
+  @@index([cashierUserId])
   @@index([validatedByUserId])
   @@index([validationStatus])
   @@index([createdByRole])

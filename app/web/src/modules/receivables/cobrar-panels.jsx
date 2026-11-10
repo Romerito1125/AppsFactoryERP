@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { AllocationFlow } from "@/components/payments/allocation-flow";
 import { apiClient } from "@/lib/api-client";
 import { clientDisplayName } from "./receivable-utils";
@@ -10,10 +11,13 @@ export function CollectionFlow({
   credits,
   initialCreditId,
   bankAccounts,
+  sellers,
   sellerName,
   onClose,
   onDone,
 }) {
+  const [documentNumber] = useState(() => `AB-${client.id}-${Date.now()}`);
+  const configuredRetention = client.retention?.isActive ? client.retention : null;
   const rows = credits
     .filter((credit) => credit.balance > 0)
     .map((credit) => ({
@@ -22,6 +26,9 @@ export function CollectionFlow({
       issuedAt: credit.createdAt,
       dueAt: credit.dueDate,
       balance: credit.balance,
+      retentionRate: resolveRetentionRate(configuredRetention, credit.balance),
+      retentionRanges: configuredRetention?.ranges ?? [],
+      retentionLabel: configuredRetention?.code ?? "",
     }));
   return (
     <AllocationFlow
@@ -30,7 +37,14 @@ export function CollectionFlow({
       rows={rows}
       initialId={initialCreditId}
       withRetention
+      totalLabel="Total recibido"
       bankAccounts={bankAccounts}
+      sellers={sellers}
+      initialDocumentNumber={documentNumber}
+      initialDetail={`Abono de cartera · ${clientDisplayName(client)}${rows.length === 1 ? ` · ${rows[0].number}` : ""}`}
+      initialOperationType="Abono a crédito"
+      client={client}
+      previousBalance={credits.reduce((sum, credit) => sum + Number(credit.balance ?? 0), 0)}
       sellerName={sellerName}
       onClose={onClose}
       onDone={onDone}
@@ -43,7 +57,6 @@ export function CollectionFlow({
           allocations: allocations.map((line) => ({
             creditId: line.id,
             amount: line.amount,
-            ...(line.retention ? { retention: line.retention } : {}),
           })),
           cashAmount: result.cashAmount || undefined,
           cashAccountId: result.cashAccountId,
@@ -56,4 +69,14 @@ export function CollectionFlow({
       }
     />
   );
+}
+
+function resolveRetentionRate(retention, base) {
+  if (!retention?.isActive) return 0;
+  const match = (retention.ranges ?? []).find((range) => {
+    const minimum = Number(range.minimum ?? 0);
+    const maximum = Number(range.maximum ?? Number.MAX_SAFE_INTEGER);
+    return Number(base) >= minimum && Number(base) <= maximum;
+  });
+  return Math.max(0, Math.min(99.99, Number(match?.percentage ?? 0)));
 }

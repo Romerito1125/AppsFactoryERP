@@ -33,6 +33,7 @@ import { DevolucionesModule } from './modules/devoluciones/devoluciones.module';
 import { RecibosModule } from './modules/recibos/recibos.module';
 import { NotasModule } from './modules/notas/notas.module';
 import { BorradoresModule } from './modules/borradores/borradores.module';
+import { MundiModule } from './modules/mundi/mundi.module';
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import { BorradoresModule } from './modules/borradores/borradores.module';
     RecibosModule,
     NotasModule,
     BorradoresModule,
+    MundiModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -25,6 +25,7 @@ import { SalesWindow } from "@/modules/sales/sales-window";
 import { UsersWindow } from "@/modules/users/users-window";
 import { WarehouseAdminPage } from "@/modules/warehouse-admin/warehouse-admin-page";
 import { DeliveryAgentPage } from "@/modules/delivery-agent/delivery-agent-page";
+import { MundiChat } from "@/components/mundi/mundi-chat";
 import { OffersWindow } from "@/modules/offers/offers-window";
 import { ReferralsWindow } from "@/modules/referrals/referrals-window";
 import { ReportsWindow } from "@/modules/reports/reports-window";
@@ -455,6 +456,7 @@ function App() {
               onClose={() => setActiveWindow(null)}
               onRequestLogin={openLogin}
               canAccess={canAccess}
+              session={session}
             />
           )}
           {activeWindow?.startsWith("purchases-") && (
@@ -527,6 +529,8 @@ function App() {
           )}
         </div>
       )}
+      {/* Mundi: asistente de IA, visible en todos los módulos y sobre las ventanas. */}
+      {session && !loginOpen && <MundiChat session={session} />}
       {loginOpen && (
         <LoginDialog
           required={!session}

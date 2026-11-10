@@ -126,3 +126,48 @@ export function VoidReceiptDialog({ receiptNumber, onConfirm, onCancel, saving, 
     </div>
   );
 }
+
+export function InvoiceEditDialog({ invoice, onSave, onCancel, saving, error }) {
+  const [consecutive, setConsecutive] = useState(invoice.consecutive ?? "");
+  const [localError, setLocalError] = useState("");
+  return (
+    <div className="module-dialog-backdrop totalize-backdrop">
+      <section className="module-dialog totalize-dialog" role="dialog" aria-modal="true">
+        <header className="module-dialog-titlebar">
+          <strong>EDITAR FACTURA {invoice.consecutive}</strong>
+          <button type="button" aria-label="Cerrar" onClick={onCancel}><X size={17} /></button>
+        </header>
+        <div className="totalize-body">
+          <p className="cobrar-edit-note">
+            Puedes corregir el número de la factura. Los productos, valores, inventario y pagos no se modifican desde este estado de cuenta.
+          </p>
+          <label>
+            <span>Número de factura *</span>
+            <input
+              autoFocus
+              value={consecutive}
+              onChange={(event) => setConsecutive(event.target.value)}
+            />
+          </label>
+        </div>
+        {(localError || error) && <p className="totalize-error" role="alert">{localError || error}</p>}
+        <div className="module-dialog-footer">
+          <button
+            type="button"
+            className="primary-action"
+            disabled={saving}
+            onClick={() => {
+              const value = consecutive.trim();
+              if (value.length < 3) return setLocalError("Escribe un número de factura válido.");
+              setLocalError("");
+              onSave({ consecutive: value });
+            }}
+          >
+            {saving ? "Guardando…" : "Guardar cambios"}
+          </button>
+          <button type="button" onClick={onCancel}>Cancelar</button>
+        </div>
+      </section>
+    </div>
+  );
+}

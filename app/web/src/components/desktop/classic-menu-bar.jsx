@@ -74,6 +74,11 @@ export function ClassicMenuBar({
           ? onOpenBanksView?.("receivables")
           : onOpenReceivables?.(),
       billing: () => onOpenSalesView?.("billing"),
+      "print-invoices": () => onOpenSalesView?.("print-invoices"),
+      returns: () => onOpenSalesView?.("returns"),
+      "returns-print": () => onOpenSalesView?.("returns-print"),
+      "delivery-notes": () => onOpenSalesView?.("delivery-notes"),
+      "delivery-returns": () => onOpenSalesView?.("delivery-returns"),
       quotes: () =>
         activeModule === "purchases"
           ? onOpenPurchasesView?.("quotes")

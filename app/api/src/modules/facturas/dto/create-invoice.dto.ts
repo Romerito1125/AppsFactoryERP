@@ -39,12 +39,18 @@ export class CreateInvoiceDto {
   @IsPositive()
   quoteId?: number;
 
-  // Vendedor de la venta (el cajero es el usuario que registra la factura).
+  // Persona que vendió y cajero que registra/cobra la factura se guardan por separado.
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @IsPositive()
   sellerUserId?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  cashierUserId?: number;
 
   @IsOptional()
   @Type(() => Number)
@@ -102,7 +108,7 @@ export class CreateInvoiceDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(4_200_000)
+  @MaxLength(8_000_000)
   @Matches(/^data:(image\/[a-z0-9.+-]+|application\/pdf);base64,/i, {
     message: 'El soporte debe ser una imagen o un PDF',
   })
